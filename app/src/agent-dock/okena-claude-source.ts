@@ -212,7 +212,7 @@ export class OkenaClaudeSource implements DockSource {
 	 */
 	async prompt(
 		target: DockPane,
-		expect: { sessionId?: string; assistantUuid?: string; queue?: boolean },
+		expect: { sessionId?: string; assistantUuid?: string; queue?: boolean; handoff?: boolean },
 		text: string,
 	): Promise<DockActOutcome> {
 		const body = promptText(text)
@@ -220,10 +220,19 @@ export class OkenaClaudeSource implements DockSource {
 		const client = this.client.forProfile(target.profile)
 		const fresh = await this.freshSession(client, target)
 		if (!fresh.ok) return fresh.outcome
-		if (expect.queue)
-			return this.sendPrompt(client, target, sessionTakesPrompt(expect, fresh.session, this.id), body, true)
+		// The transcript right before sending: the reply's CAS reads it, and its newest user entry is the
+		// baseline a held prompt lands after (the reducer's tail is not read while the agent works).
 		const page = await this.freshTail(client, target)
-		return this.sendPrompt(client, target, sessionStillIdle(expect, fresh.session, page, this.id), body)
+		const userBefore = page ? lastUserUuid(page) : undefined
+		// A hand-off (Signals) or a queued reply to a working agent answers no message Jakub must still
+		// see: the source holds it until the turn ends. A reply to an agent free now checks the agent
+		// still stops at the message Jakub read.
+		const check =
+			expect.handoff || (expect.queue && fresh.session.busy === true)
+				? sessionTakesPrompt(expect, fresh.session, this.id)
+				: sessionStillIdle(expect, fresh.session, page, this.id)
+		const outcome = await this.sendPrompt(client, target, check, body, expect.queue === true)
+		return outcome.status === 'sent' && userBefore ? { ...outcome, userBefore } : outcome
 	}
 
 	/** The pane's last assistant message, read live (the agent detail; `helm dock show` reads turns the same way). */
@@ -518,4 +527,13 @@ export function transcriptWanted(
 	}
 	if (sinceRead >= TRANSCRIPT_SWEEP_MS) return { read: true, edgeAt }
 	return { read: false, edgeAt }
+}
+
+/** The newest user entry of a transcript page (a held prompt's landing baseline). */
+function lastUserUuid(page: OkenaClaudeTranscriptPage): string | undefined {
+	for (let index = page.entries.length - 1; index >= 0; index--) {
+		const entry = page.entries[index]
+		if (entry?.kind === 'user') return entry.uuid
+	}
+	return undefined
 }

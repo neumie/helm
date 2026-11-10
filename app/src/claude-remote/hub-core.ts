@@ -515,6 +515,23 @@ export class ClaudeHubCore {
 		return due
 	}
 
+	/**
+	 * When the next queued prompt waits only on a typing guard: its expiry (the earliest one), else
+	 * undefined. The guard ends without any hook event (a reply whose UserPromptSubmit never came), so
+	 * the hub arms a timer for it instead of waiting for the next change.
+	 */
+	nextPromptDueAt(): number | undefined {
+		let due: number | undefined
+		for (const t of this.terminals.values()) {
+			const primary = t.primary
+			if (t.queued.length === 0 || !primary || primary.ended || !this.listed(t)) continue
+			if (!this.hasLifeline(t, primary.pid) || t.busy !== false || t.dialogs.length > 0) continue
+			if (t.typingUntil === undefined) continue
+			if (due === undefined || t.typingUntil < due) due = t.typingUntil
+		}
+		return due
+	}
+
 	/** The hub typed a reply: block another until its UserPromptSubmit (or TYPING_GUARD_MS). */
 	typed(ref: TerminalRef, now: number): void {
 		const t = this.terminals.get(terminalKey(ref))

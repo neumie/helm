@@ -1321,6 +1321,7 @@ function SendFlow({
 							...(session.sessionId ? { sessionId: session.sessionId } : {}),
 							...(session.lastMessage ? { assistantUuid: session.lastMessage.uuid } : {}),
 							queue: true,
+							handoff: true,
 							text,
 						})
 		const failed = await onRoute({
@@ -1502,6 +1503,7 @@ function ReplyFlow({
 								...(session.sessionId ? { sessionId: session.sessionId } : {}),
 								...(session.lastMessage ? { assistantUuid: session.lastMessage.uuid } : {}),
 								queue: true,
+								handoff: true,
 								text: prompt,
 							})
 		const failed = await onRoute({
@@ -1528,7 +1530,8 @@ function ReplyFlow({
 					agent: deliver.name,
 					how: 'replied',
 					done: queued ? `Queued the answer for ${deliver.name}` : `Replied to ${deliver.name}`,
-					unsaved: error => `Replied to ${deliver.name}; the receipt was not saved: ${error}`,
+					unsaved: error =>
+						`${queued ? `Queued the answer for ${deliver.name}` : `Replied to ${deliver.name}`}; the receipt was not saved: ${error}`,
 					thread: saved.data,
 				}
 			},

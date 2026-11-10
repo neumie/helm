@@ -68,6 +68,8 @@ export interface HelmClaudeHubOptions {
 	firstLineTimeoutMs?: number
 	/** Reads a session cwd's git branch (default `git branch --show-current`, user-owned dirs only). */
 	readBranch?: BranchReader
+	/** Runs `run` once after `ms`; returns its cancel (default an unref'd setTimeout; tests drive it). */
+	schedule?: (run: () => void, ms: number) => () => void
 }
 
 const requestSchema = z.discriminatedUnion('t', [
@@ -142,6 +144,8 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 	private persisting: Promise<void> = Promise.resolve()
 	/** Session cwd -> its branch as last read (null: none / not a work tree) and when. */
 	private readonly branches = new Map<string, { branch: string | null; at: number }>()
+	/** Cancels the timer for the next typing-guard expiry with a prompt queued behind it. */
+	private cancelDue: (() => void) | null = null
 
 	constructor(private readonly options: HelmClaudeHubOptions) {
 		this.now = options.now ?? Date.now
@@ -207,6 +211,8 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 		// hub answers there, or the root is not private) must not unlink that hub's socket.
 		const owned = this.server !== null
 		this.listening = false
+		this.cancelDue?.()
+		this.cancelDue = null
 		this.core.shutdown()
 		this.tails.clear()
 		this.server?.close()
@@ -321,6 +327,7 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 			return { delivery: 'queued' }
 		}
 		this.core.typed(ref, this.now())
+		this.armDue()
 		const via = await this.options.deliver(ref, promptChunks(text), PROMPT_ENTER_DELAY_MS)
 		// Okena's delivery vocabulary: typed into the terminal either way (attached pty or dtach push).
 		return { delivery: 'pty', via }
@@ -334,6 +341,34 @@ export class HelmClaudeHub implements OkenaClaudeClient {
 					`a queued prompt for ${ref.terminalId} was not typed: ${error instanceof Error ? error.message : String(error)}`,
 				)
 			})
+		this.armDue()
+	}
+
+	/**
+	 * A typing guard ends with no hook event (the typed reply's UserPromptSubmit never came: Claude
+	 * dropped it, or it was typed into a prompt that ignored it), so nothing would call typeDuePrompts
+	 * again while the agent sits idle. One timer for the earliest such expiry types the next one then.
+	 */
+	private armDue(): void {
+		this.cancelDue?.()
+		this.cancelDue = null
+		if (!this.listening) return
+		const due = this.core.nextPromptDueAt()
+		if (due === undefined) return
+		const schedule =
+			this.options.schedule ??
+			((run: () => void, ms: number) => {
+				const timer = setTimeout(run, ms)
+				timer.unref()
+				return () => clearTimeout(timer)
+			})
+		this.cancelDue = schedule(
+			() => {
+				this.cancelDue = null
+				this.typeDuePrompts()
+			},
+			Math.max(0, due - this.now()) + 1,
+		)
 	}
 
 	// -------------------------------------------------------------------------

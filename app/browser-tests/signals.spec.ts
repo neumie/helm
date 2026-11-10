@@ -198,7 +198,7 @@ test('send to agent: a working agent is picked like an idle one and gets the thr
 	await expect(view.note).toHaveText('Queued crane-rental#970 for rental-calendar-sync')
 	const recorded = await calls(page)
 	expect(recorded?.prompts).toEqual([
-		expect.objectContaining({ session: expect.stringContaining('t-calendar'), queue: true }),
+		expect.objectContaining({ session: expect.stringContaining('t-calendar'), queue: true, handoff: true }),
 	])
 	expect(recorded?.acts).toEqual([])
 	expect(recorded?.routed).toEqual([expect.objectContaining({ id: 970, agent: 'rental-calendar-sync', how: 'sent' })])

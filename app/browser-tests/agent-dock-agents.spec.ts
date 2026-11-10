@@ -272,7 +272,41 @@ test('a reply from the agent detail: CAS on the message shown, Sending… then �
 			text: 'Díky, mergni to.',
 			sessionId: 'sess-jvs-image',
 			assistantUuid: 'image-a1',
+			queue: true,
 		},
+	])
+	expect(await terminalWrites(page)).toBe(0)
+})
+
+test('a reply to a working agent from its detail is queued for after its turn and reads queued, never unconfirmed', async ({
+	page,
+}) => {
+	const { pane, agent } = await openOverviewByKeys(page)
+	await agent('Psyon').focus()
+	await page.keyboard.press('Enter')
+	await expect(pane).toHaveAttribute('aria-label', /^Agent, Psyon/)
+	await expect(pane.locator('.agent-dock-title-state')).toHaveText(/^working/)
+	const reply = pane.getByRole('textbox', { name: 'Reply' })
+	await expect(reply).toBeEnabled()
+	await expect(pane.locator('.agent-dock-foot-note')).toHaveText('Queued for Psyon: typed in once it stops working')
+	await page.keyboard.type('Pak ještě spusť testy.')
+	await page.keyboard.press('Meta+Enter')
+	const note = pane.locator('.agent-dock-foot-note')
+	await expect(note).toHaveText('Queued for Psyon')
+	await expect(reply).toHaveValue('')
+	// Past the confirmation window while the agent still works: still queued, not amber.
+	await page.waitForTimeout(600)
+	await expect(note).toHaveText('Queued for Psyon')
+	await expect(note.locator('[data-tone="warn"]')).toHaveCount(0)
+	// A held reply never blocks another: the source queues them in order.
+	await expect(reply).toBeEnabled()
+	await page.keyboard.type('A pak commitni.')
+	await page.keyboard.press('Meta+Enter')
+	await expect(note).toHaveText('Queued for Psyon')
+	const { prompts } = await fixtureCalls(page)
+	expect(prompts).toEqual([
+		expect.objectContaining({ session: expect.any(String), text: 'Pak ještě spusť testy.', queue: true }),
+		expect.objectContaining({ session: expect.any(String), text: 'A pak commitni.', queue: true }),
 	])
 	expect(await terminalWrites(page)).toBe(0)
 })

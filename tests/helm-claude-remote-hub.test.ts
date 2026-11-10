@@ -906,7 +906,12 @@ function send(socket: string, line: Record<string, unknown>, waitReply = false):
 	})
 }
 
-async function hubFixture(extra: { readBranch?: (path: string) => Promise<string | null> } = {}) {
+async function hubFixture(
+	extra: {
+		readBranch?: (path: string) => Promise<string | null>
+		schedule?: (run: () => void, ms: number) => () => void
+	} = {},
+) {
 	const dir = mkdtempSync('/tmp/hcr-hub-')
 	const tokens = claudeHubTokens(Buffer.alloc(32, 9))
 	const delivered: Array<{ ref: TerminalRef; chunks: string[] }> = []
@@ -1107,13 +1112,55 @@ test('hub: a queued prompt (Signals) to a working agent is typed once its turn s
 		const reply = await source.prompt(pane, { sessionId: SID }, 'hello')
 		assert.equal(reply.status === 'refused' && reply.reason, 'busy')
 		const queued = await source.prompt(pane, { sessionId: SID, queue: true }, 'Look at crane-rental#970.')
-		assert.deepEqual(queued, { status: 'sent', delivery: 'queued' })
+		assert.deepEqual(queued, { status: 'sent', delivery: 'queued', userBefore: 'user-p1' })
 		assert.deepEqual(f.delivered, [])
 		assert.equal(f.hub.core.session(REF).queued_prompts, 1)
 		// The turn stops: the hub types it like any reply.
 		await f.event(ev('Stop', { prompt_id: 'p1', last_assistant_message: 'Built.' }))
 		assert.deepEqual(f.delivered, [{ ref: REF, chunks: promptChunks('Look at crane-rental#970.') }])
 		assert.equal(f.hub.core.session(REF).queued_prompts, 0)
+		await lifeline.close()
+	} finally {
+		f.cleanup()
+	}
+})
+
+test('hub: a prompt queued behind a typed reply whose UserPromptSubmit never comes is typed when the guard ends', async () => {
+	const timers: Array<{ run: () => void; ms: number; cancelled: boolean }> = []
+	const f = await hubFixture({
+		schedule: (run, ms) => {
+			const timer = { run, ms, cancelled: false }
+			timers.push(timer)
+			return () => {
+				timer.cancelled = true
+			}
+		},
+	})
+	try {
+		const source = new OkenaClaudeSource(f.hub, 'helm')
+		await f.event(ev('SessionStart', { source: 'startup', cwd: '/repo/helm' }))
+		const lifeline = await f.attach()
+		await f.event(ev('UserPromptSubmit', { prompt_id: 'p1', prompt: 'build it' }))
+		await f.event(ev('Stop', { prompt_id: 'p1', last_assistant_message: 'Built.' }))
+		const pane = { profile: 'helm:work', terminalId: 'term1' }
+		// Idle: the first hand-off is typed at once and sets the typing guard.
+		const first = await source.prompt(pane, { sessionId: SID, queue: true, handoff: true }, 'first')
+		assert.equal(first.status, 'sent')
+		assert.equal(f.delivered.length, 1)
+		// A second one while that is being typed is held behind the guard, with a timer for its end.
+		const second = await source.prompt(pane, { sessionId: SID, queue: true, handoff: true }, 'second')
+		assert.deepEqual(second, { status: 'sent', delivery: 'queued', userBefore: 'user-p1' })
+		const live = timers.filter(timer => !timer.cancelled)
+		assert.equal(live.length, 1)
+		assert.ok((live[0]?.ms ?? 0) > 0 && (live[0]?.ms ?? 0) <= TYPING_GUARD_MS + 1)
+		// The first one's UserPromptSubmit never comes (no hook event at all): the timer types the second.
+		f.setNow(T0 + TYPING_GUARD_MS + 1_000)
+		live[0]?.run()
+		assert.deepEqual(f.delivered.at(-1), { ref: REF, chunks: promptChunks('second') })
+		assert.equal(f.hub.core.session(REF).queued_prompts, 0)
+		// Stopping the hub cancels a pending timer.
+		f.hub.stop()
+		assert.ok(timers.every(timer => timer.cancelled || timer === live[0]))
 		await lifeline.close()
 	} finally {
 		f.cleanup()

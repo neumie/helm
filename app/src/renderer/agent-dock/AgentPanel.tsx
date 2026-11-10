@@ -1,8 +1,9 @@
 // The agent detail (design §3.24 Agents): one agent opened from the Agents pane when it owes Jakub
 // nothing — its state in words and where it runs, its last message in full (read live through its
 // source, like `helm dock show`; the stored first line until then or when that read fails), and a
-// reply typed into its terminal as the next prompt (same CAS and receipts as a turn reply). An agent
-// that does owe him something (stepped onto with ‹ ›) offers its item instead. Esc goes back.
+// reply typed into its terminal as the next prompt (same receipts as a turn reply). An agent
+// that does owe him something (stepped onto with ‹ ›) offers its item instead. A working agent takes
+// the reply too, queued by its source until the turn ends. Esc goes back.
 import { type MutableRefObject, useEffect, useMemo, useRef, useState } from 'react'
 import { DOCK_LIVE_MESSAGE_MAX } from '../../../../src/agent-dock/dock-vocabulary.js'
 import type {
@@ -110,10 +111,12 @@ export function AgentPanel({
 	const sessionId = (result?.ok ? result.sessionId : undefined) ?? session.sessionId
 	const send = () => {
 		if (!ready) return
+		// A working agent takes it too: its source holds it until the turn ends (never interrupts).
 		void onPrompt({
 			text,
 			...(sessionId ? { sessionId } : {}),
 			...(shownUuid ? { assistantUuid: shownUuid } : {}),
+			queue: true,
 		}).then(sent => {
 			if (sent.ok) setText('')
 		})
@@ -133,7 +136,7 @@ export function AgentPanel({
 		return true
 	})
 
-	const receipt = sessionReplyView(session, now)
+	const receipt = sessionReplyView(session, now, row.name)
 	const note = revealNote ? (
 		<Receipt view={{ text: revealNote, tone: 'neutral' }} />
 	) : receipt ? (
@@ -141,7 +144,8 @@ export function AgentPanel({
 	) : localError ? (
 		<Receipt view={{ text: localError, tone: 'danger' }} />
 	) : canPrompt || row.itemId !== undefined ? (
-		blocked
+		(blocked ??
+		(replyable && row.standing === 'working' ? `Queued for ${row.name}: typed in once it stops working` : null))
 	) : (
 		'Reply in the terminal'
 	)

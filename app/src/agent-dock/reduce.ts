@@ -2,6 +2,7 @@
 // No IO, no clocks, no mutation of `prev`. See docs in model.ts and the design
 // (§3 lifecycle, §4 freshness/answered-elsewhere/Okena restart).
 
+import { isHeldDelivery } from '../../../src/agent-dock/dock-vocabulary'
 import { boundText, excerptLine } from '../../../src/agent-dock/text'
 import { BACKGROUND_TASKS_MAX, type ObservedBackgroundTasks } from './background-tasks'
 import { SLOWEST_INTERVAL_MS } from './cadence'
@@ -17,6 +18,7 @@ import {
 	type DockActOutcome,
 	type DockActionKind,
 	type DockItem,
+	type DockReceipt,
 	type DockRefusalReason,
 	type DockResolutionBy,
 	type DockSession,
@@ -67,6 +69,8 @@ interface TranscriptTail {
 	lastAssistant?: { uuid: string; text: string; at: number; excerpt: string }
 	/** A user entry was seen after lastAssistant (any origin). */
 	userAfterLastAssistant: boolean
+	/** The newest user entry read (any origin): a held reply lands once a newer one shows up. */
+	lastUserUuid?: string
 }
 
 export interface AgentDockSessionRecord {
@@ -545,6 +549,7 @@ function applyTranscript(
 			if (!page.reset) activity = true
 		} else if (entry.kind === 'user') {
 			tail.userAfterLastAssistant = true
+			tail.lastUserUuid = entry.uuid
 			for (const uuid of passed) repliedTurns.add(uuid)
 			if (!page.reset) activity = true
 		}
@@ -778,8 +783,14 @@ function confirmSessionReply(record: AgentDockSessionRecord, now: number): void 
 	const reply = record.session.reply
 	if (!reply || (reply.status !== 'sent' && reply.status !== 'unconfirmed')) return
 	const last = record.tail.lastAssistant?.uuid
-	const landed =
-		reply.assistantUuid === undefined
+	// Held for after the turn: the agent keeps talking until then, so only a prompt newer than the one
+	// it had when Jakub sent counts, and only once the source holds nothing more (a prompt queued
+	// ahead of this one, another queued send of Jakub's, lands first).
+	const landed = isHeldDelivery(reply.delivery)
+		? record.session.queuedPrompts === 0 &&
+			record.tail.lastUserUuid !== undefined &&
+			record.tail.lastUserUuid !== reply.userBefore
+		: reply.assistantUuid === undefined
 			? record.tail.userAfterLastAssistant
 			: last !== undefined && (last !== reply.assistantUuid || record.tail.userAfterLastAssistant)
 	if (landed) record.session.reply = { ...reply, status: 'confirmed', at: now }
@@ -1091,11 +1102,13 @@ function reduceActResult(draft: Draft, itemId: number, outcome: DockActOutcome):
 function reducePromptSending(draft: Draft, key: SessionKey, assistantUuid: string | undefined): void {
 	const record = draft.state.sessions[key]
 	if (!record) return
+	const userBefore = record.tail.lastUserUuid
 	record.session.reply = {
 		action: 'prompt',
 		status: 'sending',
 		at: draft.now,
 		...(assistantUuid ? { assistantUuid } : {}),
+		...(userBefore ? { userBefore } : {}),
 	}
 	// Only the message the reducer holds as the last one: an older uuid (a stale live read) never
 	// moves `seen` back, which would reopen a turn Jakub already acked.
@@ -1114,6 +1127,8 @@ function reducePromptResult(draft: Draft, key: SessionKey, outcome: DockActOutco
 			at: now,
 			sentAt: now,
 			...(outcome.delivery ? { delivery: outcome.delivery } : {}),
+			// The source's fresh read beats the reducer's tail, which is not read while the agent works.
+			...(outcome.userBefore ? { userBefore: outcome.userBefore } : {}),
 		}
 	else if (outcome.status === 'unconfirmed')
 		record.session.reply = { ...reply, status: 'unconfirmed', at: now, sentAt: now, detail: outcome.detail }
@@ -1127,17 +1142,37 @@ function reducePromptResult(draft: Draft, key: SessionKey, outcome: DockActOutco
 		}
 }
 
+/**
+ * When a sent reply/answer goes unconfirmed: ACT_CONFIRM_MS after it was sent, or, for one the source
+ * holds for after the turn, ACT_CONFIRM_MS after the agent was seen free with nothing left queued (it
+ * would have been typed in by then) or Helm lost sight of it (unknown, source down, no longer
+ * listed: nothing would show it land). Undefined: still held.
+ */
+function unconfirmedFrom(receipt: DockReceipt, record: AgentDockSessionRecord | undefined): number | undefined {
+	if (receipt.sentAt === undefined) return undefined
+	if (!isHeldDelivery(receipt.delivery)) return receipt.sentAt
+	if (!record) return receipt.sentAt
+	const status = record.session.status
+	if (status === 'unknown' || status === 'unreachable') return Math.max(receipt.sentAt, record.session.since ?? 0)
+	if ((status !== 'idle' && status !== 'background') || record.idleSince === undefined) return undefined
+	if (record.session.queuedPrompts > 0) return undefined
+	return Math.max(receipt.sentAt, record.idleSince)
+}
+
 /** Sent but not observed for ACT_CONFIRM_MS: amber "sent, unconfirmed" until observed or acked. */
 function expireUnconfirmed(draft: Draft): void {
 	for (const record of Object.values(draft.state.sessions)) {
 		const reply = record.session.reply
-		if (reply?.status !== 'sent' || reply.sentAt === undefined || draft.now - reply.sentAt < ACT_CONFIRM_MS) continue
+		if (reply?.status !== 'sent') continue
+		const from = unconfirmedFrom(reply, record)
+		if (from === undefined || draft.now - from < ACT_CONFIRM_MS) continue
 		record.session.reply = { ...reply, status: 'unconfirmed', at: draft.now }
 	}
 	for (const item of draft.state.items) {
 		const receipt = item.receipt
-		if (item.state !== 'sending' || receipt?.status !== 'sent' || receipt.sentAt === undefined) continue
-		if (draft.now - receipt.sentAt < ACT_CONFIRM_MS) continue
+		if (item.state !== 'sending' || receipt?.status !== 'sent') continue
+		const from = unconfirmedFrom(receipt, draft.state.sessions[item.session])
+		if (from === undefined || draft.now - from < ACT_CONFIRM_MS) continue
 		item.state = 'unconfirmed'
 		item.receipt = { ...receipt, status: 'unconfirmed', at: draft.now }
 		draft.outcome(item, 'unconfirmed')

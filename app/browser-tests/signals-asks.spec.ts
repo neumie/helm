@@ -128,6 +128,7 @@ test('r on an ask from an idle Okena agent saves the answer, types the fenced pr
 		sessionId: `session-${IDLE_TERMINAL}`,
 		assistantUuid: 'message-signals-asks',
 		queue: true,
+		handoff: true,
 		text: expect.any(String),
 	})
 	expect(prompt?.text).toBe(
@@ -162,7 +163,12 @@ test('r on an ask whose agent is working queues the answer for after its turn', 
 	const recorded = await calls(page)
 	expect(recorded?.replies).toEqual([{ id: 503, text: 'Approved' }])
 	expect(recorded?.prompts).toEqual([
-		expect.objectContaining({ session: expect.stringContaining(':'), queue: true, text: expect.any(String) }),
+		expect.objectContaining({
+			session: expect.stringContaining(':'),
+			queue: true,
+			handoff: true,
+			text: expect.any(String),
+		}),
 	])
 	expect(recorded?.acts).toEqual([])
 	expect(recorded?.routed).toEqual([{ id: 503, agent: 'okena-stream-lease', how: 'replied' }])

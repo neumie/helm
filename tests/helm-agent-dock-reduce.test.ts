@@ -1196,6 +1196,9 @@ test('a first-ever idle pane adopts its last message as seen (read), with its ex
 	assert.ok(last?.text)
 })
 
+/** The full log's newest user entry: a reply records it as `userBefore`. */
+const LAST_USER_UUID = ((LOG_FULL.entries as Json[]).filter(entry => entry.kind === 'user').at(-1) as Json).uuid
+
 /** An idle pane whose last message Jakub has read (adopted at Helm's first look). */
 function readPane(): { state: AgentDockState; at: number } {
 	const { state } = run(createAgentDockState(null, T0), [[T0, poll(idle(), { transcript: fullLog() })]])
@@ -1222,6 +1225,7 @@ test('a reply from the agent detail: sending → sent → confirmed once its use
 			sentAt: at + 100,
 			delivery: 'pty',
 			assistantUuid: ASSISTANT_UUID,
+			userBefore: LAST_USER_UUID,
 		},
 	)
 	// The pane works on it and its transcript shows the reply after the message Jakub read.
@@ -1253,7 +1257,14 @@ test('a reply from the agent detail goes unconfirmed after 10 s unseen; refusals
 	]).state
 	assert.deepEqual(
 		{ ...sessionOf(refused, at + 100)?.reply },
-		{ action: 'prompt', status: 'refused', at: at + 100, reason: 'changed', detail: 'new' },
+		{
+			action: 'prompt',
+			status: 'refused',
+			at: at + 100,
+			reason: 'changed',
+			detail: 'new',
+			userBefore: LAST_USER_UUID,
+		},
 	)
 	// A result for a reply that is not sending, or for an unknown pane, changes nothing.
 	assert.deepEqual(
@@ -1262,6 +1273,97 @@ test('a reply from the agent detail goes unconfirmed after 10 s unseen; refusals
 		'refused',
 	)
 	assert.deepEqual(reduce(state, { type: 'prompt.sending', session: 'p1:nope' }, at).state.sessions, state.sessions)
+})
+
+/** A pane that read its last message, then went to work: Jakub's prompt `u-work`, then `w1` while working. */
+function workingPane(): { state: AgentDockState; at: number } {
+	const { state, at } = readPane()
+	const working1 = reduce(
+		state,
+		poll(working(), { transcript: page([user('u-work'), assistant('w1')], { cursor: 1_600_000 }) }),
+		at,
+	).state
+	return { state: working1, at: at + 1000 }
+}
+
+test('a reply queued for a working agent reads queued while it keeps talking; it lands only at its next user entry', () => {
+	const { state, at } = workingPane()
+	const sending = reduce(state, { type: 'prompt.sending', session: KEY, assistantUuid: 'w1' }, at).state
+	// The newest user entry when Jakub sent: only a newer one is his reply.
+	assert.equal(sessionOf(sending, at)?.reply?.userBefore, 'u-work')
+	const sent = reduce(
+		sending,
+		{ type: 'prompt.result', session: KEY, outcome: { status: 'sent', delivery: 'queued' } },
+		at + 100,
+	).state
+	// Still working, saying new things, well past ACT_CONFIRM_MS: held, not landed, not unconfirmed.
+	const talking = run(sent, [
+		[at + 5000, poll(working({ queued_prompts: 1 }), { transcript: page([assistant('w2')], { cursor: 1_610_000 }) })],
+		[at + 30_000, poll(working({ queued_prompts: 1 }), { transcript: page([assistant('w3')], { cursor: 1_620_000 }) })],
+	]).state
+	assert.equal(sessionOf(talking, at + 30_000)?.reply?.status, 'sent')
+	// Stopped, the source still holding it (queued_prompts 1): held, long after the agent went idle.
+	const stopped = run(talking, [
+		[at + 31_000, poll(idle({ queued_prompts: 1 }))],
+		[at + 60_000, poll(idle({ queued_prompts: 1 }))],
+	]).state
+	assert.equal(sessionOf(stopped, at + 60_000)?.reply?.status, 'sent')
+	// Typed in at last: its user entry lands it.
+	const landed = reduce(
+		stopped,
+		poll(working(), { transcript: page([user('u-queued')], { cursor: 1_630_000 }) }),
+		at + 61_000,
+	).state
+	assert.equal(sessionOf(landed, at + 61_000)?.reply?.status, 'confirmed')
+})
+
+test('a queued reply waits past the source’s fresh baseline, not the dock’s older tail', () => {
+	const { state, at } = workingPane()
+	// The dock last read u-work; Jakub had typed u-later in the terminal since, which the source read fresh.
+	const sent = run(state, [
+		[at, { type: 'prompt.sending', session: KEY, assistantUuid: 'w1' }],
+		[
+			at + 100,
+			{ type: 'prompt.result', session: KEY, outcome: { status: 'sent', delivery: 'queued', userBefore: 'u-later' } },
+		],
+	]).state
+	assert.equal(sessionOf(sent, at + 100)?.reply?.userBefore, 'u-later')
+	// The dock now reads u-later (with nothing queued any more): not Jakub's reply, still held.
+	const later = reduce(
+		sent,
+		poll(working(), { transcript: page([user('u-later')], { cursor: 1_610_000 }) }),
+		at + 2000,
+	).state
+	assert.equal(sessionOf(later, at + 2000)?.reply?.status, 'sent')
+	// Only a user entry newer than that is.
+	const landed = reduce(
+		later,
+		poll(working(), { transcript: page([user('u-queued')], { cursor: 1_620_000 }) }),
+		at + 4000,
+	).state
+	assert.equal(sessionOf(landed, at + 4000)?.reply?.status, 'confirmed')
+})
+
+test('a queued reply goes unconfirmed only 10 s after the agent is seen free with nothing left queued', () => {
+	const { state, at } = workingPane()
+	const sent = run(state, [
+		[at, { type: 'prompt.sending', session: KEY, assistantUuid: 'w1' }],
+		[at + 100, { type: 'prompt.result', session: KEY, outcome: { status: 'sent', delivery: 'queued' } }],
+		[at + 20_000, poll(working())],
+		[at + 25_000, poll(idle())],
+		[at + 34_000, poll(idle())],
+	]).state
+	// Free since +25 s: not yet 10 s.
+	assert.equal(sessionOf(sent, at + 34_000)?.reply?.status, 'sent')
+	const gone = reduce(sent, poll(idle()), at + 35_100).state
+	assert.equal(sessionOf(gone, at + 35_100)?.reply?.status, 'unconfirmed')
+	// An Okena MCP channel delivery is held the same way.
+	const channel = run(state, [
+		[at, { type: 'prompt.sending', session: KEY }],
+		[at + 100, { type: 'prompt.result', session: KEY, outcome: { status: 'sent', delivery: 'channel' } }],
+		[at + 15_000, poll(working())],
+	]).state
+	assert.equal(sessionOf(channel, at + 15_000)?.reply?.status, 'sent')
 })
 
 test('a new Claude session in the pane drops the old reply receipt', () => {
