@@ -6,6 +6,7 @@ import { build } from 'esbuild'
 import { VIEWER_CSP } from '../src/document-review/viewer-csp'
 import { assetMime } from '../src/document-review/viewer-protocol'
 import type { createReviewFixture } from '../src/renderer/document-review/fixtures'
+import { buildCzechExport } from '../src/renderer/viewer/csv-fixture-builder'
 import { buildCjkPdf, buildJbig2Pdf, buildJpxPdf } from '../src/renderer/viewer/pdf-fixture-builder'
 
 declare global {
@@ -15,6 +16,7 @@ declare global {
 		__helmNativeViewerFile?: { name: string; format: 'code' | 'data'; language: string; size: number; lines: number }
 		__helmNativeViewerPicture?: { name: string; type: 'jpeg' | 'svg'; mime: string; size: number }
 		__helmNativeViewerPdf?: { name: string; size: number }
+		__helmNativeViewerCsv?: { name: string; size: number }
 	}
 }
 
@@ -28,7 +30,9 @@ test.beforeAll(async () => {
 const viewer = window.__helmNativeViewerFile;
 const picture = window.__helmNativeViewerPicture;
 const pdf = window.__helmNativeViewerPdf;
-const fixture = createReviewFixture(viewer || picture || pdf ? 'plain' : window.__helmNativeReviewScenario);
+const csv = window.__helmNativeViewerCsv;
+const fixture = createReviewFixture(viewer || picture || pdf || csv ? 'plain' : window.__helmNativeReviewScenario);
+if (csv) fixture.replaceDocument({ name: csv.name, format: 'csv', text: '', previous: null, revision: '1'.repeat(64), csv: { url: 'file/' + csv.name, size: csv.size, kind: 'csv', encoding: 'utf-8-bom' } });
 if (pdf) fixture.replaceDocument({ name: pdf.name, format: 'pdf', text: '', previous: null, revision: '1'.repeat(64), pdf: { url: 'file/' + pdf.name, size: pdf.size } });
 if (picture) fixture.replaceDocument({ name: picture.name, format: 'image', text: '', previous: null, revision: '1'.repeat(64), picture: { url: 'file/' + picture.name, type: picture.type, mime: picture.mime, size: picture.size, fileSize: picture.size } });
 if (viewer) fixture.replaceDocument({ name: viewer.name, format: viewer.format, text: '', previous: null, revision: '1'.repeat(64), viewer: { url: 'file/' + viewer.name, language: viewer.language, size: viewer.size, encoding: 'utf-8', lines: viewer.lines, ending: 'LF' } });
@@ -396,3 +400,77 @@ for (const [name, expected] of Object.entries(PDFS) as [keyof typeof PDFS, (type
 		expect(errors).toEqual([])
 		expect(violations).toEqual([])
 	})
+
+// A CSV through the same built entry: the grid's own module worker (assets/csv-worker.js, CSP from its response)
+// reads the file by Range like a helm-viewer: token, decodes it strictly and parses it; the grid is a lazy chunk.
+test('built native entry shows a CSV grid under the viewer CSP', async ({ page, baseURL }) => {
+	if (!baseURL) throw new Error('Use the owned loopback workbench baseURL')
+	const name = 'faktury-2026-10.csv'
+	const bytes = Buffer.from(buildCzechExport(), 'utf8')
+	const entry = new URL('/__helm-native-review/', baseURL)
+	const served: string[] = []
+	const ranges: string[] = []
+	const outside: string[] = []
+	page.on('request', request => {
+		if (!request.url().startsWith(entry.origin) && !request.url().startsWith('blob:')) outside.push(request.url())
+	})
+	await page.route(`${entry.href}**`, async route => {
+		const path = new URL(route.request().url()).pathname.slice(entry.pathname.length)
+		served.push(path)
+		if (path === `file/${name}`) {
+			const range = /^bytes=(\d+)-(\d+)$/.exec(route.request().headers().range ?? '')
+			if (!range) return route.fulfill({ status: 400, body: '' })
+			const start = Number(range[1])
+			const end = Math.min(Number(range[2]), bytes.length - 1)
+			ranges.push(`${start}-${end}`)
+			return route.fulfill({
+				status: 206,
+				body: bytes.subarray(start, end + 1),
+				headers: {
+					'Content-Type': 'application/octet-stream',
+					'Content-Range': `bytes ${start}-${end}/${bytes.length}`,
+					'X-Content-Type-Options': 'nosniff',
+					'Content-Security-Policy': "sandbox; default-src 'none'",
+				},
+			})
+		}
+		const asset = assets.get(path)
+		if (!asset) return route.fulfill({ status: 404, body: '' })
+		await route.fulfill({
+			status: 200,
+			body: asset.body,
+			headers: {
+				'Content-Type': asset.contentType,
+				'Content-Security-Policy': VIEWER_CSP,
+				'X-Content-Type-Options': 'nosniff',
+			},
+		})
+	})
+	await page.addInitScript(
+		value => {
+			window.__helmNativeViewerCsv = value
+		},
+		{ name, size: bytes.length },
+	)
+	const errors: string[] = []
+	const violations: string[] = []
+	page.on('pageerror', error => errors.push(error.message))
+	page.on('console', message => {
+		if (/Content Security Policy|unsafe-eval/i.test(message.text())) violations.push(message.text())
+	})
+	await page.setViewportSize({ width: 1100, height: 760 })
+	await page.goto(entry.href)
+	await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
+	await expect(page.locator('.viewer-grid-band .viewer-grid-cell').first()).toHaveText('Číslo faktury', {
+		timeout: 20000,
+	})
+	await expect(page.locator('.viewer-status')).toContainText('241 rows')
+	await expect(page.locator('.viewer-status')).toContainText('Semicolon-separated')
+	expect(served).toContain('assets/csv-worker.js')
+	expect(served.some(path => /^assets\/CsvGrid-.*\.js$/.test(path))).toBe(true)
+	expect(ranges.length).toBeGreaterThan(0)
+	await page.waitForTimeout(300)
+	expect(outside).toEqual([])
+	expect(errors).toEqual([])
+	expect(violations).toEqual([])
+})

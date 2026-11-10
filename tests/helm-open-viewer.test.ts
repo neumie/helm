@@ -56,6 +56,8 @@ test('the last extension decides the family; compound archives, unknown and late
 		'config.yml': ['data', 'yaml'],
 		'Cargo.toml': ['data', 'toml'],
 		'report.final.pdf': ['pdf', 'pdf'],
+		'export.csv': ['csv', 'csv'],
+		'events.TSV': ['csv', 'tsv'],
 	}
 	for (const [name, [format, language]] of Object.entries(shown)) {
 		const detected = detectViewerFormat(name)
@@ -68,7 +70,7 @@ test('the last extension decides the family; compound archives, unknown and late
 		'site.tgz': /is an archive/,
 		'bundle.zip': /is an archive/,
 		'contract.final.docx': /Helm can't show Word documents yet \(contract\.final\.docx\)/,
-		'export.csv': /Helm can't show CSV files yet/,
+		'book.xlsx': /Helm can't show spreadsheets yet/,
 		'deck.pptx': /presentations and iWork files yet/,
 		'thing.weird': /Helm can't show \.weird files \(thing\.weird\)\./,
 		'README-no-dot': /it has no file extension/,

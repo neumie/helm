@@ -19,6 +19,7 @@ import type {
 import { ActivityIndicator } from '../activity-indicator'
 import { Btn, buttonClassName } from '../button'
 import { GLYPH, MenuButton, Sheet } from '../sidebar/ui'
+import { CsvViewer } from '../viewer/CsvViewer'
 import { PdfViewer } from '../viewer/PdfViewer'
 import { PictureViewer } from '../viewer/PictureViewer'
 import { PlainViewer } from '../viewer/PlainViewer'
@@ -2063,6 +2064,19 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 					void api.retryDocument().then(() => refresh())
 				}}
 				subscribeZoom={api.onZoom}
+			/>
+		)
+	// CSV/TSV: a worker reads this window's helm-viewer:// token by range; the grid shows what is on screen.
+	if (plain && state.document.csv)
+		return (
+			<CsvViewer
+				document={state.document}
+				theme={theme}
+				zoom={zoom}
+				onToggleTheme={() => setPlainTheme(theme === 'dark' ? 'light' : 'dark')}
+				onRetry={() => {
+					void api.retryDocument().then(() => refresh())
+				}}
 			/>
 		)
 	// Pictures: their own view, bytes from this window's helm-viewer:// token; copy goes through main's PNG check.

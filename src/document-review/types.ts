@@ -36,13 +36,15 @@ export interface ReviewDocument {
 	previous: string | null
 	error: string | null
 	/** `jsx` is the executing canvas (feedback mode only); a plain .jsx/.tsx is `code`, shown as source. */
-	format?: 'markdown' | 'jsx' | 'code' | 'text' | 'data' | 'image' | 'pdf'
+	format?: 'markdown' | 'jsx' | 'code' | 'text' | 'data' | 'image' | 'pdf' | 'csv'
 	/** Plain code/text/data: bytes come from the view's own helm-viewer: token, never over IPC. */
 	viewer?: ReviewViewerFile
 	/** Plain pictures (raster, SVG, HEIC as the PNG `sips` made): bytes come from the view's token too. */
 	picture?: ReviewViewerPicture
 	/** Plain PDFs: pdf.js reads the view's token by range. */
 	pdf?: ReviewViewerPdf
+	/** Plain CSV/TSV: the grid's worker reads the view's token by range and parses it. */
+	csv?: ReviewViewerCsv
 	canvas?: ReviewCanvasCompilation
 	archive?: CanvasReviewArchive
 }
@@ -75,6 +77,16 @@ export interface ReviewViewerPdf {
 	url: string
 	/** Bytes the token serves (the file's size). */
 	size: number
+}
+export interface ReviewViewerCsv {
+	/** helm-viewer://app/file/<token>, valid for this revision and only inside this view. Read by range. */
+	url: string
+	/** Bytes the token serves (the file's size). */
+	size: number
+	/** `.csv` guesses its delimiter (comma, semicolon, tab or pipe); `.tsv` and `.tab` are tab-separated. */
+	kind: 'csv' | 'tsv'
+	/** From the byte order mark main read; anything without a UTF-16 one must be UTF-8. */
+	encoding: 'utf-8' | 'utf-8-bom' | 'utf-16le' | 'utf-16be'
 }
 export interface ReviewAnnotation {
 	id: string
