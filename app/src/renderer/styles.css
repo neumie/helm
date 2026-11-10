@@ -3348,6 +3348,17 @@ body.dragging {
 	color: var(--dock-dim);
 }
 
+/* `Done today 8 · show · 5 filtered`: two buttons on one line. It wraps between them on a narrow
+ * column instead of cutting the filtered count off, and leaves their focus rings unclipped. */
+.signals-subhead[data-done-header] {
+	overflow: visible;
+	white-space: normal;
+}
+
+.signals-subhead[data-done-header] :is(.signals-done-toggle, .signals-filtered) {
+	white-space: nowrap;
+}
+
 .signals-subhead:first-child {
 	margin-top: 2px;
 }
@@ -3533,8 +3544,7 @@ body.dragging {
 	display: none;
 }
 
-.signals-health,
-.signals-foot-filtered {
+.signals-health {
 	flex: 1 1 100%;
 	min-width: 0;
 	color: var(--dock-dim);
@@ -3554,7 +3564,7 @@ body.dragging {
 	letter-spacing: -0.01em;
 }
 
-/* `12 filtered`: the mail the rules kept out, one dim line that opens the filtered list. A plain
+/* `5 filtered`: the mail the rules kept out, after the done count; opens the filtered list. A plain
  * text button (no fill at rest); `f` reads as a key hint while Signals holds the keys. */
 .signals-filtered {
 	min-height: 24px;
@@ -3577,15 +3587,8 @@ body.dragging {
 	color: var(--text-1);
 }
 
-/* The filtered count in the header line (filtered look `header`): after the summary, never cut. */
-.signals-title-filtered {
-	flex: none;
-	white-space: nowrap;
-	color: var(--dock-dim);
-}
-
-/* `done today 10`: the collapsed done rows' count in the closed subhead, a plain text button like
- * `12 filtered`; `D` reads as a key hint while Signals holds the keys. */
+/* `Done today 10 · show`: the done rows' count on its own subhead line, a plain text button like
+ * `5 filtered`; `D` reads as a key hint while Signals holds the keys. */
 .signals-done-toggle {
 	min-height: 24px;
 	padding: 0;

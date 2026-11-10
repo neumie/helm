@@ -66,10 +66,10 @@ test('j and k move the selection; s, d and m move the thread and select the next
 	await expect(view.selected).toHaveAttribute('data-signal-id', second ?? '')
 	await expect(view.note).toContainText('Snoozed')
 
-	// Done rows are collapsed: a dismissed thread leaves the list and counts in `done today`.
+	// Done rows are collapsed: a dismissed thread leaves the list and counts in `Done today`.
 	await page.keyboard.press('d')
 	await expect(view.signals.locator(`.signals-tr[data-signal-id="${second}"]`)).toHaveCount(0)
-	await expect(view.signals.locator('[data-done-header]')).toContainText('done today 3')
+	await expect(view.signals.locator('[data-done-header]')).toContainText('Done today 3')
 
 	const third = await view.selected.getAttribute('data-signal-id')
 	await page.keyboard.press('m')
@@ -262,11 +262,11 @@ test('send to agent: Esc mid-send keeps it running; the late send still saves it
 	expect((await calls(page))?.routed).toEqual([expect.objectContaining({ id: 970, how: 'sent' })])
 })
 
-test('the footer says how much mail was filtered; f and the line open the filtered list, Esc goes back', async ({
+test('after the done count, how much mail was filtered; f and the count open the filtered list, Esc goes back', async ({
 	page,
 }) => {
 	const view = await open(page, 'views-signals-column--column')
-	const line = view.signals.locator('.signals-filtered')
+	const line = view.signals.locator('[data-done-header] .signals-filtered')
 	await expect(line).toBeVisible()
 	await expect(line).toContainText('5 filtered')
 	// Calm: dim text, no fill, no weight; the `f` key hint shows only while Signals holds the keys.

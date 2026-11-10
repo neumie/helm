@@ -1,8 +1,8 @@
 import { type Page, expect, test } from '@playwright/test'
 
-// Done threads in Signals (design §3.25): collapsed under `Snoozed · done today N` by default, `D`
-// or a click on the count lists them, the choice survives a reload (renderer storage), and each
-// listed row knows how it got done (`data-done-reason`), shown where the story's look puts it.
+// Done threads in Signals (design §3.25): collapsed under their own `Done today N · show` line by
+// default (the filtered mail count after it), `D` or a click on the count lists them, the choice
+// survives a reload (renderer storage), and each listed row says how it got done after its ref.
 
 const story = (id: string) => `/iframe.html?id=${id}&viewMode=story`
 
@@ -24,7 +24,7 @@ async function open(page: Page, id: string) {
 test('done rows start collapsed; D and the count list and hide them, and the choice is kept', async ({ page }) => {
 	const view = await open(page, 'views-signals-column--column')
 	await expect(view.done).toHaveCount(0)
-	await expect(view.toggle).toHaveText(/^done today 2/)
+	await expect(view.toggle).toHaveText(/^Done today 2 · show/)
 	await expect(view.toggle).toHaveAttribute('aria-expanded', 'false')
 	// The `D` hint shows only while Signals holds the keys.
 	await expect(view.signals.locator('.signals-done-key')).toBeVisible()
@@ -63,8 +63,8 @@ test('done rows start collapsed; D and the count list and hide them, and the cho
 	await expect(page.locator('.signals-tr[data-section="done"]')).toHaveCount(0)
 })
 
-test('each done row knows how it got done', async ({ page }) => {
-	const view = await open(page, 'views-signals-done-reason--reason-current')
+test('each done row says how it got done after its ref, the whole as tooltip, no layout spill', async ({ page }) => {
+	const view = await open(page, 'views-signals-done--listed')
 	const reasons = await view.done.evaluateAll(rows =>
 		rows.map(row => [(row as HTMLElement).dataset.signalId, (row as HTMLElement).dataset.doneReason]),
 	)
@@ -78,73 +78,43 @@ test('each done row knows how it got done', async ({ page }) => {
 		'505': 'answered',
 		'965': 'dismissed',
 	})
-	// Today's look: the time only, no reason text on the row.
-	await expect(view.signals.locator('.signals-done-reason')).toHaveCount(0)
-	await page.screenshot({ path: test.info().outputPath('signals-done-current.png') })
+	const gone = view.signals.locator('.signals-tr[data-signal-id="298"]')
+	await expect(gone.locator('.signals-td-ref')).toHaveText('okena#298 · gone from GitHub')
+	await expect(gone.locator('.signals-done-reason')).toHaveAttribute(
+		'title',
+		/^gone from GitHub · no longer open or requested · closed \d+:\d\d$/,
+	)
+	// The close time stays in the age cell.
+	await expect(gone.locator('.signals-td-age')).toHaveText(/^\d+:\d\d$/)
+	await expect(view.signals.locator('.signals-done-reason')).toHaveCount(8)
+	// Every row stays inside the column (nothing wraps or overflows sideways).
+	const spill = await view.signals.evaluate(root => {
+		const scroller = root.querySelector('.signals-scroll') as HTMLElement
+		return scroller.scrollWidth - scroller.clientWidth
+	})
+	expect(spill).toBeLessThanOrEqual(0)
+	await expect(view.toggle).toHaveText(/^Done today 8 · hide/)
+	await page.screenshot({ path: test.info().outputPath('signals-done-listed.png') })
 })
 
-for (const [look, check] of [
-	['age', '.signals-tr[data-signal-id="298"] .signals-td-age'],
-	['ref', '.signals-tr[data-signal-id="298"] .signals-done-reason'],
-	['line', '.signals-tr[data-signal-id="298"] .signals-td-detail'],
-] as const) {
-	test(`reason look ${look}: shown in its cell, the whole as tooltip, no layout spill`, async ({ page }) => {
-		const view = await open(page, `views-signals-done-reason--reason-${look}`)
-		const cell = view.signals.locator(check)
-		await expect(cell).toContainText(look === 'age' ? 'gone' : 'gone from GitHub')
-		await expect(cell).toHaveAttribute('title', /no longer open or requested · closed \d+:\d\d$/)
-		// Every row stays inside the column (nothing wraps or overflows sideways).
-		const spill = await view.signals.evaluate(root => {
-			const scroller = root.querySelector('.signals-scroll') as HTMLElement
-			return scroller.scrollWidth - scroller.clientWidth
-		})
-		expect(spill).toBeLessThanOrEqual(0)
-		await page.screenshot({ path: test.info().outputPath(`signals-done-${look}.png`) })
-	})
-}
+test('collapsed: Done today has its own line after the snoozed rows, the filtered count after it', async ({ page }) => {
+	const view = await open(page, 'views-signals-done--collapsed')
+	await expect(view.done).toHaveCount(0)
+	const header = view.signals.locator('[data-done-header]')
+	await expect(header).toHaveText(/^Done today 8 · show · D · 5 filtered · f$/)
+	// Snoozed keeps its own subhead, before the done line.
+	const subheads = await view.signals.locator('.signals-subhead').allTextContents()
+	expect(subheads.slice(-2)).toEqual(['Snoozed 1', expect.stringMatching(/^Done today 8/)])
+	// Nothing filtered-related is left in the footer or the header.
+	await expect(view.signals.locator('.signals-filtered')).toHaveCount(1)
+	await expect(view.signals.locator('.signals-foot .signals-filtered, .signals-title .signals-filtered')).toHaveCount(0)
+	await page.screenshot({ path: test.info().outputPath('signals-done-collapsed.png') })
 
-for (const look of ['count', 'word', 'split'] as const) {
-	test(`header look ${look}: collapsed count as a toggle`, async ({ page }) => {
-		const view = await open(page, `views-signals-done-reason--header-${look}`)
-		await expect(view.done).toHaveCount(0)
-		await expect(view.toggle).toHaveText(
-			look === 'count'
-				? /^done today 8 · D$/
-				: look === 'word'
-					? /^done today 8 · show · D$/
-					: /^Done today 8 · show · D$/,
-		)
-		await page.keyboard.press('Shift+D')
-		await expect(view.done).toHaveCount(8)
-		if (look !== 'count') await expect(view.toggle).toContainText('hide')
-	})
-}
-
-test('filtered indicator looks: the count rests where the look puts it, f always opens the list', async ({ page }) => {
-	const places = {
-		footer: '.signals-foot-filtered .signals-filtered',
-		closed: '[data-done-header] .signals-filtered',
-		header: '.signals-title-filtered .signals-filtered',
-	} as const
-	for (const look of ['footer', 'closed', 'key', 'header'] as const) {
-		const view = await open(page, `views-signals-filtered-indicator--${look}`)
-		const buttons = view.signals.locator('.signals-filtered')
-		if (look === 'key') {
-			await expect(buttons).toHaveCount(0)
-			const hint = view.signals.locator('.signals-foot-hints .signals-hint', { hasText: '5 filtered' })
-			await expect(hint).toBeVisible()
-			// No resting text: the hint goes with the other key hints once Signals lets go of the keys.
-			await page.locator('.term-holder.active .xterm-screen').click()
-			await expect(hint).toBeHidden()
-			await view.signals.focus()
-		} else {
-			await expect(buttons).toHaveCount(1)
-			await expect(view.signals.locator(places[look])).toContainText('5 filtered')
-		}
-		await page.screenshot({ path: test.info().outputPath(`signals-filtered-${look}.png`) })
-		await page.keyboard.press('f')
-		await expect(view.signals.locator('.signals-tr[data-section="filtered"]')).toHaveCount(5)
-		await page.keyboard.press('Escape')
-		await expect(view.signals.locator('.signals-tr[data-section="filtered"]')).toHaveCount(0)
-	}
+	await page.keyboard.press('f')
+	await expect(view.signals.locator('.signals-tr[data-section="filtered"]')).toHaveCount(5)
+	await page.keyboard.press('Escape')
+	await expect(view.signals.locator('.signals-tr[data-section="filtered"]')).toHaveCount(0)
+	await page.keyboard.press('Shift+D')
+	await expect(view.done).toHaveCount(8)
+	await expect(view.toggle).toContainText('Done today 8 · hide')
 })

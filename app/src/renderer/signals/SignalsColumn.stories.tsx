@@ -19,7 +19,7 @@ const meta: Meta<typeof SignalsWorkspace> = {
 export default meta
 type Story = StoryObj<typeof SignalsWorkspace>
 
-/** Needs you, Managed and Snoozed · done, with the selected row's keys in the footer. */
+/** Needs you, Managed, Snoozed and the collapsed `Done today` line, with the selected row's keys in the footer. */
 export const Column: Story = {}
 
 /** A quiet afternoon: nothing needs Jakub, every source answered. */

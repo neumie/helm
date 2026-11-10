@@ -8,7 +8,6 @@ import { useEffect, useMemo, useRef } from 'react'
 import { focusActiveTerminal, memoryLeftColumnMode, mountLeftColumn, mountSignalsShortcut } from '../left-column'
 import { type TerminalWorkspaceFixtureOptions, TerminalWorkspaceFixtureView } from '../terminal-workspace-fixtures'
 import { type SignalsFlow, mountSignals } from './Signals'
-import type { DoneHeaderLook, DoneReasonLook, FilteredLook } from './model'
 import {
 	type SignalsFixture,
 	createSignalsFixture,
@@ -34,9 +33,6 @@ export interface SignalsWorkspaceProps {
 	flow?: 'send' | 'new-agent' | 'reply' | 'links' | 'filtered'
 	/** Start with the done rows listed (memory only); absent = the stored preference (collapsed). */
 	doneShown?: boolean
-	doneReasonLook?: DoneReasonLook
-	doneHeaderLook?: DoneHeaderLook
-	filteredLook?: FilteredLook
 }
 
 declare global {
@@ -83,14 +79,7 @@ const FLOW_THREAD: Record<Exclude<NonNullable<SignalsWorkspaceProps['flow']>, 'f
 	links: 501,
 }
 
-export function SignalsWorkspace({
-	scenario = 'column',
-	flow,
-	doneShown,
-	doneReasonLook,
-	doneHeaderLook,
-	filteredLook,
-}: SignalsWorkspaceProps) {
+export function SignalsWorkspace({ scenario = 'column', flow, doneShown }: SignalsWorkspaceProps) {
 	const fixture = useMemo(() => fixtureFor(scenario), [scenario])
 	const options = useMemo<TerminalWorkspaceFixtureOptions>(
 		() => ({ agentDock: { scenario: 'real-case', position: 'bottom', output: 'claude-code' } }),
@@ -136,9 +125,6 @@ export function SignalsWorkspace({
 					mod: 'cmd',
 					initialFlow,
 					initialDoneShown: doneShown,
-					doneReasonLook,
-					doneHeaderLook,
-					filteredLook,
 				}),
 		})
 		const disposeShortcut = mountSignalsShortcut({
@@ -154,7 +140,7 @@ export function SignalsWorkspace({
 			column.dispose()
 			if (window.__signalsFixture === fixture) window.__signalsFixture = undefined
 		}
-	}, [options, fixture, flow, doneShown, doneReasonLook, doneHeaderLook, filteredLook])
+	}, [options, fixture, flow, doneShown])
 
 	return (
 		<div ref={wrapRef} style={{ display: 'contents' }}>

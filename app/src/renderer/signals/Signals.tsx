@@ -25,9 +25,6 @@ import { GLYPH } from '../sidebar/ui'
 import { storedPreference } from '../stored-preference'
 import {
 	type AgentMatch,
-	type DoneHeaderLook,
-	type DoneReasonLook,
-	type FilteredLook,
 	PICK_MAX,
 	REPLY_MAX,
 	type SignalActionKey,
@@ -70,7 +67,7 @@ interface DoneShownFlag {
 }
 
 /**
- * Whether the done rows under `Snoozed · done today` are listed (`D`, or a click on the count).
+ * Whether the done rows under `Done today N · show` are listed (`D`, or a click on the count).
  * Collapsed by default; the choice is kept per renderer (Helm's userData), like the dock's layout.
  */
 export const signalsDoneShown: DoneShownFlag = storedPreference<boolean>(
@@ -111,12 +108,6 @@ export interface SignalsColumnProps {
 	initialFlow?: SignalsFlow
 	/** Review fixtures only: start with the done rows listed or not, without the stored preference. */
 	initialDoneShown?: boolean
-	/** Where a done row says how it got done (Jakub picks; `none` = the current look). */
-	doneReasonLook?: DoneReasonLook
-	/** How the done count reads in the closed subhead (Jakub picks; `count` = the current text). */
-	doneHeaderLook?: DoneHeaderLook
-	/** Where the `5 filtered` count rests (Jakub picks; `footer` = the current look). */
-	filteredLook?: FilteredLook
 }
 
 /**
@@ -181,23 +172,21 @@ function SignalRow({
 	snapshot,
 	now,
 	selected,
-	look,
 	onSelect,
 }: {
 	thread: SignalThread
 	snapshot: AgentDockSnapshot | null
 	now: number
 	selected: boolean
-	look: DoneReasonLook
 	onSelect(): void
 }) {
-	const view = signalRowView(thread, snapshot, now, look)
+	const view = signalRowView(thread, snapshot, now)
 	const section = signalSection(thread, now) ?? 'done'
 	return (
 		<li
 			className="signals-tr"
 			data-section={section}
-			data-done-reason={view.doneReason ?? undefined}
+			data-done-reason={view.doneReason?.kind}
 			data-signal-id={thread.id}
 			data-selected={selected ? 'true' : undefined}
 			aria-current={selected ? 'true' : undefined}
@@ -215,17 +204,17 @@ function SignalRow({
 			</span>
 			<span className="signals-td-ref">
 				{view.ref}
-				{view.refNote ? (
-					<span className="signals-done-reason" title={view.reasonTitle}>
+				{view.doneReason ? (
+					<span className="signals-done-reason" title={view.doneReason.title}>
 						{' · '}
-						{view.refNote}
+						{view.doneReason.word}
 					</span>
 				) : null}
 			</span>
 			<span className="signals-td-what" title={view.what}>
 				{view.what}
 			</span>
-			<span className="signals-td-age" title={view.reasonAt === 'age' ? view.reasonTitle : undefined}>
+			<span className="signals-td-age">
 				{view.receipt ? (
 					// An answer only saved on the thread was not delivered: no check mark.
 					<span className="signals-receipt" data-how={view.receipt.how}>
@@ -252,7 +241,7 @@ function SignalRow({
 				{view.agent}
 			</span>
 			{view.detail ? (
-				<span className="signals-td-detail" title={view.reasonAt === 'line' ? view.reasonTitle : view.detail}>
+				<span className="signals-td-detail" title={view.detail}>
 					{view.detail}
 				</span>
 			) : null}
@@ -262,24 +251,11 @@ function SignalRow({
 }
 
 /**
- * The done count as a text button (`D` toggles it while Signals holds the keys). `count`: just
- * `done today 10`; `word` and `split`: `· show` / `· hide` after it.
+ * `Done today 10 · show`: the done count as a text button that lists or hides the done rows (`D`
+ * toggles it while Signals holds the keys). A count of 0 is plain text.
  */
-function DoneToggle({
-	count,
-	shown,
-	look,
-	capital,
-	onToggle,
-}: {
-	count: number
-	shown: boolean
-	look: DoneHeaderLook
-	/** Starts its own line (`split`): `Done today 10`. */
-	capital: boolean
-	onToggle(): void
-}) {
-	const label = `${capital ? 'Done' : 'done'} today ${count}`
+function DoneToggle({ count, shown, onToggle }: { count: number; shown: boolean; onToggle(): void }) {
+	const label = `Done today ${count}`
 	if (count === 0) return <>{label}</>
 	return (
 		<button
@@ -295,8 +271,7 @@ function DoneToggle({
 			}}
 			onClick={onToggle}
 		>
-			{label}
-			{look === 'count' ? null : ` · ${shown ? 'hide' : 'show'}`}
+			{label} · {shown ? 'hide' : 'show'}
 			<span className="signals-done-key" aria-hidden="true">
 				{' '}
 				· <kbd>D</kbd>
@@ -332,10 +307,8 @@ function SignalsTable({
 	selected,
 	quietEmpty,
 	doneShown,
-	doneReasonLook,
-	doneHeaderLook,
 	onToggleDone,
-	closedExtra,
+	filtered,
 	onSelect,
 }: {
 	/** With the done rows already left out while they are collapsed. */
@@ -346,11 +319,9 @@ function SignalsTable({
 	/** Every source answered: an empty Needs you may say so. */
 	quietEmpty: boolean
 	doneShown: boolean
-	doneReasonLook: DoneReasonLook
-	doneHeaderLook: DoneHeaderLook
 	onToggleDone(): void
-	/** Rests after the done count (the filtered count, look `closed`). */
-	closedExtra?: ReactNode
+	/** The `5 filtered · f` button, after the done count; null when nothing was filtered. */
+	filtered: ReactNode
 	onSelect(id: number): void
 }) {
 	const row = (thread: SignalThread) => (
@@ -360,17 +331,7 @@ function SignalsTable({
 			snapshot={snapshot}
 			now={now}
 			selected={selected === thread.id}
-			look={doneReasonLook}
 			onSelect={() => onSelect(thread.id)}
-		/>
-	)
-	const toggle = (capital: boolean) => (
-		<DoneToggle
-			count={sections.doneToday}
-			shown={doneShown}
-			look={doneHeaderLook}
-			capital={capital}
-			onToggle={onToggleDone}
 		/>
 	)
 	return (
@@ -395,28 +356,16 @@ function SignalsTable({
 					Nothing is managed. m hands a thread to the dispatcher
 				</li>
 			)}
-			{doneHeaderLook === 'split' ? (
-				<>
-					{sections.snoozed.length > 0 ? (
-						<li className="signals-subhead" role="presentation">
-							Snoozed {sections.snoozed.length}
-						</li>
-					) : null}
-					{sections.snoozed.map(row)}
-					<li className="signals-subhead" role="presentation" data-done-header="">
-						{toggle(true)}
-						{closedExtra ? <> · {closedExtra}</> : null}
-					</li>
-				</>
-			) : (
-				<>
-					<li className="signals-subhead" role="presentation" data-done-header="">
-						Snoozed {sections.snoozed.length} · {toggle(false)}
-						{closedExtra ? <> · {closedExtra}</> : null}
-					</li>
-					{sections.snoozed.map(row)}
-				</>
-			)}
+			{sections.snoozed.length > 0 ? (
+				<li className="signals-subhead" role="presentation">
+					Snoozed {sections.snoozed.length}
+				</li>
+			) : null}
+			{sections.snoozed.map(row)}
+			<li className="signals-subhead" role="presentation" data-done-header="">
+				<DoneToggle count={sections.doneToday} shown={doneShown} onToggle={onToggleDone} />
+				{filtered ? <> · {filtered}</> : null}
+			</li>
 			{sections.done.map(row)}
 		</ul>
 	)
@@ -432,9 +381,6 @@ export function SignalsColumn({
 	initialSelected,
 	initialFlow = null,
 	initialDoneShown,
-	doneReasonLook = 'none',
-	doneHeaderLook = 'count',
-	filteredLook = 'footer',
 }: SignalsColumnProps) {
 	const bridge = useSyncExternalStore(service.subscribe, service.getState)
 	const snapshot = useSyncExternalStore(dock.subscribe, dock.snapshot)
@@ -762,9 +708,6 @@ export function SignalsColumn({
 							<span className="signals-title-context">
 								{signalsSummary(sections, now, bridge.snapshot ? sources : null)}
 							</span>
-							{filteredLook === 'header' && filteredButton ? (
-								<span className="signals-title-filtered">· {filteredButton}</span>
-							) : null}
 						</span>
 						<IconBtn label="Settings" className="signals-settings" onClick={onOpenSettings}>
 							{GLYPH.settings}
@@ -779,10 +722,8 @@ export function SignalsColumn({
 								selected={current}
 								quietEmpty={allSourcesOk(sources)}
 								doneShown={doneShown}
-								doneReasonLook={doneReasonLook}
-								doneHeaderLook={doneHeaderLook}
 								onToggleDone={toggleDone}
-								closedExtra={filteredLook === 'closed' ? filteredButton : null}
+								filtered={filteredButton}
 								onSelect={id => {
 									setSelected(id)
 									setNote(null)
@@ -801,7 +742,6 @@ export function SignalsColumn({
 										</Hint>
 									))
 								: null}
-							{filteredLook === 'key' && filtered ? <Hint keys="f">{filtered}</Hint> : null}
 						</span>
 						<output className="signals-note">{note ?? (routing ? `${routing.label} (still running)` : null)}</output>
 						{bridge.snapshot && bridge.error ? <span className="signals-health">{bridge.error}</span> : null}
@@ -810,9 +750,6 @@ export function SignalsColumn({
 								{line}
 							</span>
 						))}
-						{filteredLook === 'footer' && filteredButton ? (
-							<span className="signals-foot-filtered">{filteredButton}</span>
-						) : null}
 					</footer>
 				</>
 			)}

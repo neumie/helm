@@ -24,7 +24,6 @@ const {
 	allSourcesOk,
 	askDeliveryTarget,
 	askReceipt,
-	closedHeader,
 	defaultAgentPick,
 	doneReason,
 	following,
@@ -194,7 +193,6 @@ test('sections split by owner and state, newest activity first, done only for a 
 	)
 	assert.deepEqual(sections.done.map(entry => entry.id).sort(), [5, 7])
 	assert.equal(sections.doneToday, 2)
-	assert.equal(closedHeader(sections), 'Snoozed 1 · done today 2')
 	assert.deepEqual(
 		orderedRows(sections).map(entry => entry.id),
 		[2, 1, 3, 4, ...sections.done.map(entry => entry.id)],
@@ -601,8 +599,6 @@ test('done reason: the daemon’s own closed reasons and who closed it by hand',
 
 	assert.equal(doneReason(thread({ id: 30 })), null, 'only done threads have a reason')
 	const noted = doneReason(done({ id: 31, closedBy: 'agent', note: 'Merged as #12' }))
-	assert.equal(noted?.note, 'Merged as #12')
-	assert.equal(noted?.short, 'by agent')
 	const at = new Date(NOW - 50 * MINUTE)
 	assert.equal(
 		noted?.title,
@@ -612,20 +608,9 @@ test('done reason: the daemon’s own closed reasons and who closed it by hand',
 		doneReason(done({ id: 32, ...mail, closedReason: MAIL_GONE_REASON }))?.title ?? '',
 		/^read in Mail · no longer unread in the inbox · closed /,
 	)
-	for (const kind of ['read', 'gone', 'dismissed', 'agent', 'answered', 'unknown'] as const) {
-		const row = {
-			read: done({ id: 40, ...mail, closedReason: MAIL_GONE_REASON }),
-			gone: done({ id: 41, closedReason: GITHUB_GONE_REASON }),
-			dismissed: done({ id: 42, closedBy: 'jakub' }),
-			agent: done({ id: 43, closedBy: 'agent' }),
-			answered: ask({ id: 44, state: 'done', closedReason: SIGNAL_ASK_CLOSED_REASON, reply: 'Yes' }),
-			unknown: done({ id: 45 }),
-		}[kind]
-		assert.ok((doneReason(row)?.short.length ?? 99) <= 9, `${kind} fits the age cell`)
-	}
 })
 
-test('done reason looks: today’s time, a word in place of it, after the ref, or a third line', () => {
+test('a done row keeps its close time and says how it got done after the ref', () => {
 	const closed = new Date(NOW - 50 * MINUTE)
 	const clock = `${closed.getHours()}:${String(closed.getMinutes()).padStart(2, '0')}`
 	const row = thread({
@@ -637,26 +622,13 @@ test('done reason looks: today’s time, a word in place of it, after the ref, o
 		note: 'Merged',
 		updatedAt: closed.toISOString(),
 	})
-	const none = signalRowView(row, null, NOW)
-	assert.equal(none.age, clock)
-	assert.equal(none.refNote, null)
-	assert.equal(none.detail, null)
-	assert.equal(none.doneReason, 'agent')
-	assert.equal(none.reasonAt, null)
-
-	const age = signalRowView(row, null, NOW, 'age')
-	assert.equal(age.age, 'by agent')
-	assert.equal(age.reasonAt, 'age')
-	assert.match(age.reasonTitle ?? '', new RegExp(`closed ${clock}$`))
-
-	const ref = signalRowView(row, null, NOW, 'ref')
-	assert.equal(ref.age, clock)
-	assert.equal(ref.refNote, 'closed by fix-widget')
-
-	const line = signalRowView(row, null, NOW, 'line')
-	assert.equal(line.age, clock)
-	assert.equal(line.detail, 'closed by fix-widget · Merged')
-	// An answered ask's body line gives way to how it got done.
+	const view = signalRowView(row, null, NOW)
+	assert.equal(view.age, clock)
+	assert.equal(view.detail, null)
+	assert.equal(view.doneReason?.kind, 'agent')
+	assert.equal(view.doneReason?.word, 'closed by fix-widget')
+	assert.equal(view.doneReason?.title, `closed by fix-widget · Merged · closed ${clock}`)
+	// An answered ask keeps its body line; how it got done goes after the ref.
 	const answered = ask({
 		id: 2,
 		state: 'done',
@@ -666,11 +638,10 @@ test('done reason looks: today’s time, a word in place of it, after the ref, o
 		reply: 'B',
 		updatedAt: closed.toISOString(),
 	})
-	assert.equal(signalRowView(answered, null, NOW, 'line').detail, 'answered')
 	assert.equal(signalRowView(answered, null, NOW).detail, 'Pick one')
-	// Not done: no look changes anything.
-	const open = thread({ id: 3 })
-	assert.deepEqual(signalRowView(open, null, NOW, 'line'), signalRowView(open, null, NOW))
+	assert.equal(signalRowView(answered, null, NOW).doneReason?.word, 'answered')
+	// Not done: no reason.
+	assert.equal(signalRowView(thread({ id: 3 }), null, NOW).doneReason, null)
 })
 
 test('summary counts what still needs Jakub', () => {
@@ -890,7 +861,7 @@ test('branch suggestions: PR head branch, issue number, mail subject slug', () =
 	assert.equal(oneLine('a\u0000b\n\tc', 10), 'a b c')
 })
 
-test('filtered mail: the footer line, the header summary, rows by decoded sender and the include note', () => {
+test('filtered mail: the count after Done today, the header summary, rows by decoded sender and the include note', () => {
 	assert.equal(filteredLine(undefined), null)
 	assert.equal(filteredLine(0), null)
 	assert.equal(filteredLine(12), '12 filtered')
