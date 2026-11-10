@@ -375,6 +375,12 @@ export function createReviewFixture(scenario: ReviewFixtureScenario = 'normal') 
 		zoom: (step: -1 | 0 | 1) => {
 			for (const listener of zoomListeners) listener(step)
 		},
+		/** Stands in for main's observation publishing a new document snapshot (plain viewer stories, live reload). */
+		replaceDocument: (document: Partial<ReviewState['document']>, theme?: ReviewState['draft']['theme']) => {
+			state.document = { ...state.document, ...document }
+			if (theme) state.draft = { ...state.draft, theme }
+			publish()
+		},
 		/** Display fixture enrollment stands in for an external CLI/native connection, never UI creation. */
 		connect: (provider: ReviewSession['provider'] = 'pi') => {
 			const next: ReviewSession = {

@@ -1,0 +1,398 @@
+/* Plain `helm open` code, text and data views (docs/plans/helm-open/spec.md S2; design-system “Native document review workspace” → Plain files). Tokens only.
+ * The window reuses `.document-review` (header, banners, scoped light palette); this sheet adds the stage, the
+ * CodeMirror skin, the data tree and the status line. Editor rules start with `.viewer-code .cm-editor` plus a
+ * descendant so they outrank CodeMirror's injected base theme whatever the mount order. */
+
+.viewer-window {
+	/* Syntax colors: glyph color only, never a fill. Dark uses the terminal ANSI ladder. */
+	--syntax-keyword: var(--ansi-magenta);
+	--syntax-string: var(--ansi-green);
+	--syntax-number: var(--ansi-cyan);
+	--syntax-comment: var(--text-2);
+	--syntax-type: var(--ansi-yellow);
+	--syntax-function: var(--ansi-blue);
+	--syntax-property: var(--ansi-white);
+	--syntax-invalid: var(--ansi-red);
+}
+/* The ANSI ladder is tuned for dark; the scoped light surface gets darker glyphs (≥4.5:1 on its well). */
+.viewer-window[data-review-theme="light"] {
+	--syntax-keyword: #8a3ab0;
+	--syntax-string: #1f7347;
+	--syntax-number: #0a6878;
+	--syntax-type: #855708;
+	--syntax-function: #1764b8;
+	--syntax-property: #24272c;
+	--syntax-invalid: #b91c1c;
+}
+
+.viewer-stage {
+	position: relative;
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	min-height: 0;
+	background: var(--well);
+	/* Reading zoom: the stage scales its own copy of --ui-scale, like `.review-reading`. */
+	--ui-scale: calc(var(--review-ui-scale) * var(--review-zoom, 1));
+}
+.viewer-pane {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	min-height: 0;
+}
+.viewer-pane[hidden] {
+	display: none;
+}
+.viewer-note {
+	margin: 0;
+	padding: 16px;
+	color: var(--text-1);
+	font-size: calc(13px * var(--ui-scale));
+}
+.viewer-note-inline {
+	padding: 8px 16px;
+	border-bottom: 1px solid var(--hairline);
+	font-size: calc(12px * var(--ui-scale));
+}
+
+/* ---- code view ---- */
+
+.viewer-code {
+	flex: 1 1 auto;
+	min-height: 0;
+	min-width: 0;
+}
+.viewer-code .cm-editor {
+	height: 100%;
+	background: var(--well);
+	color: var(--text-0);
+	font-size: calc(12px * var(--ui-scale));
+}
+.viewer-code .cm-editor.cm-focused {
+	outline: none;
+}
+.viewer-code .cm-editor:has(.cm-content:focus-visible) {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+.viewer-code .cm-editor .cm-scroller {
+	font-family: var(--font-mono);
+	line-height: 1.6;
+	letter-spacing: 0;
+	overflow: auto;
+}
+.viewer-code .cm-editor .cm-content {
+	padding: 12px 0;
+	caret-color: var(--accent);
+}
+.viewer-code .cm-editor .cm-line {
+	padding: 0 16px 0 12px;
+}
+.viewer-code .cm-editor .cm-gutters {
+	background: var(--well);
+	color: var(--text-2);
+	border: none;
+	border-right: 1px solid var(--hairline);
+}
+.viewer-code .cm-editor .cm-lineNumbers .cm-gutterElement {
+	padding: 0 12px 0 16px;
+	min-width: 24px;
+	font-variant-numeric: tabular-nums;
+}
+/* Active line only while the reader is in the file; an unfocused view stays calm. */
+.viewer-code .cm-editor .cm-activeLine,
+.viewer-code .cm-editor .cm-activeLineGutter {
+	background: transparent;
+}
+.viewer-code .cm-editor.cm-focused .cm-activeLine {
+	background: var(--fill-subtle);
+}
+.viewer-code .cm-editor.cm-focused .cm-activeLineGutter {
+	background: var(--fill-subtle);
+	color: var(--text-1);
+}
+.viewer-code .cm-editor .cm-cursorLayer .cm-cursor {
+	border-left: 2px solid var(--accent);
+}
+.viewer-code .cm-editor:not(.cm-focused) .cm-cursorLayer {
+	display: none;
+}
+.viewer-code .cm-editor .cm-selectionLayer .cm-selectionBackground {
+	background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.viewer-code .cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground {
+	background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.viewer-code .cm-editor .cm-searchMatch {
+	background: color-mix(in srgb, var(--accent) 15%, transparent);
+	border-radius: 2px;
+}
+.viewer-code .cm-editor .cm-searchMatch.cm-searchMatch-selected {
+	background: color-mix(in srgb, var(--accent) 30%, transparent);
+	outline: 1px solid var(--accent);
+}
+
+/* Search panel: one --chrome bar under a hairline, §3.7 fields, quiet buttons. */
+.viewer-code .cm-editor .cm-panels {
+	background: var(--chrome);
+	color: var(--text-0);
+	font-family: var(--font-ui);
+}
+.viewer-code .cm-editor .cm-panels-top {
+	border-bottom: 1px solid var(--hairline);
+}
+.viewer-code .cm-editor .cm-panel.cm-search {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 8px;
+	padding: 8px 48px 8px 16px;
+	font-size: calc(12px * var(--ui-scale));
+}
+.viewer-code .cm-editor .cm-panel.cm-search input,
+.viewer-code .cm-editor .cm-panel.cm-search button,
+.viewer-code .cm-editor .cm-panel.cm-search label {
+	margin: 0;
+}
+.viewer-code .cm-editor .cm-panel .cm-textfield,
+.viewer-search-field {
+	box-sizing: border-box;
+	width: 240px;
+	max-width: 100%;
+	height: 28px;
+	padding: 0 10px;
+	background: var(--fill-subtle);
+	border: 1px solid var(--hairline);
+	border-radius: 6px;
+	color: var(--text-0);
+	font: inherit;
+	font-size: calc(12px * var(--ui-scale));
+	outline: none;
+}
+.viewer-code .cm-editor .cm-panel .cm-textfield::placeholder,
+.viewer-search-field::placeholder {
+	color: var(--text-2);
+}
+.viewer-code .cm-editor .cm-panel .cm-textfield:hover,
+.viewer-search-field:hover {
+	border-color: var(--hairline-strong);
+}
+.viewer-code .cm-editor .cm-panel .cm-textfield:focus,
+.viewer-search-field:focus {
+	border-color: var(--accent);
+}
+.viewer-code .cm-editor .cm-panel .cm-button,
+.viewer-code .cm-editor .cm-panel.cm-search [name="close"] {
+	box-sizing: border-box;
+	height: 28px;
+	padding: 0 8px;
+	background: transparent;
+	background-image: none;
+	border: none;
+	border-radius: 4px;
+	color: var(--text-1);
+	font: inherit;
+	font-size: calc(12px * var(--ui-scale));
+	font-weight: 600;
+	cursor: pointer;
+}
+.viewer-code .cm-editor .cm-panel .cm-button:hover,
+.viewer-code .cm-editor .cm-panel.cm-search [name="close"]:hover {
+	background: var(--fill-subtle);
+	color: var(--text-0);
+}
+.viewer-code .cm-editor .cm-panel .cm-button:active,
+.viewer-code .cm-editor .cm-panel.cm-search [name="close"]:active {
+	background: var(--fill-raised);
+	background-image: none;
+}
+.viewer-code .cm-editor .cm-panel .cm-button:focus-visible,
+.viewer-code .cm-editor .cm-panel.cm-search [name="close"]:focus-visible,
+.viewer-code .cm-editor .cm-panel.cm-search input[type="checkbox"]:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+.viewer-code .cm-editor .cm-panel.cm-search [name="close"] {
+	position: absolute;
+	top: 8px;
+	right: 12px;
+	width: 28px;
+	padding: 0;
+	font-size: calc(13px * var(--ui-scale));
+	font-weight: 400;
+}
+.viewer-code .cm-editor .cm-panel.cm-search label {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	height: 28px;
+	color: var(--text-1);
+	white-space: nowrap;
+	cursor: pointer;
+}
+.viewer-code .cm-editor .cm-panel.cm-search label:hover {
+	color: var(--text-0);
+}
+.viewer-code .cm-editor .cm-panel.cm-search input[type="checkbox"] {
+	width: 12px;
+	height: 12px;
+	margin: 0;
+	accent-color: var(--accent);
+}
+.viewer-code .cm-editor .cm-panel.cm-search [name="select"] {
+	margin-right: 8px;
+}
+
+/* ---- data tree ---- */
+
+.viewer-data {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	min-height: 0;
+}
+.viewer-search {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 8px;
+	padding: 8px 12px 8px 16px;
+	background: var(--chrome);
+	border-bottom: 1px solid var(--hairline);
+}
+.viewer-search-count {
+	min-width: 72px;
+	color: var(--text-1);
+	font-size: calc(12px * var(--ui-scale));
+	font-variant-numeric: tabular-nums;
+}
+.viewer-data-scroll {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+	scrollbar-gutter: stable;
+}
+.viewer-tree {
+	position: relative;
+	min-width: 100%;
+	padding-block: 8px;
+	box-sizing: content-box;
+	outline: none;
+	font-family: var(--font-mono);
+	font-size: calc(12px * var(--ui-scale));
+	line-height: 1.6;
+}
+.viewer-tree:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+.viewer-tree-row {
+	position: absolute;
+	top: 8px;
+	left: 0;
+	right: 0;
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	min-height: calc(22px * var(--ui-scale));
+	padding-inline-end: 16px;
+	box-sizing: border-box;
+	white-space: pre;
+	color: var(--text-0);
+	cursor: default;
+}
+.viewer-tree-row[aria-expanded] {
+	cursor: pointer;
+}
+.viewer-tree-row:hover {
+	background: var(--fill-subtle);
+}
+.viewer-tree:focus .viewer-tree-row[aria-selected="true"] {
+	background: var(--fill-raised);
+}
+.viewer-tree-row[data-match] {
+	background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.viewer-tree-row[data-current-match] {
+	background: color-mix(in srgb, var(--accent) 30%, transparent);
+	box-shadow: inset 2px 0 0 var(--accent);
+}
+.viewer-tree-twisty {
+	flex: 0 0 auto;
+	width: 12px;
+	color: var(--text-2);
+	text-align: center;
+}
+.viewer-tree-key {
+	color: var(--syntax-property);
+}
+.viewer-tree-colon {
+	margin-inline-start: -6px;
+	color: var(--text-2);
+}
+.viewer-tree-value {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.viewer-tree-row[data-kind="string"] .viewer-tree-value {
+	color: var(--syntax-string);
+}
+.viewer-tree-row[data-kind="number"] .viewer-tree-value,
+.viewer-tree-row[data-kind="date"] .viewer-tree-value {
+	color: var(--syntax-number);
+}
+.viewer-tree-row:is([data-kind="boolean"], [data-kind="null"]) .viewer-tree-value {
+	color: var(--syntax-keyword);
+}
+.viewer-tree-row:is([data-kind="object"], [data-kind="array"], [data-kind="records"], [data-kind="documents"])
+	.viewer-tree-value {
+	color: var(--text-2);
+	font-family: var(--font-ui);
+}
+.viewer-tree-row[data-kind="invalid"] .viewer-tree-value {
+	color: var(--syntax-invalid);
+}
+.viewer-tree-note,
+.viewer-tree-more {
+	color: var(--text-2);
+	font-family: var(--font-ui);
+}
+
+/* ---- status line: one quiet --chrome row under a hairline ---- */
+
+.viewer-status {
+	display: flex;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	min-height: 28px;
+	padding: 0 16px;
+	background: var(--chrome);
+	border-top: 1px solid var(--hairline);
+	color: var(--text-1);
+	font-size: calc(12px * var(--ui-scale));
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+.viewer-status-position {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.viewer-status-facts {
+	display: flex;
+	gap: 12px;
+	min-width: 0;
+	overflow: hidden;
+}
+.viewer-status-note {
+	color: var(--text-0);
+}
+@media (max-width: 520px) {
+	.viewer-status-facts > span:nth-child(n + 3) {
+		display: none;
+	}
+}

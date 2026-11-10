@@ -19,6 +19,7 @@ import type {
 import { ActivityIndicator } from '../activity-indicator'
 import { Btn, buttonClassName } from '../button'
 import { GLYPH, MenuButton, Sheet } from '../sidebar/ui'
+import { PlainViewer } from '../viewer/PlainViewer'
 import { DocumentCanvas } from './DocumentCanvas'
 import type { DocumentCanvasHandle } from './DocumentCanvas'
 import { PassageChat } from './PassageChat'
@@ -1653,7 +1654,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		return (
 			<main className="review-start" aria-busy={!error}>
 				<h1>{error ? 'Document review unavailable' : 'Opening your document'}</h1>
-				<p>{error ?? 'Reading the actual Markdown, without changing its formatting.'}</p>
+				<p>{error ?? 'Reading the file, without changing it.'}</p>
 				{error && (
 					<Btn
 						onClick={() => {
@@ -2045,6 +2046,19 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	}
 	const plain = state.mode === 'plain'
 	const theme = plain ? (plainTheme ?? draft.theme) : draft.theme
+	// Code, text and data files: their own read-only view, served through this window's helm-viewer:// token.
+	if (plain && state.document.viewer)
+		return (
+			<PlainViewer
+				document={state.document}
+				theme={theme}
+				zoom={zoom}
+				onToggleTheme={() => setPlainTheme(theme === 'dark' ? 'light' : 'dark')}
+				onRetry={() => {
+					void api.retryDocument().then(() => refresh())
+				}}
+			/>
+		)
 	const page = (
 		<main
 			className="document-review"

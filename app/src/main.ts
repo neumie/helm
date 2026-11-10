@@ -4,7 +4,19 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { promisify } from 'node:util'
-import { BrowserWindow, Menu, Notification, app, dialog, ipcMain, powerMonitor, screen, shell } from 'electron'
+import {
+	BrowserWindow,
+	Menu,
+	Notification,
+	app,
+	dialog,
+	ipcMain,
+	powerMonitor,
+	protocol,
+	screen,
+	session,
+	shell,
+} from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import * as pty from 'node-pty'
 import { localControlTokenPath, readLocalControlToken } from '../../src/auth/local-control'
@@ -18,6 +30,8 @@ import { BufferStore } from './buffers'
 import { createReviewControl } from './document-review/control'
 import { helmPrivatePaths, plistWorkingDirectory } from './document-review/viewer-file'
 import type { HelmPrivatePaths } from './document-review/viewer-file'
+import { VIEWER_SCHEME, VIEWER_SCHEME_PRIVILEGES } from './document-review/viewer-protocol'
+import { createViewerSessionFactory } from './document-review/viewer-session'
 import { DocumentReviewWindows } from './document-review/window'
 import { parseExternalHttpUrl } from './external-url'
 import { HelmBridge } from './helm-bridge'
@@ -189,6 +203,9 @@ const launchPolicy = startupPolicy({
 })
 
 app.setName(profileSwitchAttestationMode ? 'Helm Attestation' : APP_NAME)
+// Process-local and allowed only once, before `ready`: every launch policy registers it (it is not an OS effect).
+// Review and viewer windows load from helm-viewer://app on their own in-memory sessions (viewer-session.ts).
+protocol.registerSchemesAsPrivileged([{ scheme: VIEWER_SCHEME, privileges: { ...VIEWER_SCHEME_PRIVILEGES } }])
 // Must run before anything touches userData so a screenshot run never fights a
 // running Helm instance over the same profile (locks, window-state writes).
 // --user-data-dir=<path> is the STABLE variant: two harness runs sharing one
@@ -221,6 +238,10 @@ const remotePairing = new RemotePairingController()
 let reviewPrivatePaths: Promise<HelmPrivatePaths> | null = null
 const documentReviewWindows = new DocumentReviewWindows({
 	distDir: __dirname,
+	viewerSession: createViewerSessionFactory(
+		(partition, options) => session.fromPartition(partition, options),
+		__dirname,
+	),
 	// Plain `helm open` refuses Helm's own state by path and inode: this checkout's daemon files and the launchd
 	// daemon's working directory (the operator's daemon may run from another checkout).
 	privatePaths: () => {
