@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { focusActiveTerminal, memoryLeftColumnMode, mountLeftColumn, mountSignalsShortcut } from '../left-column'
 import { type TerminalWorkspaceFixtureOptions, TerminalWorkspaceFixtureView } from '../terminal-workspace-fixtures'
 import { type SignalsFlow, mountSignals } from './Signals'
+import type { SignalsLook } from './SignalsLook'
 import {
 	ASK_TERMINAL_IDLE,
 	type SignalsFixture,
@@ -22,13 +23,27 @@ import {
 	signalsDockFixture,
 } from './signals-fixtures'
 
+/**
+ * `empty`: every thread done (nothing needs you, nothing managed, nothing snoozed); `empty-down`: the
+ * same while Mail needs permission (no all-clear).
+ */
+export type SignalsScenario =
+	| 'column'
+	| 'quiet'
+	| 'source-down'
+	| 'asks'
+	| 'done'
+	| 'slack'
+	| 'empty'
+	| 'empty-down'
+
 export interface SignalsWorkspaceProps {
 	/**
 	 * `quiet`: every Needs you thread already handled; `source-down`: Mail needs permission;
 	 * `asks`: agent asks on top of the column's threads, their agents in the dock; `done`: more
 	 * threads done today, one per way a thread gets done.
 	 */
-	scenario?: 'column' | 'quiet' | 'source-down' | 'asks' | 'done' | 'slack'
+	scenario?: SignalsScenario
 	/**
 	 * Open a flow on its fixture thread (send: crane-rental#970, new agent: the Sentry alert, reply
 	 * and links: the `Signals asks` row-layout ask), or the filtered mail or done today list.
@@ -39,6 +54,10 @@ export interface SignalsWorkspaceProps {
 	 * (`ASK_TERMINAL_IDLE`); main's real ask resolver closes the open asks bound to it.
 	 */
 	terminalPrompt?: string
+	/** Design review (Views / Signals / Sidebar look): the column's look; default production. */
+	look?: SignalsLook
+	/** The column's width in px (`--left-width`); default the production 340. */
+	width?: number
 }
 
 declare global {
@@ -48,9 +67,26 @@ declare global {
 	}
 }
 
-function fixtureFor(scenario: SignalsWorkspaceProps['scenario']): SignalsFixture {
+export function fixtureFor(scenario: SignalsWorkspaceProps['scenario']): SignalsFixture {
 	const now = Date.now()
 	const threads = signalThreadFixtures(now)
+	if (scenario === 'empty' || scenario === 'empty-down') {
+		const allDone = [...threads, ...signalDoneFixtures(now)].map(thread =>
+			thread.state === 'done'
+				? thread
+				: {
+						...thread,
+						state: 'done' as const,
+						owner: 'jakub' as const,
+						snoozedUntil: null,
+						updatedAt: new Date(now - 40 * 60_000).toISOString(),
+					},
+		)
+		return createSignalsFixture({
+			threads: allDone,
+			sources: scenario === 'empty-down' ? signalSourcesFixture(now, 'needs_permission') : undefined,
+		})
+	}
 	if (scenario === 'quiet')
 		return createSignalsFixture({
 			threads: threads.map(thread =>
@@ -92,7 +128,7 @@ const FLOW_THREAD: Record<Exclude<NonNullable<SignalsWorkspaceProps['flow']>, 'f
 	links: 501,
 }
 
-export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt }: SignalsWorkspaceProps) {
+export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, look, width }: SignalsWorkspaceProps) {
 	const fixture = useMemo(() => fixtureFor(flow === 'slack-reply' ? 'slack' : scenario), [scenario, flow])
 	const options = useMemo<TerminalWorkspaceFixtureOptions>(
 		() => ({ agentDock: { scenario: 'real-case', position: 'bottom', output: 'claude-code' } }),
@@ -107,6 +143,8 @@ export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt }: 
 		const left = root?.querySelector<HTMLElement>('#left')
 		if (!root || !left) return
 		window.__signalsFixture = fixture
+		const content = left.parentElement
+		if (width) content?.style.setProperty('--left-width', `${width}px`)
 		const initialFlow: SignalsFlow =
 			flow === 'filtered' || flow === 'done' ? { type: flow } : flow ? { type: flow, id: FLOW_THREAD[flow] } : null
 		const column = mountLeftColumn({
@@ -137,6 +175,7 @@ export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt }: 
 					onLeave: () => focusActiveTerminal(root),
 					mod: 'cmd',
 					initialFlow,
+					look,
 				}),
 		})
 		const disposeShortcut = mountSignalsShortcut({
@@ -155,13 +194,78 @@ export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt }: 
 			cancelAnimationFrame(focusFrame)
 			disposeShortcut()
 			column.dispose()
+			content?.style.removeProperty('--left-width')
 			if (window.__signalsFixture === fixture) window.__signalsFixture = undefined
 		}
-	}, [options, fixture, flow, terminalPrompt])
+	}, [options, fixture, flow, terminalPrompt, look, width])
 
 	return (
 		<div ref={wrapRef} style={{ display: 'contents' }}>
 			<TerminalWorkspaceFixtureView options={options} />
+		</div>
+	)
+}
+
+export interface SignalsColumnFramesProps {
+	look?: SignalsLook
+	/** Each frame: a width and a scenario, the production column alone at that size. */
+	frames: readonly { width: number; scenario: SignalsScenario; label: string }[]
+	height?: number
+}
+
+/** Story only: the bare production column in fixed frames side by side (narrow and wide checks). */
+export function SignalsColumnFrames({ look, frames, height = 640 }: SignalsColumnFramesProps) {
+	const hosts = useRef<(HTMLDivElement | null)[]>([])
+	useEffect(() => {
+		const mounted = frames.flatMap((frame, index) => {
+			const host = hosts.current[index]
+			if (!host) return []
+			const fixture = fixtureFor(frame.scenario)
+			return [
+				mountSignals(host, {
+					service: fixture.service,
+					dock: fixture.dock,
+					onOpenSettings: () => undefined,
+					mod: 'cmd',
+					look,
+				}),
+			]
+		})
+		return () => {
+			for (const signals of mounted) signals.dispose()
+		}
+	}, [frames, look])
+	return (
+		<div
+			style={{
+				display: 'flex',
+				gap: 24,
+				padding: 24,
+				alignItems: 'flex-start',
+				background: 'var(--chrome)',
+				minHeight: '100vh',
+				boxSizing: 'border-box',
+			}}
+		>
+			{frames.map((frame, index) => (
+				<figure key={frame.label} style={{ margin: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+					<figcaption style={{ font: '12px/18px var(--font-ui)', color: 'var(--text-2)' }}>{frame.label}</figcaption>
+					<div
+						ref={element => {
+							hosts.current[index] = element
+						}}
+						style={{
+							position: 'relative',
+							width: frame.width,
+							height,
+							display: 'flex',
+							flexDirection: 'column',
+							background: 'var(--pane)',
+							outline: '1px solid var(--hairline)',
+						}}
+					/>
+				</figure>
+			))}
 		</div>
 	)
 }

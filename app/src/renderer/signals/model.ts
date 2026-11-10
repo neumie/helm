@@ -323,7 +323,7 @@ export function askReceipt(thread: SignalThread, now: number): { how: 'replied' 
 }
 
 /** Handled for the header count: routed to an agent, or (an ask) answered. */
-function handled(thread: SignalThread, now: number): boolean {
+export function handled(thread: SignalThread, now: number): boolean {
 	return thread.source === 'agent' ? askReceipt(thread, now) !== null : routedReceipt(thread, now) !== null
 }
 

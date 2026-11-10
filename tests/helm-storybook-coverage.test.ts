@@ -24,6 +24,12 @@ const storyCoverage = [
 	['app/src/renderer/signals/SignalsColumn.stories.tsx', 'Views/Signals/Column'],
 	['app/src/renderer/signals/SignalsFlows.stories.tsx', 'Views/Signals/Flows'],
 	['app/src/renderer/signals/SignalsDone.stories.tsx', 'Views/Signals/Done'],
+	['app/src/renderer/signals/SignalsLookToday.stories.tsx', 'Views/Signals/Sidebar look/0 Today'],
+	['app/src/renderer/signals/SignalsLookCard.stories.tsx', 'Views/Signals/Sidebar look/1 Dashed card'],
+	['app/src/renderer/signals/SignalsLookCalm.stories.tsx', 'Views/Signals/Sidebar look/2 Calm dots'],
+	['app/src/renderer/signals/SignalsLookTerminal.stories.tsx', 'Views/Signals/Sidebar look/3 Terminal transcript'],
+	['app/src/renderer/signals/SignalsLookSummary.stories.tsx', 'Views/Signals/Sidebar look/4 Folded summary'],
+	['app/src/renderer/signals/SignalsLookLedger.stories.tsx', 'Views/Signals/Sidebar look/5 Ledger and legend'],
 ] as const
 
 test('Storybook discovers the whole renderer and sorts large review views first', () => {
