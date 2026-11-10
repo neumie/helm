@@ -19,6 +19,7 @@ import type {
 import { ActivityIndicator } from '../activity-indicator'
 import { Btn, buttonClassName } from '../button'
 import { GLYPH, MenuButton, Sheet } from '../sidebar/ui'
+import { PictureViewer } from '../viewer/PictureViewer'
 import { PlainViewer } from '../viewer/PlainViewer'
 import { DocumentCanvas } from './DocumentCanvas'
 import type { DocumentCanvasHandle } from './DocumentCanvas'
@@ -533,10 +534,14 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		[api, refresh, publishDirty],
 	)
 
+	// A picture window scales the picture itself (ImageView subscribes); the reading zoom stays put.
+	const pictureWindow = useRef(false)
+	pictureWindow.current = state?.mode === 'plain' && Boolean(state.document.picture)
 	useEffect(
 		() =>
 			api.onZoom?.(step =>
 				setZoom(value => {
+					if (pictureWindow.current) return value
 					if (step === 0) return 1
 					const index = REVIEW_ZOOM_STEPS.indexOf(value)
 					const next = REVIEW_ZOOM_STEPS[(index < 0 ? REVIEW_ZOOM_STEPS.indexOf(1) : index) + step]
@@ -2046,6 +2051,27 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	}
 	const plain = state.mode === 'plain'
 	const theme = plain ? (plainTheme ?? draft.theme) : draft.theme
+	// Pictures: their own view, bytes from this window's helm-viewer:// token; copy goes through main's PNG check.
+	if (plain && state.document.picture)
+		return (
+			<PictureViewer
+				document={state.document}
+				theme={theme}
+				onToggleTheme={() => setPlainTheme(theme === 'dark' ? 'light' : 'dark')}
+				onRetry={() => {
+					void api.retryDocument().then(() => refresh())
+				}}
+				subscribeZoom={api.onZoom}
+				onCopy={
+					api.copyImage
+						? async png => {
+								const result = await api.copyImage?.(png)
+								return result && 'error' in result && result.error ? result.error : null
+							}
+						: undefined
+				}
+			/>
+		)
 	// Code, text and data files: their own read-only view, served through this window's helm-viewer:// token.
 	if (plain && state.document.viewer)
 		return (

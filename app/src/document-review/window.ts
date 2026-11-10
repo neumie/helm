@@ -4,7 +4,7 @@ import { lstat, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
-import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
 import type { ReviewViewResult } from '../../../src/document-review/protocol'
 import { failureCause, gitRootRefusal, isReviewRefusal, refuse } from '../../../src/document-review/refusal'
@@ -24,6 +24,7 @@ import { appendReviewArtifact, parseReviewArtifact } from './canvas-artifact'
 import { ReviewArchiveCapacity, ReviewArchivePersistence } from './canvas-persistence'
 import { ReviewDocumentObservation, readReviewFile, reviewRevision } from './document'
 import { ReviewDraftStore, reviewDraftSchema } from './drafts'
+import { PNG_PASTEBOARD, copyPngToClipboard } from './image-copy'
 import { reviewPrompt } from './request'
 import { parseReviewRequest } from './request-admission'
 import { ReviewSessions, type SessionHint } from './sessions'
@@ -46,6 +47,8 @@ const runFile = promisify(execFile)
 export const REVIEW_WINDOW_LIMIT = 8
 /** Plain `helm open` windows have their own soft bound, so plain views never make `helm edit` fail. */
 export const PLAIN_WINDOW_LIMIT = 32
+/** HEIC conversion time one `view` batch may spend; below the CLI's 30 s deadline for the batch's answer. */
+export const VIEW_CONVERT_BUDGET_MS = 24_000
 interface WindowState {
 	/** A plain `helm open` window: read-only, no caller, no saved state. Binding (`--listen`) clears it. */
 	plain: boolean
@@ -342,6 +345,14 @@ export class DocumentReviewWindows {
 				},
 				true,
 			),
+		)
+		ipcMain.handle('document-review:copy-image', (event, token: unknown, raw: unknown) =>
+			this.run(event, token, state => {
+				if (!state.plain || state.observation.current().format !== 'image')
+					throw new Error('Only a picture window copies an image.')
+				copyPngToClipboard(raw, bytes => clipboard.writeBuffer(PNG_PASTEBOARD, bytes))
+				return true
+			}),
 		)
 		ipcMain.handle('document-review:clear-empty-preferences', (event, token: unknown) =>
 			this.run(
@@ -858,11 +869,14 @@ export class DocumentReviewWindows {
 			throw refuse('No Helm profile is active (Helm is switching profiles or closing). Nothing was opened.')
 		this.opening = true
 		const result: ReviewViewResult = { opened: [], refused: [] }
+		// HEIC conversions of one batch share a budget that ends before the CLI's 30 s answer deadline; a file that
+		// cannot finish in it is refused by name (killing its sips child) instead of the whole answer being lost.
+		const convert = AbortSignal.any([signal, AbortSignal.timeout(VIEW_CONVERT_BUDGET_MS)])
 		try {
 			for (const file of files) {
 				try {
 					if (!current()) throw refuse(`${basename(file)} was not opened: the active Helm profile changed.`)
-					result.opened.push({ file, ...(await this.viewFile(file, token, profileId, paths, current)) })
+					result.opened.push({ file, ...(await this.viewFile(file, token, profileId, paths, current, convert)) })
 				} catch (error) {
 					result.refused.push({
 						file,
@@ -883,6 +897,7 @@ export class DocumentReviewWindows {
 		profileId: string,
 		paths: HelmPrivatePaths,
 		current: () => boolean,
+		convert?: AbortSignal,
 	): Promise<{ documentId: string; format: string }> {
 		if (!isAbsolute(raw)) throw refuse(`${basename(raw)} was not opened: helm open sends absolute paths.`)
 		const { file, format } = await readViewerFile(raw, paths)
@@ -891,8 +906,12 @@ export class DocumentReviewWindows {
 		for (const state of this.windows.values())
 			if (state.token === token && state.observation.file === file) {
 				const shown = state.observation.current().format ?? format
-				// The registry's name: a window bound by helm edit on a .tsx shows the canvas.
-				return { documentId: state.observation.id, format: shown === 'jsx' ? 'canvas' : shown }
+				// The registry's name: a window bound by helm edit on a .tsx shows the canvas; a picture keeps the
+				// admission's word (image/svg/heic), as on a first open.
+				return {
+					documentId: state.observation.id,
+					format: shown === 'jsx' ? 'canvas' : shown === 'image' ? format : shown,
+				}
 			}
 		if (this.plainWindows() >= PLAIN_WINDOW_LIMIT)
 			throw refuse(`${basename(file)} was not opened: ${PLAIN_WINDOW_LIMIT} files are already open. Close one first.`)
@@ -903,7 +922,7 @@ export class DocumentReviewWindows {
 			displayPath: displayPath(file),
 			tokens,
 		})
-		await observation.start()
+		await observation.start({ convert })
 		if (!current() || observation.current().error) {
 			const failure = observation.failure
 			await observation.dispose()

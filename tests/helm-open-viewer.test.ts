@@ -68,7 +68,7 @@ test('the last extension decides the family; compound archives, unknown and late
 		'bundle.zip': /is an archive/,
 		'report.final.pdf': /Helm can't show PDFs yet \(report\.final\.pdf\)/,
 		'export.csv': /Helm can't show CSV files yet/,
-		'photo.heic': /HEIC images yet/,
+		'deck.pptx': /presentations and iWork files yet/,
 		'thing.weird': /Helm can't show \.weird files \(thing\.weird\)\./,
 		'README-no-dot': /it has no file extension/,
 	}

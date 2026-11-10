@@ -74,7 +74,7 @@ rmSync('dist/document-review.html', { force: true })
 const builtWorkers = {
 	name: 'helm-viewer-workers',
 	setup(context) {
-		context.onResolve({ filter: /\/data-worker-factory$/ }, args => ({
+		context.onResolve({ filter: /\/(data|image)-worker-factory$/ }, args => ({
 			path: resolve(args.resolveDir, `${args.path.slice(args.path.lastIndexOf('/') + 1)}.built.ts`),
 		}))
 	},
@@ -86,6 +86,7 @@ const viewer = await build({
 	entryPoints: {
 		'document-review': 'src/renderer/document-review.tsx',
 		'data-worker': 'src/renderer/viewer/data-worker.ts',
+		'image-worker': 'src/renderer/viewer/image-worker.ts',
 	},
 	platform: 'browser',
 	format: 'esm',
