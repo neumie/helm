@@ -737,12 +737,30 @@ export function restingWords(sources: readonly SignalSourceHealth[] | null): {
 			title: 'Not every source answered',
 			detail: 'The footer says which one, and how to fix it.',
 		}
-	const listening = sources.filter(source => source.status === 'ok').map(source => SOURCE_LABEL[source.source])
+	const listening = sources.filter(source => source.status === 'ok').map(source => source.source)
 	return {
 		listening: true,
-		title: `Listening to ${listening.join(' and ')}`,
-		detail: 'New reviews, comments, failed CI, mentions and mail show up here.',
+		title: `Listening to ${spokenList(listening.map(source => SOURCE_LABEL[source]))}`,
+		detail: restingDetail(listening.flatMap(source => RESTING_WHAT[source])),
 	}
+}
+
+/** What each answering source brings to the column, for the resting words. */
+const RESTING_WHAT: Record<SignalSource, readonly string[]> = {
+	github: ['reviews', 'comments', 'failed CI', 'mentions'],
+	mail: ['mail'],
+	slack: ['Slack messages'],
+	agent: [],
+}
+
+/** `New mail shows up here.`, `New reviews, … and mail show up here.` (mail alone is a mass noun). */
+function restingDetail(what: readonly string[]): string {
+	return `New ${spokenList(what)} ${what.length === 1 && what[0] === 'mail' ? 'shows' : 'show'} up here.`
+}
+
+/** `a`, `a and b`, `a, b and c`. */
+function spokenList(words: readonly string[]): string {
+	return words.length < 2 ? (words[0] ?? '') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`
 }
 
 // ---------- source health ----------
@@ -750,7 +768,9 @@ export function restingWords(sources: readonly SignalSourceHealth[] | null): {
 /** One dim footer line per source that is on but not ok; never an all-clear from missing data. */
 export function healthLines(sources: readonly SignalSourceHealth[]): string[] {
 	if (sources.length > 0 && sources.every(source => source.status === 'disabled'))
-		return ['GitHub and Mail are off. Turn one on in Settings › Signals']
+		return [
+			`${spokenList(sources.map(source => SOURCE_LABEL[source.source]))} are off. Turn one on in Settings › Signals`,
+		]
 	const lines: string[] = []
 	for (const source of sources) {
 		const label = SOURCE_LABEL[source.source]
@@ -770,7 +790,7 @@ export function healthLines(sources: readonly SignalSourceHealth[]): string[] {
 	return lines
 }
 
-/** Every source that is on answered (at least one is on): `Nothing needs you` may be said. */
+/** Every source that is on answered (at least one is on): the resting words may say `Listening to …`. */
 export function allSourcesOk(sources: readonly SignalSourceHealth[]): boolean {
 	return (
 		sources.some(source => source.status === 'ok') &&

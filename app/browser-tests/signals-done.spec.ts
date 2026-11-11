@@ -212,9 +212,7 @@ test('Line: Done today closes the list after the snoozed rows, the filtered coun
 	await expect(header).toHaveText(/^Done today 8 · D · 5 filtered · f$/)
 	// Snoozed keeps its own band, the done line closes the list after it.
 	await expect(view.signals.locator('.signals-section[aria-label="Snoozed"] .signals-band-count')).toHaveText('1')
-	expect(await header.evaluate(node => node.previousElementSibling?.getAttribute('aria-label') ?? null)).toBe(
-		'Snoozed',
-	)
+	expect(await header.evaluate(node => node.previousElementSibling?.getAttribute('aria-label') ?? null)).toBe('Snoozed')
 	// Both counts look alike: dim text buttons, no fill, ≥24px tall.
 	for (const button of [view.count, view.signals.locator('.signals-filtered')]) {
 		const look = await button.evaluate(node => {

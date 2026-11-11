@@ -3616,11 +3616,12 @@ body.dragging {
 
 .signals-glyph[data-kind="review"],
 .signals-glyph[data-kind="mail"],
-.signals-glyph[data-kind="ask"] {
+.signals-glyph[data-kind="ask"],
+.signals-glyph[data-kind="dm"] {
 	color: var(--warn);
 }
 
-.signals-glyph:is([data-kind="comments"], [data-kind="mention"], [data-kind="flow"]) {
+.signals-glyph:is([data-kind="comments"], [data-kind="mention"], [data-kind="thread"], [data-kind="flow"]) {
 	color: var(--accent);
 }
 

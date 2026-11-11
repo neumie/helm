@@ -789,7 +789,7 @@ test('summary counts what still needs Jakub', () => {
 	assert.deepEqual(restingWords(ok), {
 		listening: true,
 		title: 'Listening to GitHub',
-		detail: 'New reviews, comments, failed CI, mentions and mail show up here.',
+		detail: 'New reviews, comments, failed CI and mentions show up here.',
 	})
 })
 
@@ -809,7 +809,30 @@ test('at rest the column says it is listening only while every source answered',
 	// Both off: nothing answered.
 	notListening(health('disabled', 'disabled'))
 	assert.equal(restingWords(health('error', 'ok')).title, 'Not every source answered')
-	assert.equal(restingWords(health('ok', 'ok')).title, 'Listening to GitHub and Mail')
+	assert.deepEqual(restingWords(health('ok', 'ok')), {
+		listening: true,
+		title: 'Listening to GitHub and Mail',
+		detail: 'New reviews, comments, failed CI, mentions and mail show up here.',
+	})
+	// Slack answering too: three sources read as a list, and its messages join the detail.
+	const slack: SignalSourceHealth = { source: 'slack', status: 'ok', detail: null, lastPollAt: null, lastOkAt: null }
+	assert.deepEqual(restingWords([...health('ok', 'ok'), slack]), {
+		listening: true,
+		title: 'Listening to GitHub, Mail and Slack',
+		detail: 'New reviews, comments, failed CI, mentions, mail and Slack messages show up here.',
+	})
+	// Slack off (its default) changes nothing; Slack failing is not listening.
+	assert.equal(
+		restingWords([...health('ok', 'ok'), { ...slack, status: 'disabled' }]).title,
+		'Listening to GitHub and Mail',
+	)
+	notListening([...health('ok', 'ok'), { ...slack, status: 'error' }])
+	// Mail alone: a mass noun, so the verb agrees.
+	assert.deepEqual(restingWords(health('disabled', 'ok')), {
+		listening: true,
+		title: 'Listening to Mail',
+		detail: 'New mail shows up here.',
+	})
 })
 
 /** A fake column host for the sidebar ownership check (root tests have no DOM). */
@@ -874,7 +897,11 @@ test('the column mode is memory only and starts in Signals', () => {
 })
 
 test('source health: one line per source that is on and not ok, never an all-clear', () => {
-	const source = (name: 'github' | 'mail', status: SignalSourceHealth['status'], detail: string | null = null) => ({
+	const source = (
+		name: 'github' | 'mail' | 'slack',
+		status: SignalSourceHealth['status'],
+		detail: string | null = null,
+	) => ({
 		source: name,
 		status,
 		detail,
@@ -896,6 +923,11 @@ test('source health: one line per source that is on and not ok, never an all-cle
 	assert.deepEqual(healthLines([source('github', 'disabled'), source('mail', 'disabled')]), [
 		'GitHub and Mail are off. Turn one on in Settings › Signals',
 	])
+	// Slack is a poll source too: all three off names all three.
+	assert.deepEqual(
+		healthLines([source('github', 'disabled'), source('mail', 'disabled'), source('slack', 'disabled')]),
+		['GitHub, Mail and Slack are off. Turn one on in Settings › Signals'],
+	)
 	assert.equal(allSourcesOk([source('github', 'disabled'), source('mail', 'disabled')]), false)
 	assert.equal(allSourcesOk([]), false)
 })

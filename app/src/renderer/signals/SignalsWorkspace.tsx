@@ -26,15 +26,7 @@ import {
  * `empty`: every thread done (nothing needs you, nothing managed, nothing snoozed); `empty-down`: the
  * same while Mail needs permission (no all-clear).
  */
-export type SignalsScenario =
-	| 'column'
-	| 'quiet'
-	| 'source-down'
-	| 'asks'
-	| 'done'
-	| 'slack'
-	| 'empty'
-	| 'empty-down'
+export type SignalsScenario = 'column' | 'quiet' | 'source-down' | 'asks' | 'done' | 'slack' | 'empty' | 'empty-down'
 
 export interface SignalsWorkspaceProps {
 	/**
@@ -112,6 +104,17 @@ export function fixtureFor(scenario: SignalsWorkspaceProps['scenario']): Signals
 		return createSignalsFixture({
 			threads: [...signalSlackFixtures(now), ...threads],
 			filtered: [signalSlackFilteredFixture(now)],
+			// Slack answering beside GitHub and Mail, as when it is turned on.
+			sources: [
+				...signalSourcesFixture(now),
+				{
+					source: 'slack',
+					status: 'ok',
+					detail: null,
+					lastPollAt: new Date(now).toISOString(),
+					lastOkAt: new Date(now).toISOString(),
+				},
+			],
 		})
 	}
 	return createSignalsFixture({ threads })

@@ -183,9 +183,9 @@ test('sections sit under sticky bands with their count; a keyboard-selected row 
 	await expect(view.signals.locator('.signals-section[aria-label="Managed"] .signals-band-count')).toHaveText('2')
 	// The Needs you count leaves out the threads already sent on (they stay listed with their receipt).
 	const needs = view.signals.locator('.signals-section[aria-label="Needs you"]')
-	const handled = await needs.locator('.signals-tr').evaluateAll(
-		rows => rows.filter(row => row.querySelector('.signals-receipt')).length,
-	)
+	const handled = await needs
+		.locator('.signals-tr')
+		.evaluateAll(rows => rows.filter(row => row.querySelector('.signals-receipt')).length)
 	const listed = await needs.locator('.signals-tr').count()
 	await expect(needs.locator('.signals-band-count')).toHaveText(String(listed - handled))
 	// The done line closes the list, after the last section.
@@ -223,6 +223,34 @@ test('sections sit under sticky bands with their count; a keyboard-selected row 
 		expect(covered).toBe(false)
 	}
 	await page.screenshot({ path: test.info().outputPath('signals-bands-scrolled.png') })
+})
+
+test('Slack rows sit in the Needs you band like the others, their new glyphs toned by kind', async ({ page }) => {
+	const view = await open(page, 'views-signals-slack--column')
+	await expect(view.signals.locator('.signals-band-label')).toHaveText(['Needs you', 'Managed', 'Snoozed'])
+	const needs = view.signals.locator('.signals-section[aria-label="Needs you"]')
+	const row = (id: number) => needs.locator(`.signals-tr[data-signal-id="${id}"]`)
+	for (const id of [701, 702, 703, 704]) await expect(row(id)).toHaveCount(1)
+	// The band counts the Slack threads with the rest (only the one already sent on is left out).
+	const handled = await needs
+		.locator('.signals-tr')
+		.evaluateAll(rows => rows.filter(entry => entry.querySelector('.signals-receipt')).length)
+	await expect(needs.locator('.signals-band-count')).toHaveText(
+		String((await needs.locator('.signals-tr').count()) - handled),
+	)
+	// A new DM reads like a review request (--warn), a new followed thread or mention like comments (--accent).
+	const glyph = (selector: string) =>
+		needs.locator(`${selector} .signals-glyph`).evaluate(node => getComputedStyle(node).color)
+	const warn = await glyph('.signals-tr:has(.signals-glyph[data-kind="review"])')
+	const accent = await glyph('.signals-tr:has(.signals-glyph[data-kind="comments"])')
+	expect(warn).not.toBe(accent)
+	expect(await glyph('.signals-tr[data-signal-id="701"]')).toBe(warn)
+	expect(await glyph('.signals-tr[data-signal-id="702"]')).toBe(warn)
+	expect(await glyph('.signals-tr[data-signal-id="703"]')).toBe(accent)
+	expect(await glyph('.signals-tr[data-signal-id="704"]')).toBe(accent)
+	// The filtered Slack bot message counts on the done line.
+	await expect(view.signals.locator('[data-done-header]')).toContainText('1 filtered')
+	await page.screenshot({ path: test.info().outputPath('signals-slack-bands.png') })
 })
 
 test('send to agent: the PR agent is preselected, digits pick, ⌘↵ sends and the row shows the receipt', async ({
