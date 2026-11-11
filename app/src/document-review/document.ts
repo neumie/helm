@@ -115,7 +115,8 @@ const sameIdentity = (a: ViewerFileIdentity | null, b: ViewerFileIdentity | unde
 
 /** Watches only the granted file's containing directory, never a repository tree. */
 export class ReviewDocumentObservation {
-	readonly id = randomUUID()
+	/** Random per window; a window that comes back after a restart keeps the id its caller's handles name (S13). */
+	readonly id: string
 	private watcher: FSWatcher | null = null
 	private timer: ReturnType<typeof setTimeout> | null = null
 	private convertSignal: AbortSignal | undefined
@@ -142,7 +143,9 @@ export class ReviewDocumentObservation {
 		private readonly changed: () => void,
 		/** Present for a plain `helm open` window: read-only, no repository, the journal hidden but never required. */
 		readonly plain: PlainObservation | null = null,
+		id: string = randomUUID(),
 	) {
+		this.id = id
 		this.snapshot = {
 			id: this.id,
 			name: basename(file),

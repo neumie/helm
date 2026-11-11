@@ -6,8 +6,15 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { promisify } from 'node:util'
 import { BaseWindow, WebContentsView, clipboard, dialog, ipcMain, shell } from 'electron'
 import type { BrowserWindow, IpcMainInvokeEvent, WebContents } from 'electron'
+import type { CallerBinding, CallerBindingRecord } from '../../../src/document-review/control-server'
 import type { ReviewViewResult } from '../../../src/document-review/protocol'
-import { failureCause, gitRootRefusal, isReviewRefusal, refuse } from '../../../src/document-review/refusal'
+import {
+	failureCause,
+	gitRootRefusal,
+	isReviewRefusal,
+	refuse,
+	restartingRefusal,
+} from '../../../src/document-review/refusal'
 import { decodeScreenshots, discardScreenshots, stageScreenshots } from '../../../src/document-review/screenshot-files'
 import {
 	REVIEW_SCREENSHOT_DIRECTORY,
@@ -25,9 +32,10 @@ import { ReviewArchiveCapacity, ReviewArchivePersistence } from './canvas-persis
 import { ReviewDocumentObservation, readReviewFile, reviewRevision } from './document'
 import { ReviewDraftStore, reviewDraftSchema } from './drafts'
 import { PNG_PASTEBOARD, copyPngToClipboard } from './image-copy'
+import { OWNER_RECORD_TTL_MS, type ReviewOwnerStore } from './owner-store'
 import { reviewPrompt } from './request'
 import { parseReviewRequest } from './request-admission'
-import { ReviewSessions, type SessionHint } from './sessions'
+import { type ArchiveHandle, type ArchiveReference, ReviewSessions, type SessionHint } from './sessions'
 import { defaultReviewDraft } from './types'
 import type {
 	CanvasReviewEntry,
@@ -90,6 +98,8 @@ interface ViewState {
 	closed: boolean
 	/** The review surface colour the view and its window paint before the first frame. */
 	background: string
+	/** Closed by a quit (S13): its caller keeps the document and gets it back on its next read. */
+	quitClose: boolean
 }
 /** A `BaseWindow` holding views. One view per container until tabs exist (S7b). */
 interface ContainerState {
@@ -163,6 +173,12 @@ export class DocumentReviewWindows {
 	private readonly pendingProfiles = new Set<string>()
 	/** Display-only progress from hinted callers' own session files (S12); never trusted beyond deadline renewal. */
 	private readonly activity: ReviewActivityWatcher
+	/** Where callers are kept across a restart (S13); set by the review host before anything connects. */
+	private ownerStore: ReviewOwnerStore | null = null
+	/** A quit has started: no new feedback is admitted, and closing windows keep their callers' documents. */
+	private suspending = false
+	/** True only while requestCloseAll closes containers, so their close handlers know it is the quit. */
+	private quitClosing = false
 	constructor(private readonly deps: ReviewWindowDependencies) {
 		this.activity = new ReviewActivityWatcher(
 			() => this.sessions.entries(),
@@ -252,6 +268,15 @@ export class DocumentReviewWindows {
 			})
 		if (!existing || immutable(existing) !== immutable(start))
 			throw new Error('The original review question is missing or changed. The reply was not saved.')
+		// This very settlement landed already (a write that finished before a crash or restart, S13): nothing to add.
+		// A different one stays a conflict, as before.
+		if (
+			entry.type === 'settle' &&
+			existing.state === entry.state &&
+			existing.reply === entry.reply &&
+			existing.detail === entry.detail
+		)
+			return
 		await appendReviewArtifact(context.root, context.file, [entry], {
 			expectedSourceRevision: reviewRevision(body),
 			expectedArchiveRevision: archive.revision,
@@ -502,6 +527,8 @@ export class DocumentReviewWindows {
 					if ([...this.sessions.values()].reduce((n, sessions) => n + sessions.admittedCount(), 0) >= 8)
 						throw new Error('Eight review turns are already in progress. Wait for a turn to settle.')
 					if (state.archive.error()) throw new Error(state.archive.error() as string)
+					if (this.suspending)
+						throw new Error('Helm is restarting. Your feedback was not sent; send it again after Helm starts.')
 					const owner = state.sessions.reserve(
 						request.sessionId,
 						request.owner,
@@ -581,12 +608,18 @@ export class DocumentReviewWindows {
 									throw new Error('The document or conversation changed before dispatch. Nothing was sent.')
 							}
 							const delivered = appendScreenshotPrompt(prompt, staged)
+							// The thread's place travels with the feedback, so a reply after a restart settles it.
+							const handle: ArchiveHandle = {
+								id: archive.id,
+								settle: value => archive.settle(value),
+								reference: { thread: archive.thread, root: context.root, file: context.file },
+							}
 							return state.sessions.dispatch(
 								owner,
 								request.id,
 								fingerprint,
 								{ request, prompt: delivered, relativePath: document.relativePath },
-								archive,
+								handle,
 							)
 						} catch (error) {
 							await discardScreenshots(staged)
@@ -594,7 +627,7 @@ export class DocumentReviewWindows {
 								error instanceof Error && error.message.includes('Nothing was sent.')
 									? error.message
 									: 'The document or original listener changed before dispatch. Nothing was sent.'
-							archive.settle({ state: 'rejected', detail })
+							void archive.settle({ state: 'rejected', detail })
 							throw error
 						}
 					} finally {
@@ -702,36 +735,158 @@ export class DocumentReviewWindows {
 	callerSessions(profileId: string): ReviewSessions {
 		return this.sessionsFor(profileId)
 	}
-	/** Exact window identity, never a file/name lookup or replacement-window fallback. */
-	nextForCallerDocument(
+	/**
+	 * Exact window identity, never a file/name lookup or replacement-window fallback. The one exception is a window
+	 * of THIS caller that a quit closed (S13): it comes back, with the same id, before the read waits.
+	 */
+	async nextForCallerDocument(
 		profileId: string,
 		sessionId: string,
 		owner: string,
 		documentId: string,
 		timeoutMs: number,
 		signal: AbortSignal,
+		listener?: string,
 	): Promise<ReviewReadResult> {
 		const sessions = this.sessionsFor(profileId)
 		sessions.get(sessionId, owner)
-		if (signal.aborted) return Promise.reject(new Error('Listening was cancelled.'))
-		const window = [...this.windows.values()].find(
-			state => state.profileId === profileId && state.observation.id === documentId,
-		)
-		if (!window) return Promise.resolve({ closed: true, documentId })
+		if (sessions.isSuspended()) throw restartingRefusal()
+		if (signal.aborted) throw new Error('Listening was cancelled.')
+		const find = () =>
+			[...this.windows.values()].find(state => state.profileId === profileId && state.observation.id === documentId)
+		let window = find()
+		if (!window) {
+			const kept = sessions.restorableDocument(sessionId, owner, documentId)
+			if (!kept) return { closed: true, documentId }
+			await this.reopenForCaller(profileId, sessionId, owner, documentId, kept, signal)
+			window = find()
+			if (!window) return { closed: true, documentId }
+		}
 		if (window.selectedSession !== sessionId || !this.current(window))
-			return Promise.reject(new Error('The document window owner or lifecycle changed. Nothing was rerouted.'))
-		return sessions.next(sessionId, owner, timeoutMs, signal, documentId)
+			throw new Error('The document window owner or lifecycle changed. Nothing was rerouted.')
+		return sessions.next(sessionId, owner, timeoutMs, signal, documentId, listener)
+	}
+	/** An unscoped read of a caller (legacy `helm review wait`, Pi): its quit-closed windows come back first. */
+	async reopenCallerDocuments(profileId: string, sessionId: string, owner: string, signal: AbortSignal): Promise<void> {
+		const sessions = this.sessionsFor(profileId)
+		for (const kept of sessions.restorableDocuments(sessionId, owner))
+			await this.reopenForCaller(profileId, sessionId, owner, kept.documentId, kept, signal).catch(() => {})
+	}
+	/**
+	 * Reopen one quit-closed window of this caller with its old document id (S13): same file, full repository
+	 * admission, inactive (never steals focus). Waits for another opening to finish rather than failing the read.
+	 */
+	private async reopenForCaller(
+		profileId: string,
+		sessionId: string,
+		owner: string,
+		documentId: string,
+		kept: { root: string; file: string },
+		signal: AbortSignal,
+	): Promise<void> {
+		for (let waited = 0; this.opening; waited += 50) {
+			if (signal.aborted || waited > 15000) throw restartingRefusal()
+			await new Promise(done => setTimeout(done, 50))
+		}
+		this.requireAdmission()
+		const sessions = this.sessionsFor(profileId)
+		const connected = sessions.get(sessionId, owner)
+		const token = this.deps.profileToken()
+		const epoch = this.admissionEpoch
+		const current = () =>
+			!this.stopping &&
+			!this.suspending &&
+			!signal.aborted &&
+			epoch === this.admissionEpoch &&
+			!connected.retired &&
+			this.deps.allowsToken(token) &&
+			this.deps.profileId() === profileId
+		if (!current()) throw restartingRefusal()
+		this.opening = true
+		try {
+			await this.openFile(kept.file, token, current, sessionId, connected.workspace, documentId)
+			const state = [...this.windows.values()].find(
+				value => value.profileId === profileId && value.observation.id === documentId,
+			)
+			if (!state || state.selectedSession !== sessionId)
+				throw refuse(`${basename(kept.file)} could not come back for this connection. Run helm edit on it again.`)
+			sessions.track(sessionId, owner, documentId, state.observation.root, state.observation.file)
+		} finally {
+			this.opening = false
+		}
 	}
 	private sessionsFor(profileId: string): ReviewSessions {
 		let sessions = this.sessions.get(profileId)
 		if (!sessions) {
-			sessions = new ReviewSessions(() => {
-				this.publish(profileId)
-				this.activity.kick()
-			})
+			const store = this.ownerStore
+			sessions = new ReviewSessions(
+				() => {
+					this.publish(profileId)
+					this.activity.kick()
+				},
+				undefined,
+				undefined,
+				undefined,
+				store ? { profileId, save: (id, record) => store.save(id, record) } : null,
+			)
 			this.sessions.set(profileId, sessions)
 		}
 		return sessions
+	}
+	/** The review host's store for callers kept across a restart (S13). Call before any caller connects. */
+	keepCallers(store: ReviewOwnerStore): void {
+		this.ownerStore = store
+	}
+	/**
+	 * After a restart: bring back one caller from its kept record, with the same id and owner, in the active profile.
+	 * 'later' leaves another profile's caller on disk untouched; null drops it (gone, expired or unusable).
+	 */
+	async restoreCaller(binding: CallerBindingRecord): Promise<CallerBinding | null | 'later'> {
+		const store = this.ownerStore
+		if (!store) return null
+		const profileId = this.deps.profileId()
+		const profileToken = this.deps.profileToken()
+		if (binding.profileId !== profileId || !this.deps.allowsToken(profileToken)) return 'later'
+		const record = await store.load(binding.id)
+		const drop = async () => {
+			await store.remove(binding.id).catch(() => {})
+			return null
+		}
+		if (
+			!record ||
+			record.snapshot.owner !== binding.owner ||
+			record.profileId !== binding.profileId ||
+			record.workspace !== binding.workspace
+		)
+			return drop()
+		if (Date.now() - record.usedAt > OWNER_RECORD_TTL_MS) {
+			// Expired with feedback outstanding: its journal thread says the outcome is unknown, nothing is replayed.
+			const reference = record.pending?.archive
+			if (reference)
+				await this.resumeArchive(profileId, reference)
+					.settle({
+						state: 'unknown',
+						detail: 'Helm restarted and the agent did not come back within a day. Nothing was replayed.',
+					})
+					.catch(() => false)
+			return drop()
+		}
+		if ((await realpath(record.workspace).catch(() => null)) !== record.workspace) return drop()
+		if (this.deps.profileId() !== profileId || !this.deps.allowsToken(profileToken)) return 'later'
+		try {
+			this.sessionsFor(profileId).restore(record, reference => this.resumeArchive(profileId, reference))
+		} catch {
+			return drop()
+		}
+		return { id: binding.id, owner: binding.owner, profileId, profileToken, workspace: record.workspace }
+	}
+	/** The journal thread of a feedback sent before a restart, ready for its settlement. */
+	private resumeArchive(profileId: string, reference: ArchiveReference): ArchiveHandle {
+		const context = this.archiveFor(profileId, reference.root, reference.file, this.deps.profileToken())
+		const handle = context.archive.resume(reference.thread, (start, entry) =>
+			this.appendHistoricalSettlement(context, start, entry),
+		)
+		return { id: handle.id, settle: value => handle.settle(value), reference: structuredClone(reference) }
 	}
 	async openForCaller(file: string, token: string, profileId: string, sessionId: string, owner: string) {
 		// Share native/menu admission: concurrent CLI opens must not create duplicate
@@ -756,6 +911,8 @@ export class DocumentReviewWindows {
 			)
 			if (!state) throw new Error('The document could not open for this connection.')
 			const document = state.observation.current()
+			// Kept with the caller: a quit or restart brings this window back for it (S13).
+			this.sessionsFor(profileId).track(sessionId, owner, document.id, state.observation.root, state.observation.file)
 			return { documentId: document.id, revision: document.revision, relativePath: document.relativePath }
 		} finally {
 			this.opening = false
@@ -767,6 +924,8 @@ export class DocumentReviewWindows {
 		current: () => boolean,
 		sessionId?: string,
 		expectedRoot?: string,
+		/** Reopening a quit-closed window (S13): the document keeps this id, and the window opens inactive. */
+		restoreId?: string,
 	): Promise<void> {
 		const original = resolve(rawFile)
 		const stat = await lstat(original).catch(() => null)
@@ -800,6 +959,10 @@ export class DocumentReviewWindows {
 			)
 		for (const state of this.windows.values())
 			if (state.token === token && state.observation.file === file) {
+				if (restoreId)
+					throw refuse(
+						`${basename(file)} is open in Helm again under a new window. Run helm edit on it again; nothing was rerouted.`,
+					)
 				if (state.plain) {
 					// D2: an agent's --listen binds the plain window showing this file, after full feedback admission.
 					if (sessionId) await this.bindPlainWindow(state, root, sessionId, current)
@@ -827,7 +990,7 @@ export class DocumentReviewWindows {
 			drafts = new ReviewDraftStore(this.deps.profileDir(profileId))
 			this.drafts.set(profileId, drafts)
 		}
-		const observation = new ReviewDocumentObservation(root, file, () => this.publish(profileId))
+		const observation = new ReviewDocumentObservation(root, file, () => this.publish(profileId), null, restoreId)
 		await observation.start()
 		if (!current() || observation.current().error) {
 			const failure = observation.failure
@@ -837,7 +1000,15 @@ export class DocumentReviewWindows {
 				? failure
 				: refuse(`${basename(file)} could not be read for review (${failureCause(failure)}). Nothing was opened.`)
 		}
-		await this.createWindow(observation, profileId, token, current, sessionId)
+		await this.createWindow(
+			observation,
+			profileId,
+			token,
+			current,
+			sessionId,
+			null,
+			restoreId ? { inactive: true } : {},
+		)
 	}
 	/** The caps count views, wherever they are shown. */
 	private feedbackViews(): number {
@@ -874,7 +1045,9 @@ export class DocumentReviewWindows {
 	/** ⌘W / File → Close in a document view: closes that view only, through its close guard. */
 	closeViewOf(contents: WebContents): void {
 		const state = this.windows.get(contents.id)
-		if (state && state.contents === contents) this.closeView(state)
+		if (!state || state.contents !== contents) return
+		state.quitClose = false
+		this.closeView(state)
 	}
 	/**
 	 * D2: replace a plain window's observation with a feedback-mode one for the caller. Runs the full repository
@@ -1083,6 +1256,7 @@ export class DocumentReviewWindows {
 			viewerSession,
 			closed: false,
 			background,
+			quitClose: false,
 		}
 		this.windows.set(senderId, state)
 		this.attach(state, container)
@@ -1103,6 +1277,7 @@ export class DocumentReviewWindows {
 				(process.platform === 'darwin' ? input.meta : input.control)
 			) {
 				event.preventDefault()
+				state.quitClose = false
 				this.closeView(state)
 			}
 		})
@@ -1156,6 +1331,8 @@ export class DocumentReviewWindows {
 		})
 		window.on('close', event => {
 			if (container.closing) return
+			// Jakub's own close of the window (red button), not the quit's: his close ends the documents for good.
+			if (!this.quitClosing) for (const state of container.views) state.quitClose = false
 			// One guarded view keeps the whole window open and asks in its own tab; the others stay too.
 			const guarded = container.views.find(state => this.guarded(state))
 			if (guarded) {
@@ -1274,8 +1451,9 @@ export class DocumentReviewWindows {
 		if (container.resumeCloseFor === state) container.resumeCloseFor = null
 		this.detach(state)
 		this.windows.delete(state.senderId)
-		// The view's CURRENT observation: binding a plain view replaces it.
-		state.sessions.closeDocument(state.observation.id)
+		// The view's CURRENT observation: binding a plain view replaces it. A quit's close keeps it for its caller.
+		if (state.quitClose || this.suspending) state.sessions.closeDocumentForRestart(state.observation.id)
+		else state.sessions.closeDocument(state.observation.id)
 		void state.observation.dispose()
 		void state.tokens.revokeAll()
 		// WebContents.close() ends the page later: its session (network block, helm-viewer: handler) is disposed only
@@ -1490,6 +1668,8 @@ export class DocumentReviewWindows {
 		}
 		for (const container of [...this.containers]) this.destroyContainer(container)
 		await Promise.all(states.map(state => state.observation.dispose()))
+		// Retired callers are forgotten on disk too before the switch commits: none comes back in a later start.
+		await this.ownerStore?.drain()
 		this.admissionClosed = false
 	}
 	hasDirty(): boolean {
@@ -1502,10 +1682,43 @@ export class DocumentReviewWindows {
 		return [...this.sessions.values()].some(sessions => sessions.isBusy())
 	}
 	async stopOwned(): Promise<void> {
+		// Disconnecting is a deliberate end: a suspended quit that could not keep its callers retires them now.
+		this.resumeAfterCancelledQuit()
 		await this.drainAndRevealFailure()
+		await this.ownerStore?.drain()
 	}
-	/** Quit: every container closes through its guard; a dirty view keeps its window open and asks. */
+	/**
+	 * Quit or restart (S13): callers are KEPT, not retired. New feedback is refused, sends already admitted finish,
+	 * every listener is told Helm is restarting (its CLI waits and asks again), and every caller is written to disk.
+	 * Rejects when a caller could not be written; nothing was retired then.
+	 */
+	async suspendForQuit(): Promise<void> {
+		this.suspending = true
+		await Promise.allSettled([...this.windows.values()].flatMap(state => [...state.active]))
+		await Promise.allSettled([...this.archives.values()].map(context => context.archive.drain()))
+		await Promise.all([...this.sessions.values()].map(sessions => sessions.suspend()))
+		await this.ownerStore?.drain()
+	}
+	/** The quit did not happen (Keep editing, a refused close): callers work again, as before. */
+	resumeAfterCancelledQuit(): void {
+		if (!this.suspending) return
+		this.suspending = false
+		for (const sessions of this.sessions.values()) sessions.resume()
+	}
+	isSuspended(): boolean {
+		return this.suspending
+	}
+	/**
+	 * Quit: every container closes through its guard; a dirty view keeps its window open and asks. These closes
+	 * are the quit's: a caller listening on one is told Helm restarts and gets its window back (S13).
+	 */
 	requestCloseAll(): void {
-		for (const container of [...this.containers]) if (!container.window.isDestroyed()) container.window.close()
+		for (const state of this.windows.values()) state.quitClose = true
+		this.quitClosing = true
+		try {
+			for (const container of [...this.containers]) if (!container.window.isDestroyed()) container.window.close()
+		} finally {
+			this.quitClosing = false
+		}
 	}
 }

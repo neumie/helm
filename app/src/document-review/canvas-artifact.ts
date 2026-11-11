@@ -53,7 +53,7 @@ const annotations = z
 	.max(256)
 	.refine(values => new Set(values.map(value => value.id)).size === values.length)
 const terminal = z.enum(['complete', 'error', 'unknown', 'rejected'])
-const thread = z
+export const reviewThreadSchema = z
 	.object({
 		id: z.string().uuid(),
 		instruction: z
@@ -73,7 +73,7 @@ const thread = z
 	.strict()
 	.refine(value => value.state !== 'unconfirmed' || (value.reply === undefined && value.detail === undefined))
 const entrySchema = z.discriminatedUnion('type', [
-	z.object({ version: z.literal(1), type: z.literal('thread'), thread }).strict(),
+	z.object({ version: z.literal(1), type: z.literal('thread'), thread: reviewThreadSchema }).strict(),
 	z
 		.object({
 			version: z.literal(1),

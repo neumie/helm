@@ -21,6 +21,7 @@ import {
 import type { IpcMainInvokeEvent, WebContents } from 'electron'
 import * as pty from 'node-pty'
 import { localControlTokenPath, readLocalControlToken } from '../../src/auth/local-control'
+import { REVIEW_NAMESPACE_HELD } from '../../src/document-review/control-server'
 import { PlanWorkspace } from '../../src/plan/workspace'
 import { remoteTerminalEnvironment } from '../../src/remote/terminal-metadata'
 import { scheduledSessionId, scheduledSocketPath } from '../../src/scheduled-runs/session-path'
@@ -72,6 +73,7 @@ import {
 	SIDE_BY_SIDE_READ_ONLY_ERROR,
 	SIDE_BY_SIDE_TITLE,
 	type SideBySideLaunch,
+	homeIsolated,
 	parseSideBySideLaunch,
 	sideBySideRequested,
 	startupPolicy,
@@ -209,6 +211,7 @@ const launchPolicy = startupPolicy({
 	customUserData: process.argv.some(a => a.startsWith('--user-data-dir=')),
 	tmpUserData: process.argv.includes('--user-data-dir-tmp'),
 	agentDockEnv: process.env.HELM_AGENT_DOCK,
+	isolatedHome: homeIsolated(os.homedir(), os.userInfo().homedir),
 })
 
 app.setName(profileSwitchAttestationMode ? 'Helm Attestation' : APP_NAME)
@@ -3217,7 +3220,7 @@ void app.whenReady().then(async () => {
 	powerMonitor.on('unlock-screen', () => agentDock.resume())
 	if (sideBySideLaunch) app.dock?.setBadge('dev')
 	if (launchPolicy.documentReviewControl) {
-		reviewControlStart = documentReviewControl.start().catch(() => {
+		reviewControlStart = startReviewControlAfterRestart().catch(() => {
 			console.warn(
 				'[helm] document review CLI control unavailable; existing hosts and private state were left untouched',
 			)
@@ -3247,6 +3250,23 @@ void app.whenReady().then(async () => {
 	}
 })
 
+/**
+ * A restart can start the next Helm while the previous one is still quitting: its review host still holds the
+ * private namespace for a moment. Wait for it (a minute at most) instead of leaving the waiting agents without a host.
+ */
+async function startReviewControlAfterRestart(): Promise<void> {
+	for (let attempt = 0; ; attempt++) {
+		try {
+			await documentReviewControl.start()
+			return
+		} catch (error) {
+			const held = error instanceof Error && error.message === REVIEW_NAMESPACE_HELD
+			if (!held || attempt >= 60 || reviewControlStopped || reviewControlStop) throw error
+			await new Promise(done => setTimeout(done, 1000))
+		}
+	}
+}
+
 /** A notification click: the main window forward, restored if minimized, shown if hidden. */
 function focusAndRestoreMainWindow(): void {
 	const win = mainWindow
@@ -3268,40 +3288,44 @@ app.on('window-all-closed', () => {
 let reviewQuitConfirmation: Promise<void> | null = null
 let reviewArchiveDrainedForQuit = false
 let reviewArchiveQuitDrain: Promise<void> | null = null
-app.on('before-quit', event => {
-	if (documentReviewWindows.busy()) {
-		event.preventDefault()
-		if (!reviewQuitConfirmation) {
-			reviewQuitConfirmation = dialog
-				.showMessageBox({
+/**
+ * Quit or restart keeps review callers (S13): their feedback and windows come back with the next Helm and their
+ * CLIs wait for it. Only when Helm cannot write them down does it ask, as before, whether to disconnect them.
+ */
+function confirmReviewDisconnectForQuit(): void {
+	if (reviewQuitConfirmation) return
+	reviewQuitConfirmation = dialog
+		.showMessageBox({
+			type: 'warning',
+			message: 'Helm could not keep a document review for after the restart',
+			detail:
+				'Keep Helm open, or disconnect review feedback before quitting. The original terminal agents keep running; outstanding outcomes may remain unknown.',
+			buttons: ['Keep reviewing', 'Disconnect reviews and quit'],
+			defaultId: 0,
+			cancelId: 0,
+		})
+		.then(async response => {
+			if (response.response !== 1) return
+			try {
+				await documentReviewWindows.stopOwned()
+				reviewArchiveDrainedForQuit = true
+				app.quit()
+			} catch {
+				await dialog.showMessageBox({
 					type: 'warning',
-					message: 'A document review is still running',
+					message: 'Review content needs saving',
 					detail:
-						'Keep Helm open, or disconnect review feedback before quitting. The original terminal agents keep running; outstanding outcomes may remain unknown.',
-					buttons: ['Keep reviewing', 'Disconnect reviews and quit'],
-					defaultId: 0,
-					cancelId: 0,
+						'Helm stayed open. Reopen the document and retry or explicitly discard its unsaved reply before quitting. The original conversation was not changed.',
 				})
-				.then(async response => {
-					if (response.response === 1) {
-						try {
-							await documentReviewWindows.stopOwned()
-							reviewArchiveDrainedForQuit = true
-							app.quit()
-						} catch {
-							await dialog.showMessageBox({
-								type: 'warning',
-								message: 'Review content needs saving',
-								detail:
-									'Helm stayed open. Reopen the document and retry or explicitly discard its unsaved reply before quitting. The original conversation was not changed.',
-							})
-						}
-					}
-				})
-				.finally(() => {
-					reviewQuitConfirmation = null
-				})
-		}
+			}
+		})
+		.finally(() => {
+			reviewQuitConfirmation = null
+		})
+}
+app.on('before-quit', event => {
+	if (reviewQuitConfirmation) {
+		event.preventDefault()
 		return
 	}
 	if (terminalTransferMain?.isBusy()) {
@@ -3315,6 +3339,7 @@ app.on('before-quit', event => {
 		event.preventDefault()
 		pendingEditorQuit = true
 		quitRequested = false
+		documentReviewWindows.resumeAfterCancelledQuit()
 		runContextWindows.requestCloseAll()
 		documentReviewWindows.requestCloseAll()
 		void documentReviewWindows.showArchiveRecovery().catch(async () => {
@@ -3331,18 +3356,20 @@ app.on('before-quit', event => {
 		event.preventDefault()
 		if (!reviewArchiveQuitDrain) {
 			reviewArchiveQuitDrain = documentReviewWindows
-				.stopOwned()
+				.suspendForQuit()
 				.then(() => {
+					// A reply that could not be saved still needs Jakub before the window goes away.
+					if (documentReviewWindows.hasDirty()) {
+						documentReviewWindows.resumeAfterCancelledQuit()
+						app.quit()
+						return
+					}
 					reviewArchiveDrainedForQuit = true
 					app.quit()
 				})
-				.catch(async () => {
-					await dialog.showMessageBox({
-						type: 'warning',
-						message: 'Review content needs saving',
-						detail:
-							'Helm stayed open. Reopen the document and retry or explicitly discard its unsaved reply before quitting. The original conversation was not changed.',
-					})
+				.catch(() => {
+					documentReviewWindows.resumeAfterCancelledQuit()
+					confirmReviewDisconnectForQuit()
 				})
 				.finally(() => {
 					reviewArchiveQuitDrain = null

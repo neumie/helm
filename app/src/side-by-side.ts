@@ -167,6 +167,11 @@ export interface StartupPolicyInput {
 	tmpUserData: boolean
 	/** Raw `HELM_AGENT_DOCK` env value. */
 	agentDockEnv: string | undefined
+	/**
+	 * `os.homedir()` (HOME) is not the account's own home (`os.userInfo().homedir`): `~/.helm/document-review` is then
+	 * a private copy, so a side-by-side instance may run its own review host there (restart verification, S13).
+	 */
+	isolatedHome?: boolean
 }
 
 /** Which singleton/owner effects this launch may perform. */
@@ -179,7 +184,7 @@ export interface StartupPolicy {
 	scheduledAttention: boolean
 	/** Start polling/claiming scheduled attention notifications. */
 	scheduledAttentionNotifier: boolean
-	/** Start the shared `~/.helm/document-review` CLI control host. */
+	/** Start the `~/.helm/document-review` CLI control host (shared, unless HOME is isolated). */
 	documentReviewControl: boolean
 	/** Any non-GET daemon request (task watch, restart, profiles, Items, config). */
 	daemonWrites: boolean
@@ -188,6 +193,11 @@ export interface StartupPolicy {
 	/** Poll Okena and spool to `<userData>/agent-dock`. */
 	agentDock: boolean
 	windowTitle: string
+}
+
+/** HOME points somewhere other than the account's own home directory (both canonical). */
+export function homeIsolated(home: string, accountHome: string, realpath: Realpath = realpathSync.native): boolean {
+	return canonical(home, realpath) !== canonical(accountHome, realpath)
 }
 
 export function startupPolicy(input: StartupPolicyInput): StartupPolicy {
@@ -200,7 +210,7 @@ export function startupPolicy(input: StartupPolicyInput): StartupPolicy {
 		scheduledResidency: owner,
 		scheduledAttention: !input.attestation && !input.sideBySide,
 		scheduledAttentionNotifier: owner,
-		documentReviewControl: owner,
+		documentReviewControl: owner || (input.sideBySide && !harness && input.isolatedHome === true),
 		daemonWrites: !input.sideBySide,
 		remotePairingWrites: !input.sideBySide,
 		agentDock:

@@ -321,7 +321,7 @@ test('legacy uncertain identities are never loaded as live callers after restart
 		const recovered = new ReviewSessions(() => {})
 		assert.deepEqual(recovered.list(f.root), [])
 		assert.throws(() => recovered.reserve(id, randomUUID(), f.root), /unavailable/)
-		assert.equal('restore' in recovered, false)
+		// Only owner-store records (S13) come back; a legacy registry entry is never one.
 		const fresh = recovered.connect('pi', f.root, 'Existing Pi', 'tool-return')
 		assert.notEqual(fresh.id, id)
 		assert.equal(fresh.listening, false)

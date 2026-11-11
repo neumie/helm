@@ -13,8 +13,12 @@ export const REVIEW_PROTOCOL = 2
  * Optional behaviours a caller may ask for on connect, sent only after a successful `hello` lists them.
  * `session-hint` (S12): `session` carries the caller's own provider session id (Claude Code `CLAUDE_CODE_SESSION_ID`,
  * Codex `CODEX_THREAD_ID`). Display-only progress may read that session's file; nothing else trusts it.
+ * `listener` (S13): `next` may carry the listening process's own random nonce. A feedback handed to a listener
+ * that never confirmed it (its answer was lost, or Helm restarted) goes again only to a read with that same nonce.
+ * Not a connect feature: a caller sends `listener` only after a hello listed it.
  */
-export const REVIEW_FEATURES = ['session-hint'] as const
+export const REVIEW_CONNECT_FEATURES = ['session-hint'] as const
+export const REVIEW_FEATURES = ['session-hint', 'listener'] as const
 export type ReviewFeature = (typeof REVIEW_FEATURES)[number]
 /** A provider session id as a hint: it names a file, so it never holds a path separator or dot. */
 export const REVIEW_SESSION_HINT = /^[A-Za-z0-9][A-Za-z0-9-]{7,63}$/
@@ -57,7 +61,7 @@ export const commandSchema = z.discriminatedUnion('action', [
 			label,
 			transport: z.enum(['tool-return', 'in-process']),
 			// Only after a successful hello listed them; v1 hosts reject these fields.
-			features: z.array(z.enum(REVIEW_FEATURES)).max(8).optional(),
+			features: z.array(z.enum(REVIEW_CONNECT_FEATURES)).max(8).optional(),
 			session: z.string().regex(REVIEW_SESSION_HINT).optional(),
 		})
 		.strict(),
@@ -73,7 +77,13 @@ export const commandSchema = z.discriminatedUnion('action', [
 	z.object({ action: z.literal('list') }).strict(),
 	z.object({ action: z.literal('status') }).strict(),
 	z
-		.object({ action: z.literal('next'), timeoutMs: z.number().int().min(1).max(60000), documentId: uuid.optional() })
+		.object({
+			action: z.literal('next'),
+			timeoutMs: z.number().int().min(1).max(60000),
+			documentId: uuid.optional(),
+			// Only after a hello listed `listener`; older hosts refuse the field.
+			listener: uuid.optional(),
+		})
 		.strict(),
 	z.object({ action: z.literal('ack'), requestId: uuid }).strict(),
 	z

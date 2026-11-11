@@ -8,8 +8,14 @@ import sideBySideModule from '../app/src/side-by-side.ts'
 
 type SideBySideModule = typeof import('../app/src/side-by-side.ts')
 type HelmBridgeModule = typeof import('../app/src/helm-bridge.ts')
-const { SIDE_BY_SIDE_READ_ONLY_ERROR, SIDE_BY_SIDE_TITLE, parseSideBySideLaunch, sideBySideRequested, startupPolicy } =
-	sideBySideModule as SideBySideModule
+const {
+	SIDE_BY_SIDE_READ_ONLY_ERROR,
+	SIDE_BY_SIDE_TITLE,
+	homeIsolated,
+	parseSideBySideLaunch,
+	sideBySideRequested,
+	startupPolicy,
+} = sideBySideModule as SideBySideModule
 const { HelmBridge } = helmBridgeModule as HelmBridgeModule
 
 const appData = '/Users/op/Library/Application Support'
@@ -176,6 +182,25 @@ test('side-by-side skips every owner effect but keeps the agent dock', () => {
 	assert.equal(startupPolicy({ ...base, sideBySide: true, customUserData: true, agentDockEnv: '0' }).agentDock, false)
 })
 
+test('side-by-side runs its own review host only when HOME is not the account home', () => {
+	const isolated = { ...base, sideBySide: true, customUserData: true, isolatedHome: true }
+	assert.equal(startupPolicy(isolated).documentReviewControl, true)
+	assert.equal(startupPolicy({ ...isolated, isolatedHome: false }).documentReviewControl, false)
+	assert.equal(startupPolicy({ ...isolated, screenshot: true }).documentReviewControl, false)
+	assert.equal(startupPolicy({ ...isolated, attestation: true }).documentReviewControl, false)
+	// Everything else stays off: the review host is the only owner effect an isolated HOME allows.
+	assert.equal(startupPolicy(isolated).daemonWrites, false)
+	assert.equal(startupPolicy(isolated).protocolHandlers, false)
+	const same = (existing: string) => existing
+	assert.equal(homeIsolated('/Users/a', '/Users/a', same), false)
+	assert.equal(homeIsolated('/Users/a/', '/Users/a', same), false)
+	assert.equal(homeIsolated('/tmp/iso-home', '/Users/a', same), true)
+	assert.equal(
+		homeIsolated('/link', '/Users/a', existing => (existing === '/link' ? '/Users/a' : existing)),
+		false,
+	)
+})
+
 test('existing harness gating is preserved', () => {
 	const screenshot = startupPolicy({ ...base, screenshot: true })
 	assert.equal(screenshot.protocolHandlers, false)
@@ -250,7 +275,7 @@ test('main.ts routes every singleton effect through the startup policy', () => {
 	assert.match(main, /if \(launchPolicy\.scheduledResidency\) void scheduledResidency\.start\(\)/)
 	assert.match(
 		main,
-		/if \(launchPolicy\.documentReviewControl\) \{\s*reviewControlStart = documentReviewControl\.start\(\)/,
+		/if \(launchPolicy\.documentReviewControl\) \{\s*reviewControlStart = startReviewControlAfterRestart\(\)/,
 	)
 	assert.match(main, /if \(launchPolicy\.scheduledAttentionNotifier\) scheduledAttentionNotifier\?\.start\(\)/)
 	assert.match(main, /if \(launchPolicy\.scheduledAttention\) \{\s*scheduledAdoption = new/)
