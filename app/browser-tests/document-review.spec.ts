@@ -534,7 +534,9 @@ test('review header keeps filename without a redundant Close action', async ({ p
 	await expect(page.getByRole('textbox', { name: 'Whole-document message' })).toBeVisible()
 })
 
-test('exact pointer highlight survives writing, observation, return and resize', async ({ page }) => {
+test('exact pointer highlight survives writing, observation and resize only while its chat is open', async ({
+	page,
+}) => {
 	await page.setViewportSize({ width: 1197, height: 807 })
 	await open(page)
 	const excerpt = 'The selected owner must remain exact.'
@@ -547,10 +549,13 @@ test('exact pointer highlight survives writing, observation, return and resize',
 	await expect.poll(() => paintedText(page)).toEqual([excerpt])
 	await page.keyboard.press('Escape')
 	await expect(page.locator('.review-reading')).toBeFocused()
+	// Closing the chat ends the selection; its draft waits for the passage to be chosen again.
+	await expect.poll(() => paintedText(page)).toEqual([])
 	await page.setViewportSize({ width: 640, height: 520 })
-	await expect.poll(() => paintedText(page)).toEqual([excerpt])
+	await expect.poll(() => paintedText(page)).toEqual([])
 	await pointerExcerpt(page, page.locator('.review-block-text p').filter({ hasText: excerpt }).first(), excerpt)
 	await expect(editor).toHaveValue('First character')
+	await expect.poll(() => paintedText(page)).toEqual([excerpt])
 	await expect(page.getByRole('textbox', { name: 'Whole-document message', includeHidden: true })).toHaveValue('')
 	await page.setViewportSize({ width: 1197, height: 807 })
 	await expect.poll(() => paintedText(page)).toEqual([excerpt])
@@ -949,7 +954,7 @@ for (const boundaries of [['revision', 'owner'], ['API', 'DOM remount'], ['clear
 		}
 	})
 
-test('blocked pending selection cannot replace an admitted request highlight', async ({ page }) => {
+test('blocked pending selection never paints over an admitted request', async ({ page }) => {
 	await open(page)
 	const excerpt = 'The selected owner must remain exact.'
 	await pointerExcerpt(page, page.locator('.review-block-text p').filter({ hasText: excerpt }).first(), excerpt)
@@ -960,24 +965,25 @@ test('blocked pending selection cannot replace an admitted request highlight', a
 		.filter({ hasText: 'Read the actual document, refine a passage' })
 		.first()
 	await pointerExcerpt(page, other, 'Read the actual document')
+	// Selecting elsewhere closed the request's chat, which ends its highlight; the blocked selection is not painted.
+	await expect(passageEditor(page)).toHaveCount(0)
 	await expect(page.getByRole('button', { name: 'Use selection', exact: true })).toBeDisabled()
-	await expect.poll(() => paintedText(page)).toEqual([excerpt])
+	await expect.poll(() => paintedText(page)).toEqual([])
 	await proof(page, 'settle', true)
 	await expect(page.getByRole('button', { name: 'Use selection', exact: true })).toBeDisabled()
-	await expect.poll(() => paintedText(page)).toEqual([excerpt])
+	await expect.poll(() => paintedText(page)).toEqual([])
 	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.requests[0]?.passage?.quote)).toBe(excerpt)
 })
 
-test('saved annotation keeps its truthful source-block marker without a Review control', async ({ page }) => {
+test('saved annotation editing fakes no text highlight and leaves no marker once its chat closes', async ({ page }) => {
 	await open(page, 'comments')
 	await documentView(page, 'Comments')
 	await page.getByRole('button', { name: 'Edit / send feedback', exact: true }).click()
 	await expect(page.getByRole('textbox', { name: 'Passage instruction' })).toBeFocused()
 	await documentView(page, 'Read')
+	await expect(passageEditor(page)).toHaveCount(0)
 	await expect.poll(() => paintedText(page)).toEqual([])
-	const block = page.locator('.review-block[data-selected="true"] > .review-block-text')
-	await expect(block).toContainText('Collaborative specification')
-	expect(await block.evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)')
+	await expect(page.locator('.review-block[data-selected="true"]')).toHaveCount(0)
 	await expect(page.getByRole('button', { name: /^Review passage / })).toHaveCount(0)
 	expect(await page.evaluate(() => window.__helmDocumentReviewProof?.requests.length)).toBe(0)
 })
@@ -1229,11 +1235,14 @@ for (const interruption of ['none', 'newer edit', 'owner replacement', 'API repl
 		await expect(page.getByRole('menuitem', { name: /^Clear passage(?: |$)/ })).toBeDisabled()
 		await page.keyboard.press('Escape')
 		if (interruption === 'none') {
+			// Escape closed only the Writing options menu: the chat and its selection stay.
+			await expect(passageEditor(page)).toBeVisible()
 			await expect.poll(() => selectionPaint(page)).toEqual([selectedParagraphQuote])
 			const next = 'Read the actual document, refine a passage'
 			await pointerExcerpt(page, page.locator('.review-block-text p').filter({ hasText: next }).first(), next)
+			// Selecting elsewhere closed the chat and its selection; the save in flight still fences the new one.
 			await expect(page.getByRole('button', { name: 'Use selection', exact: true })).toBeDisabled()
-			await expect.poll(() => selectionPaint(page)).toEqual([selectedParagraphQuote])
+			await expect.poll(() => selectionPaint(page)).toEqual([])
 			await expect(passageEditor(page)).toHaveCount(0)
 		}
 		if (interruption === 'newer edit') await editor.fill('A newer unsaved thought')
@@ -1247,9 +1256,9 @@ for (const interruption of ['none', 'newer edit', 'owner replacement', 'API repl
 			.toBe(1)
 		if (interruption === 'none') {
 			await expect(passageEditor(page)).toHaveCount(0)
-			await expect.poll(() => selectionPaint(page)).toEqual([selectedParagraphQuote])
+			await expect.poll(() => selectionPaint(page)).toEqual([])
 			await expect.poll(() => savedAnnotationPaint(page)).toEqual([selectedParagraphQuote])
-			await expect.poll(() => paintedText(page)).toEqual([selectedParagraphQuote, selectedParagraphQuote])
+			await expect.poll(() => paintedText(page)).toEqual([selectedParagraphQuote])
 		} else {
 			await expect(page.getByText('Saved locally · not sent', { exact: true })).toHaveCount(0)
 			if (interruption === 'newer edit') await expect(editor).toHaveValue('A newer unsaved thought')
@@ -2337,7 +2346,8 @@ test('Back to reading returns from Conversation to Document without losing passa
 	await expect(page.getByLabel('Document reading area', { exact: true })).toBeVisible()
 	await expect(page.locator('.review-prose')).toBeVisible()
 	await expect(page.locator('.review-full-source')).toHaveCount(0)
-	await expect(page.locator('.review-block[data-selected="true"]')).toHaveCount(1)
+	// The passage chat closed on the way, so nothing stays marked; re-selecting brings the draft back.
+	await expect(page.locator('.review-block[data-selected="true"]')).toHaveCount(0)
 	await expect(page.getByRole('button', { name: 'Document options', exact: true })).toBeFocused()
 	await expect(back).toHaveCount(0)
 	await selectHeading(page, 'Start with the document')
