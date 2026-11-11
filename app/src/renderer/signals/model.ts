@@ -717,22 +717,32 @@ function agentHintTitle(match: AgentMatch): string {
 	}
 }
 
+/** Needs you threads not yet handled (sent on or answered): the Needs you band's count. */
+export function needsYouCount(sections: SignalSections, now: number): number {
+	return sections.needs.filter(thread => !handled(thread, now)).length
+}
+
 /**
- * Header context: `3 need you · 2 managed` (routed threads and answered asks no longer count as needing him). An empty
- * Needs you says `nothing needs you` only when a snapshot arrived and every source that is on answered
- * (`allSourcesOk`); `sources: null` (no snapshot yet) or a source that is down says `nothing listed`
- * instead, never an all-clear.
+ * The column's words with nothing open: `Listening to GitHub and Mail` only while every source
+ * answered (never an all-clear from missing data), else that not every source did.
  */
-export function signalsSummary(
-	sections: SignalSections,
-	now: number,
-	sources: readonly SignalSourceHealth[] | null,
-): string {
-	const fresh = sections.needs.filter(thread => !handled(thread, now)).length
-	const empty = sources !== null && allSourcesOk(sources) ? 'nothing needs you' : 'nothing listed'
-	const parts = [fresh === 0 ? empty : `${fresh} need${fresh === 1 ? 's' : ''} you`]
-	if (sections.managed.length > 0) parts.push(`${sections.managed.length} managed`)
-	return parts.join(' · ')
+export function restingWords(sources: readonly SignalSourceHealth[] | null): {
+	listening: boolean
+	title: string
+	detail: string
+} {
+	if (!sources || !allSourcesOk(sources))
+		return {
+			listening: false,
+			title: 'Not every source answered',
+			detail: 'The footer says which one, and how to fix it.',
+		}
+	const listening = sources.filter(source => source.status === 'ok').map(source => SOURCE_LABEL[source.source])
+	return {
+		listening: true,
+		title: `Listening to ${listening.join(' and ')}`,
+		detail: 'New reviews, comments, failed CI, mentions and mail show up here.',
+	}
 }
 
 // ---------- source health ----------

@@ -23,7 +23,7 @@ import { statusGlyph } from '../agent-dock/presentation'
 import { Btn } from '../button'
 import { IconBtn } from '../icon-button'
 import { GLYPH } from '../sidebar/ui'
-import { type SignalsLook, SignalsLookBody } from './SignalsLook'
+import { SignalsList } from './SignalsList'
 import {
 	type AgentMatch,
 	PICK_MAX,
@@ -33,7 +33,6 @@ import {
 	actionNote,
 	actionPatch,
 	agentBlockedNote,
-	allSourcesOk,
 	askDeliveryTarget,
 	askReceipt,
 	defaultAgentPick,
@@ -54,7 +53,6 @@ import {
 	signalRowView,
 	signalSection,
 	signalSections,
-	signalsSummary,
 	suggestBranch,
 	threadActions,
 } from './model'
@@ -76,8 +74,6 @@ export interface SignalsColumnProps {
 	/** Review fixtures only: the row selected and the flow open on first render. */
 	initialSelected?: number
 	initialFlow?: SignalsFlow
-	/** Design review only (Views / Signals / Sidebar look): an alternative header + list look. */
-	look?: SignalsLook
 }
 
 /**
@@ -263,75 +259,6 @@ function ListButton({
 	)
 }
 
-function SignalsTable({
-	sections,
-	snapshot,
-	now,
-	selected,
-	quietEmpty,
-	done,
-	filtered,
-	onSelect,
-}: {
-	/** Needs you, Managed and Snoozed (done rows are listed only in their own view). */
-	sections: SignalSections
-	snapshot: AgentDockSnapshot | null
-	now: number
-	selected: number | null
-	/** Every source answered: an empty Needs you may say so. */
-	quietEmpty: boolean
-	/** The `Done today 8 · D` button, or the plain `Done today 0`. */
-	done: ReactNode
-	/** The `5 filtered · f` button, after the done count; null when nothing was filtered. */
-	filtered: ReactNode
-	onSelect(id: number): void
-}) {
-	const row = (thread: SignalThread) => (
-		<SignalRow
-			key={thread.id}
-			thread={thread}
-			snapshot={snapshot}
-			now={now}
-			selected={selected === thread.id}
-			onSelect={() => onSelect(thread.id)}
-		/>
-	)
-	return (
-		<ul className="signals-table" aria-label="Signals">
-			<li className="signals-subhead" role="presentation">
-				Needs you
-			</li>
-			{sections.needs.length > 0 ? (
-				sections.needs.map(row)
-			) : (
-				<li className="signals-empty" role="presentation">
-					{quietEmpty ? 'Nothing needs you' : 'Nothing listed. Not every source answered'}
-				</li>
-			)}
-			<li className="signals-subhead" role="presentation">
-				Managed
-			</li>
-			{sections.managed.length > 0 ? (
-				sections.managed.map(row)
-			) : (
-				<li className="signals-empty" role="presentation">
-					Nothing is managed. m hands a thread to the dispatcher
-				</li>
-			)}
-			{sections.snoozed.length > 0 ? (
-				<li className="signals-subhead" role="presentation">
-					Snoozed {sections.snoozed.length}
-				</li>
-			) : null}
-			{sections.snoozed.map(row)}
-			<li className="signals-subhead" role="presentation" data-done-header="">
-				{done}
-				{filtered ? <> · {filtered}</> : null}
-			</li>
-		</ul>
-	)
-}
-
 export function SignalsColumn({
 	service,
 	dock,
@@ -341,7 +268,6 @@ export function SignalsColumn({
 	now: clock = Date.now,
 	initialSelected,
 	initialFlow = null,
-	look = 'today',
 }: SignalsColumnProps) {
 	const bridge = useSyncExternalStore(service.subscribe, service.getState)
 	const snapshot = useSyncExternalStore(dock.subscribe, dock.snapshot)
@@ -654,7 +580,6 @@ export function SignalsColumn({
 		<section
 			ref={sectionRef}
 			className="signals"
-			data-look={look === 'today' ? undefined : look}
 			aria-label="Signals"
 			aria-keyshortcuts={mod === 'cmd' ? 'Meta+Shift+I' : undefined}
 			// biome-ignore lint/a11y/noNoninteractiveTabindex: the surface takes the keys (j k p n m t s d o r x).
@@ -714,73 +639,40 @@ export function SignalsColumn({
 				)
 			) : (
 				<>
-					{look === 'today' ? (
-						<>
-							<header className="signals-title">
-								<span className="signals-title-text">
-									<span className="signals-title-kind">Signals</span>
-									<span className="signals-title-context">
-										{signalsSummary(sections, now, bridge.snapshot ? sources : null)}
-									</span>
-								</span>
-								<IconBtn label="Settings" className="signals-settings" onClick={onOpenSettings}>
-									{GLYPH.settings}
-								</IconBtn>
-							</header>
-							<div className="signals-scroll">
-								{bridge.snapshot ? (
-									<SignalsTable
-										sections={sections}
+					<header className="signals-title">
+						<span className="signals-title-text">
+							<span className="signals-title-kind">Signals</span>
+						</span>
+						<IconBtn label="Settings" className="signals-settings" onClick={onOpenSettings}>
+							{GLYPH.settings}
+						</IconBtn>
+					</header>
+					<div className="signals-scroll">
+						{bridge.snapshot ? (
+							<SignalsList
+								sections={sections}
+								sources={sources}
+								now={now}
+								row={thread => (
+									<SignalRow
+										key={thread.id}
+										thread={thread}
 										snapshot={snapshot}
 										now={now}
-										selected={current}
-										quietEmpty={allSourcesOk(sources)}
-										done={doneButton}
-										filtered={filteredButton}
-										onSelect={id => {
-											setSelected(id)
+										selected={current === thread.id}
+										onSelect={() => {
+											setSelected(thread.id)
 											setNote(null)
 										}}
 									/>
-								) : (
-									<p className="signals-placeholder">{bridge.error ?? 'Reading signals…'}</p>
 								)}
-							</div>
-						</>
-					) : (
-						<SignalsLookBody
-							look={look}
-							sections={sections}
-							sources={bridge.snapshot ? sources : null}
-							quietEmpty={allSourcesOk(sources)}
-							summary={signalsSummary(sections, now, bridge.snapshot ? sources : null)}
-							now={now}
-							row={thread => (
-								<SignalRow
-									key={thread.id}
-									thread={thread}
-									snapshot={snapshot}
-									now={now}
-									selected={current === thread.id}
-									onSelect={() => {
-										setSelected(thread.id)
-										setNote(null)
-									}}
-								/>
-							)}
-							done={doneButton}
-							filtered={filteredButton}
-							filteredText={filtered}
-							onOpenDone={openDone}
-							onOpenFiltered={openFiltered}
-							settings={
-								<IconBtn label="Settings" className="signals-settings" onClick={onOpenSettings}>
-									{GLYPH.settings}
-								</IconBtn>
-							}
-							placeholder={bridge.snapshot ? null : (bridge.error ?? 'Reading signals…')}
-						/>
-					)}
+								done={doneButton}
+								filtered={filteredButton}
+							/>
+						) : (
+							<p className="signals-placeholder">{bridge.error ?? 'Reading signals…'}</p>
+						)}
+					</div>
 					<footer className="signals-foot">
 						<span className="signals-foot-hints" aria-hidden="true">
 							{selectedThread

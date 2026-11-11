@@ -8,7 +8,6 @@ import { useEffect, useMemo, useRef } from 'react'
 import { focusActiveTerminal, memoryLeftColumnMode, mountLeftColumn, mountSignalsShortcut } from '../left-column'
 import { type TerminalWorkspaceFixtureOptions, TerminalWorkspaceFixtureView } from '../terminal-workspace-fixtures'
 import { type SignalsFlow, mountSignals } from './Signals'
-import type { SignalsLook } from './SignalsLook'
 import {
 	ASK_TERMINAL_IDLE,
 	type SignalsFixture,
@@ -54,8 +53,6 @@ export interface SignalsWorkspaceProps {
 	 * (`ASK_TERMINAL_IDLE`); main's real ask resolver closes the open asks bound to it.
 	 */
 	terminalPrompt?: string
-	/** Design review (Views / Signals / Sidebar look): the column's look; default production. */
-	look?: SignalsLook
 	/** The column's width in px (`--left-width`); default the production 340. */
 	width?: number
 }
@@ -128,7 +125,7 @@ const FLOW_THREAD: Record<Exclude<NonNullable<SignalsWorkspaceProps['flow']>, 'f
 	links: 501,
 }
 
-export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, look, width }: SignalsWorkspaceProps) {
+export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, width }: SignalsWorkspaceProps) {
 	const fixture = useMemo(() => fixtureFor(flow === 'slack-reply' ? 'slack' : scenario), [scenario, flow])
 	const options = useMemo<TerminalWorkspaceFixtureOptions>(
 		() => ({ agentDock: { scenario: 'real-case', position: 'bottom', output: 'claude-code' } }),
@@ -175,7 +172,6 @@ export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, lo
 					onLeave: () => focusActiveTerminal(root),
 					mod: 'cmd',
 					initialFlow,
-					look,
 				}),
 		})
 		const disposeShortcut = mountSignalsShortcut({
@@ -197,7 +193,7 @@ export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, lo
 			content?.style.removeProperty('--left-width')
 			if (window.__signalsFixture === fixture) window.__signalsFixture = undefined
 		}
-	}, [options, fixture, flow, terminalPrompt, look, width])
+	}, [options, fixture, flow, terminalPrompt, width])
 
 	return (
 		<div ref={wrapRef} style={{ display: 'contents' }}>
@@ -207,14 +203,13 @@ export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, lo
 }
 
 export interface SignalsColumnFramesProps {
-	look?: SignalsLook
 	/** Each frame: a width and a scenario, the production column alone at that size. */
 	frames: readonly { width: number; scenario: SignalsScenario; label: string }[]
 	height?: number
 }
 
 /** Story only: the bare production column in fixed frames side by side (narrow and wide checks). */
-export function SignalsColumnFrames({ look, frames, height = 640 }: SignalsColumnFramesProps) {
+export function SignalsColumnFrames({ frames, height = 640 }: SignalsColumnFramesProps) {
 	const hosts = useRef<(HTMLDivElement | null)[]>([])
 	useEffect(() => {
 		const mounted = frames.flatMap((frame, index) => {
@@ -227,14 +222,13 @@ export function SignalsColumnFrames({ look, frames, height = 640 }: SignalsColum
 					dock: fixture.dock,
 					onOpenSettings: () => undefined,
 					mod: 'cmd',
-					look,
 				}),
 			]
 		})
 		return () => {
 			for (const signals of mounted) signals.dispose()
 		}
-	}, [frames, look])
+	}, [frames])
 	return (
 		<div
 			style={{

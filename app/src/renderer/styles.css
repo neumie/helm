@@ -3338,36 +3338,183 @@ body.dragging {
 	list-style: none;
 }
 
-.signals-subhead,
-.signals-empty {
-	grid-column: 2 / -2;
-	margin: 12px 0 2px;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	color: var(--dock-dim);
-}
-
-/* `Done today 8 · 5 filtered`: two buttons on one line. It wraps between them on a narrow column
- * instead of cutting the filtered count off, and leaves their focus rings unclipped. */
-.signals-subhead[data-done-header] {
-	overflow: visible;
-	white-space: normal;
-}
-
-.signals-subhead[data-done-header] .signals-list-btn {
-	white-space: nowrap;
-}
-
-.signals-subhead:first-child {
-	margin-top: 2px;
-}
-
 .signals-empty {
 	grid-column: 3 / -2;
 	min-height: 28px;
 	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 	line-height: 28px;
+	color: var(--dock-dim);
+}
+
+/* The list (SignalsList.tsx, Jakub's pick 2026-11-11): only sections with threads, each under a
+ * sticky band; at rest the Braille dot field; the done line at the bottom. It fills the scroll
+ * owner so the done line rests low when the list is short. */
+.signals-scroll:has(> .signals-list) {
+	display: flex;
+	flex-direction: column;
+}
+
+.signals-list {
+	flex: 1 0 auto;
+	display: flex;
+	flex-direction: column;
+}
+
+.signals-section {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+}
+
+.signals-section + .signals-section {
+	margin-top: 12px;
+}
+
+/* The section title on a full-width --chrome band (the topbar's material), sticky at the top of
+ * the scroll owner while its rows pass under it. Mark and label on the 16px glyph/text columns,
+ * the count on the age column. */
+.signals-band {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	display: grid;
+	grid-template-columns: 12px minmax(0, 1fr) auto;
+	align-items: center;
+	column-gap: 8px;
+	height: 28px;
+	padding: 0 16px;
+	background: var(--chrome);
+	color: var(--text-1);
+	white-space: nowrap;
+}
+
+.signals-band-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.signals-band-count {
+	color: var(--dock-dim);
+	font-variant-numeric: tabular-nums;
+}
+
+/* A row selected by keyboard scrolls clear of its band. */
+.signals-section .signals-tr {
+	scroll-margin-top: 28px;
+}
+
+/* `Done today 8 · 5 filtered` at the bottom of the list: two buttons on one line. It wraps between
+ * them on a narrow column instead of cutting the filtered count off. A hidden key hint (`· D`)
+ * takes no room, so an unfocused column shows no gap between the two. */
+.signals-done-line {
+	flex: none;
+	margin-top: auto;
+	padding: 16px 16px 2px;
+	color: var(--dock-dim);
+}
+
+.signals-done-line .signals-list-btn {
+	white-space: nowrap;
+}
+
+.signals:not(:focus-within) .signals-done-line .signals-list-key {
+	display: none;
+}
+
+/* At rest: a slow gray Braille dot field over what Signals listens to (the ActivityIndicator's
+ * dot language). Hollow and still while a source is not answering: no calm is claimed then. */
+.signals-resting {
+	flex: 1 0 auto;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	padding: 24px 16px 14vh;
+	text-align: center;
+}
+
+.signals-resting-title {
+	font-size: var(--dock-prose-fs);
+	line-height: var(--dock-prose-lh);
+	color: var(--text-1);
+}
+
+.signals-resting-detail {
+	max-width: 30ch;
+	color: var(--dock-dim);
+	text-wrap: balance;
+}
+
+.signals-braille {
+	display: inline-flex;
+	gap: 12px;
+	margin-bottom: 14px;
+}
+
+.signals-braille-cell {
+	display: grid;
+	grid-template-columns: repeat(2, 5px);
+	grid-auto-rows: 5px;
+	gap: 5px;
+}
+
+.signals-braille-dot {
+	border-radius: 50%;
+	background: var(--text-2);
+	opacity: 0.5;
+}
+
+.signals-braille[data-unknown="true"] .signals-braille-dot {
+	background: transparent;
+	box-shadow: inset 0 0 0 1px var(--text-2);
+	animation: none !important;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.signals-resting .signals-braille-dot {
+		animation: signals-calm-wave 4.8s ease-in-out infinite;
+	}
+}
+
+@keyframes signals-calm-wave {
+	0%,
+	100% {
+		opacity: 0.32;
+	}
+	50% {
+		opacity: 0.8;
+	}
+}
+
+/* The band's count mark: the indicator's own 2px dots, one lit per thread, clockwise. */
+.signals-braille-mark {
+	justify-content: center;
+	width: 12px;
+	margin: 0;
+}
+
+.signals-braille-mark .signals-braille-cell {
+	grid-template-columns: repeat(2, 2px);
+	grid-auto-rows: 2px;
+	gap: 2px;
+}
+
+.signals-braille-mark .signals-braille-dot {
+	opacity: 0.35;
+}
+
+.signals-braille-mark .signals-braille-dot[data-lit="true"] {
+	background: var(--text-0);
+	opacity: 1;
+}
+
+.signals-braille-mark[data-tone="new"] .signals-braille-dot[data-lit="true"] {
+	background: var(--warn);
 }
 
 .signals-tr {
@@ -3818,671 +3965,4 @@ body.dragging {
 .signals-prompt-input:focus,
 .signals-branch-input:focus {
 	box-shadow: inset 0 0 0 1px var(--accent);
-}
-
-/* ---------- signals sidebar looks (design review only: Views / Signals / Sidebar look) ---------- */
-
-/* `SignalsColumnProps.look` (SignalsLook.tsx); absent = production. Each look keeps the column's
- * rows, keys, footer and flows and changes only the header, section titles, empty states, the done
- * line and how the empty space is used. Illustrations are monochrome currentColor on --text-2. */
-.signals-look-scroll {
-	display: flex;
-	flex-direction: column;
-}
-
-.signals-look-scroll > * {
-	flex: 1 0 auto;
-	display: flex;
-	flex-direction: column;
-}
-
-.signals-look-table {
-	flex: none;
-}
-
-.signals-look-subhead {
-	flex: none;
-	display: flex;
-	align-items: baseline;
-	gap: 8px;
-	margin: 16px 0 2px;
-	padding: 0 16px;
-	color: var(--text-1);
-}
-
-.signals-look-subhead:first-child {
-	margin-top: 4px;
-}
-
-.signals-look-subhead-label {
-	flex: 1 1 auto;
-	min-width: 0;
-}
-
-.signals-look-subhead-count {
-	color: var(--dock-dim);
-}
-
-.signals-look-art {
-	flex: none;
-	display: block;
-	color: var(--text-2);
-}
-
-.signals-look-done {
-	color: var(--dock-dim);
-	white-space: normal;
-}
-
-.signals-look-done .signals-list-btn {
-	white-space: nowrap;
-}
-
-/* A one-line empty section that wraps instead of cutting its sentence off. */
-.signals-look-line {
-	margin: 0;
-	padding: 5px 16px 7px 36px;
-	color: var(--text-1);
-	text-wrap: pretty;
-	user-select: text;
-}
-
-.signals-look-line-dim {
-	color: var(--dock-dim);
-}
-
-/* 1. card: a section's rows sit in a soft container; empty, it is a dashed card with line-art.
- * Both deliberately depart from §3.25 "no cards" (Jakub's suggestion). The container is inset 8px,
- * its grid's edge tracks are 0, so glyphs and text stay on the column's 16px lines. */
-.signals-look-group {
-	flex: none;
-	margin: 4px 8px 0;
-	padding: 4px 0;
-	border-radius: 8px;
-	background: var(--fill-subtle);
-	overflow: hidden;
-}
-
-.signals-look-group .signals-table {
-	grid-template-columns: 0 12px minmax(0, 1fr) fit-content(14ch) 0;
-}
-
-.signals-look-group .signals-tr[data-selected="true"] {
-	background: var(--fill-raised);
-}
-
-.signals-look-group[data-quiet="true"] {
-	background: transparent;
-	box-shadow: inset 0 0 0 1px var(--hairline);
-}
-
-.signals-look-card {
-	flex: none;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	gap: 6px;
-	margin: 4px 8px 0;
-	padding: 20px 16px;
-	border: 1px dashed var(--hairline-strong);
-	border-radius: 8px;
-	text-align: center;
-}
-
-.signals-look-card[data-size="large"] {
-	min-height: 184px;
-}
-
-.signals-look-card[data-size="large"] .signals-look-art {
-	margin-bottom: 6px;
-}
-
-.signals-look-card[data-size="small"] {
-	padding: 14px 16px 16px;
-}
-
-.signals-look-card-title {
-	font-size: var(--dock-prose-fs);
-	line-height: var(--dock-prose-lh);
-	color: var(--text-1);
-}
-
-.signals-look-card-detail {
-	max-width: 30ch;
-	color: var(--dock-dim);
-	text-wrap: balance;
-}
-
-.signals-look-card-done {
-	margin-top: 16px;
-	padding: 0 16px;
-}
-
-/* 2. calm: a full-height centered state in the Braille dot language; Braille count marks on titles. */
-.signals-look-calm {
-	align-items: center;
-	justify-content: center;
-	gap: 6px;
-	padding: 24px 16px 12vh;
-	text-align: center;
-}
-
-.signals-look-braille {
-	display: inline-flex;
-	gap: 12px;
-	margin-bottom: 14px;
-}
-
-.signals-look-braille-cell {
-	display: grid;
-	grid-template-columns: repeat(2, 5px);
-	grid-auto-rows: 5px;
-	gap: 5px;
-}
-
-.signals-look-braille-dot {
-	border-radius: 50%;
-	background: var(--text-2);
-	opacity: 0.5;
-}
-
-/* Not every source answered: the dots go hollow and still (no calm claimed). */
-.signals-look-braille[data-unknown="true"] .signals-look-braille-dot {
-	background: transparent;
-	box-shadow: inset 0 0 0 1px var(--text-2);
-	animation: none !important;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-	:is(.signals-look-calm, .signals-look-folded .signals-look-stage) .signals-look-braille-dot {
-		animation: signals-look-calm-wave 4.8s ease-in-out infinite;
-	}
-}
-
-@keyframes signals-look-calm-wave {
-	0%,
-	100% {
-		opacity: 0.32;
-	}
-	50% {
-		opacity: 0.8;
-	}
-}
-
-/* The count mark on a section title: the indicator's own 2px dots, one lit per thread, clockwise. */
-.signals-look-braille-mark {
-	flex: none;
-	align-self: center;
-	justify-content: center;
-	width: 12px;
-	margin: 0;
-}
-
-.signals-look-braille-mark .signals-look-braille-cell {
-	grid-template-columns: repeat(2, 2px);
-	grid-auto-rows: 2px;
-	gap: 2px;
-}
-
-.signals-look-braille-mark .signals-look-braille-dot {
-	opacity: 0.35;
-}
-
-.signals-look-braille-mark .signals-look-braille-dot[data-lit="true"] {
-	background: var(--text-0);
-	opacity: 1;
-}
-
-.signals-look-braille-mark[data-tone="new"] .signals-look-braille-dot[data-lit="true"] {
-	background: var(--warn);
-}
-
-.signals-look-calm-title {
-	font-size: var(--dock-prose-fs);
-	line-height: var(--dock-prose-lh);
-	color: var(--text-1);
-}
-
-.signals-look-calm-detail {
-	max-width: 30ch;
-	color: var(--dock-dim);
-	text-wrap: balance;
-}
-
-.signals-look-calm-done {
-	margin-top: 10px;
-}
-
-.signals-look-calm-list .signals-look-subhead {
-	margin-top: 20px;
-}
-
-.signals-look-calm-list .signals-look-subhead:first-child {
-	margin-top: 6px;
-}
-
-.signals-look-pinned-done {
-	margin-top: auto;
-	padding: 16px 16px 2px;
-}
-
-/* 3. terminal: a compact `helm signal ls` transcript (mono for the transcript only: a departure). */
-.signals-look-term {
-	padding: 6px 16px 12px;
-	font-family: var(--dock-mono);
-	letter-spacing: 0;
-	color: var(--text-1);
-	user-select: text;
-}
-
-.signals-look-term-prompt {
-	color: var(--dock-dim);
-}
-
-.signals-look-term-out {
-	display: grid;
-	grid-template-columns: max-content max-content;
-	column-gap: 3ch;
-	padding-left: 20px;
-	margin-top: 2px;
-}
-
-.signals-look-term-key {
-	color: var(--dock-dim);
-}
-
-.signals-look-term-val {
-	color: var(--text-0);
-}
-
-.signals-look-term-note {
-	padding-left: 20px;
-	color: var(--dock-dim);
-}
-
-:is(.signals-look-term-out, .signals-look-term-head) .signals-list-btn {
-	min-height: 0;
-	font-family: inherit;
-	letter-spacing: 0;
-	color: var(--dock-dim);
-}
-
-:is(.signals-look-term-out, .signals-look-term-head) .signals-list-btn:hover {
-	color: var(--text-1);
-}
-
-.signals-look-term-caret-line {
-	margin-top: 4px;
-}
-
-.signals-look-caret {
-	display: inline-block;
-	width: 0.6em;
-	height: 1.1em;
-	vertical-align: -0.2em;
-	background: var(--text-1);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-	.signals-look-caret {
-		animation: signals-look-caret 1.1s steps(1) infinite;
-	}
-}
-
-@keyframes signals-look-caret {
-	50% {
-		opacity: 0;
-	}
-}
-
-.signals-look-term-head {
-	flex: none;
-	margin: 12px 0 2px;
-	padding: 0 16px;
-	font-family: var(--dock-mono);
-	letter-spacing: 0;
-	color: var(--dock-dim);
-}
-
-.signals-look-term-head:first-child {
-	margin-top: 6px;
-	margin-bottom: 4px;
-}
-
-.signals-look-term-head .signals-look-term-val {
-	color: var(--text-1);
-}
-
-.signals-look-term-head .signals-look-done {
-	display: inline;
-}
-
-.signals-look-term-empty {
-	margin: 0;
-	padding: 2px 16px 6px 36px;
-	font-family: var(--dock-mono);
-	letter-spacing: 0;
-	color: var(--dock-dim);
-	user-select: text;
-}
-
-.signals[data-look="terminal"] .signals-tr {
-	min-height: 40px;
-	padding: 2px 0;
-}
-
-/* 4. summary: every count in one status block under the title; one centered illustration at rest. */
-.signals-look-status {
-	flex: none;
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
-	padding: 0 16px 6px;
-	color: var(--dock-dim);
-}
-
-.signals-look-status-part {
-	white-space: nowrap;
-}
-
-.signals-look-status-text {
-	font-size: var(--dock-prose-fs);
-	line-height: var(--dock-prose-lh);
-	color: var(--text-1);
-}
-
-.signals-look-summary .signals-look-status + .signals-look-subhead {
-	margin-top: 8px;
-}
-
-.signals-look-stage {
-	flex: 1 0 auto;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	gap: 6px;
-	padding: 24px 16px 14vh;
-	text-align: center;
-}
-
-.signals-look-arc[data-arc="1"] {
-	stroke-opacity: 0.9;
-}
-
-.signals-look-arc[data-arc="2"] {
-	stroke-opacity: 0.55;
-}
-
-.signals-look-arc[data-arc="3"] {
-	stroke-opacity: 0.3;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-	.signals-look-listening .signals-look-arc {
-		animation: signals-look-ripple 3.6s ease-in-out infinite;
-	}
-
-	.signals-look-listening .signals-look-arc[data-arc="2"] {
-		animation-delay: 0.4s;
-	}
-
-	.signals-look-listening .signals-look-arc[data-arc="3"] {
-		animation-delay: 0.8s;
-	}
-}
-
-@keyframes signals-look-ripple {
-	0%,
-	100% {
-		opacity: 1;
-	}
-	50% {
-		opacity: 0.4;
-	}
-}
-
-.signals-look-stage-title {
-	margin-top: 14px;
-	font-size: var(--dock-prose-fs);
-	line-height: var(--dock-prose-lh);
-	color: var(--text-1);
-}
-
-.signals-look-stage-detail {
-	max-width: 30ch;
-	color: var(--dock-dim);
-	text-wrap: balance;
-}
-
-/* 6. folded (Jakub's pick, "4 with 2"): summary's status block, calm's dots. The Braille field
- * sits where the arcs were; it brings its own 14px gap, so the stage title drops its margin. */
-.signals-look-folded .signals-look-stage .signals-look-stage-title {
-	margin-top: 0;
-}
-
-.signals-look-folded .signals-look-subhead {
-	margin-top: 20px;
-}
-
-.signals-look-folded .signals-look-status + .signals-look-section > .signals-look-subhead {
-	margin-top: 10px;
-}
-
-/* The folded tops (7–9): the done line pinned low. A hidden key hint (`· D`) takes no room there,
- * else an unfocused column shows a gap between `Done today 2` and `· 5 filtered`. */
-.signals:not(:focus-within) .signals-look-folded .signals-look-done .signals-list-key {
-	display: none;
-}
-
-.signals-look-folded > .signals-look-section:first-child > .signals-look-subhead {
-	margin-top: 6px;
-}
-
-/* 8. one large count of what needs you, the sections under it. */
-.signals-look-number {
-	flex: none;
-	display: flex;
-	align-items: baseline;
-	gap: 10px;
-	padding: 2px 16px 4px;
-	min-width: 0;
-}
-
-.signals-look-number-n {
-	flex: none;
-	font-size: calc(32px * var(--ui-scale));
-	line-height: 1;
-	font-weight: 300;
-	font-variant-numeric: tabular-nums;
-	color: var(--text-0);
-}
-
-.signals-look-number-label {
-	min-width: 0;
-	font-size: var(--dock-prose-fs);
-	line-height: var(--dock-prose-lh);
-	color: var(--text-1);
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.signals-look-number-dim {
-	color: var(--dock-dim);
-}
-
-.signals-look-folded .signals-look-number + .signals-look-section > .signals-look-subhead {
-	margin-top: 14px;
-}
-
-/* 10–12. how `folded-bare` sets its sections apart (FOLDED_SEPARATION). Rows keep their 16px
- * grid and square full-width selection; only the section edges change. */
-.signals-look-section {
-	position: relative;
-	flex: none;
-	display: flex;
-	flex-direction: column;
-}
-
-/* 10 rule: a full-width hairline (the only line weight) over every title but the first. */
-.signals-look-folded[data-separation="rule"] .signals-look-section + .signals-look-section {
-	margin-top: 16px;
-	border-top: 1px solid var(--hairline);
-}
-
-.signals-look-folded[data-separation="rule"] .signals-look-section + .signals-look-section > .signals-look-subhead {
-	margin-top: 10px;
-}
-
-/* 11 band: the title on a full-width --chrome band (the topbar's material) that sticks to the top
- * of the scroll owner while its rows pass under it; rows scrolled into view clear it. */
-.signals-look-folded[data-separation="band"] .signals-look-section > .signals-look-subhead {
-	position: sticky;
-	top: 0;
-	z-index: 1;
-	align-items: center;
-	height: 28px;
-	margin: 0;
-	background: var(--chrome);
-}
-
-.signals-look-folded[data-separation="band"] .signals-look-section + .signals-look-section {
-	margin-top: 12px;
-}
-
-.signals-look-folded[data-separation="band"] > .signals-look-section:first-child > .signals-look-subhead {
-	margin-top: 0;
-}
-
-.signals-look-folded[data-separation="band"] .signals-tr {
-	scroll-margin-top: 28px;
-}
-
-/* 12 rail: a wider gap and a 2px rail at the left edge, title to last row (the Background list's
- * group rail, here in neutral --hairline-strong). */
-.signals-look-folded[data-separation="rail"] .signals-look-section::before {
-	content: "";
-	position: absolute;
-	top: 4px;
-	bottom: 4px;
-	left: 0;
-	width: 2px;
-	background: var(--hairline-strong);
-}
-
-.signals-look-folded[data-separation="rail"] .signals-look-section + .signals-look-section {
-	margin-top: 20px;
-}
-
-.signals-look-folded[data-separation="rail"] .signals-look-section > .signals-look-subhead {
-	margin-top: 4px;
-}
-
-/* 5. ledger: a count strip under the title, then only sections with threads; at rest the legend. */
-.signals-look-ledger-strip {
-	flex: none;
-	display: grid;
-	grid-template-columns: repeat(4, minmax(0, 1fr));
-	gap: 6px 12px;
-	padding: 0 16px 8px;
-}
-
-.signals[data-look="ledger"] {
-	container: signals-look / inline-size;
-}
-
-@container signals-look (max-width: 300px) {
-	.signals-look-ledger-strip {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-	}
-}
-
-.signals-look-ledger-cell {
-	display: flex;
-	flex-direction: column;
-	min-width: 0;
-	padding: 0;
-	border: none;
-	background: transparent;
-	font: inherit;
-	line-height: inherit;
-	color: inherit;
-	text-align: left;
-}
-
-.signals-look-ledger-n {
-	font-size: var(--dock-prose-fs);
-	line-height: var(--dock-prose-lh);
-	color: var(--text-0);
-}
-
-.signals-look-ledger-cell[data-zero="true"] .signals-look-ledger-n,
-.signals-look-ledger-btn .signals-look-ledger-n {
-	color: var(--dock-dim);
-}
-
-.signals-look-ledger-label {
-	color: var(--dock-dim);
-	white-space: nowrap;
-}
-
-.signals-look-ledger-btn {
-	cursor: pointer;
-	transition: color 140ms ease-out;
-}
-
-.signals-look-ledger-btn:hover :is(.signals-look-ledger-n, .signals-look-ledger-label) {
-	color: var(--text-1);
-}
-
-.signals-look-legend {
-	flex: 1 0 auto;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	gap: 4px;
-	padding: 24px 16px 12vh;
-	text-align: center;
-}
-
-.signals-look-legend-title {
-	font-size: var(--dock-prose-fs);
-	line-height: var(--dock-prose-lh);
-	color: var(--text-1);
-}
-
-.signals-look-legend-detail {
-	max-width: 30ch;
-	color: var(--dock-dim);
-	text-wrap: balance;
-}
-
-.signals-look-ledger-n .signals-list-key {
-	font-size: var(--dock-fs);
-	color: var(--dock-dim);
-}
-
-.signals-look-legend-list {
-	display: grid;
-	grid-template-columns: 12px max-content;
-	column-gap: 10px;
-	margin: 10px 0 0;
-	padding: 0;
-	list-style: none;
-	text-align: left;
-	color: var(--dock-dim);
-}
-
-.signals-look-legend-list li {
-	display: contents;
-}
-
-.signals-look-legend-sources {
-	margin: 16px 0 0;
-	padding: 0;
-	list-style: none;
-	color: var(--dock-dim);
 }

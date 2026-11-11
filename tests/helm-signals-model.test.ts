@@ -44,7 +44,8 @@ const {
 	sendPrompt,
 	signalRowView,
 	signalSections,
-	signalsSummary,
+	needsYouCount,
+	restingWords,
 	slug,
 	snoozeLabel,
 	suggestBranch,
@@ -394,13 +395,12 @@ test('agent ask rows: from + title, then the body line with the link count', () 
 	assert.equal(saved.agentTitle, 'Answer saved on the thread, not delivered')
 
 	// An answered ask no longer counts as needing Jakub (like a routed thread).
-	const ok: SignalSourceHealth[] = [{ source: 'github', status: 'ok', detail: null, lastPollAt: null, lastOkAt: null }]
 	const sections = signalSections(
 		[ask({ id: 1 }), ask({ id: 2, reply: 'B', replyAt: iso(4) }), ask({ id: 3, reply: 'B', replyAt: iso(20) })],
 		NOW,
 	)
 	// #3 was answered before its latest change (renewed): it needs Jakub again.
-	assert.equal(signalsSummary(sections, NOW, ok), '2 need you')
+	assert.equal(needsYouCount(sections, NOW), 2)
 })
 
 test('askDeliveryTarget: the Okena session in the asking terminal, a prompt while idle or working with no dock item', () => {
@@ -782,31 +782,34 @@ test('summary counts what still needs Jakub', () => {
 		{ source: 'github', status: 'ok', detail: null, lastPollAt: null, lastOkAt: null },
 		{ source: 'mail', status: 'disabled', detail: null, lastPollAt: null, lastOkAt: null },
 	]
-	assert.equal(signalsSummary(sections, NOW, ok), '1 needs you · 1 managed')
-	assert.equal(signalsSummary(signalSections([], NOW), NOW, ok), 'nothing needs you')
+	// The Needs you band counts only threads not yet sent on; the routed one stays listed.
+	assert.equal(needsYouCount(sections, NOW), 1)
+	assert.equal(sections.needs.length, 2)
+	assert.equal(sections.managed.length, 1)
+	assert.deepEqual(restingWords(ok), {
+		listening: true,
+		title: 'Listening to GitHub',
+		detail: 'New reviews, comments, failed CI, mentions and mail show up here.',
+	})
 })
 
-test('summary never says nothing needs you without a snapshot or while a source is down', () => {
-	const empty = signalSections([], NOW)
+test('at rest the column says it is listening only while every source answered', () => {
 	const health = (github: SignalSourceHealth['status'], mail: SignalSourceHealth['status']): SignalSourceHealth[] => [
 		{ source: 'github', status: github, detail: null, lastPollAt: null, lastOkAt: null },
 		{ source: 'mail', status: mail, detail: null, lastPollAt: null, lastOkAt: null },
 	]
+	const notListening = (sources: SignalSourceHealth[] | null) => assert.equal(restingWords(sources).listening, false)
 	// No snapshot yet.
-	assert.equal(signalsSummary(empty, NOW, null), 'nothing listed')
-	assert.equal(signalsSummary(empty, NOW, []), 'nothing listed')
+	notListening(null)
+	notListening([])
 	// A source failed or needs permission.
-	assert.equal(signalsSummary(empty, NOW, health('error', 'ok')), 'nothing listed')
-	assert.equal(signalsSummary(empty, NOW, health('ok', 'needs_permission')), 'nothing listed')
-	assert.equal(signalsSummary(empty, NOW, health('unavailable', 'disabled')), 'nothing listed')
+	notListening(health('error', 'ok'))
+	notListening(health('ok', 'needs_permission'))
+	notListening(health('unavailable', 'disabled'))
 	// Both off: nothing answered.
-	assert.equal(signalsSummary(empty, NOW, health('disabled', 'disabled')), 'nothing listed')
-	// Managed threads still count while a source is down.
-	assert.equal(
-		signalsSummary(signalSections([thread({ id: 3, owner: 'managed' })], NOW), NOW, health('error', 'ok')),
-		'nothing listed · 1 managed',
-	)
-	assert.equal(signalsSummary(empty, NOW, health('ok', 'ok')), 'nothing needs you')
+	notListening(health('disabled', 'disabled'))
+	assert.equal(restingWords(health('error', 'ok')).title, 'Not every source answered')
+	assert.equal(restingWords(health('ok', 'ok')).title, 'Listening to GitHub and Mail')
 })
 
 /** A fake column host for the sidebar ownership check (root tests have no DOM). */
