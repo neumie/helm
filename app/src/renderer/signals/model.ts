@@ -323,7 +323,7 @@ export function askReceipt(thread: SignalThread, now: number): { how: 'replied' 
 }
 
 /** Handled for the header count: routed to an agent, or (an ask) answered. */
-function handled(thread: SignalThread, now: number): boolean {
+export function handled(thread: SignalThread, now: number): boolean {
 	return thread.source === 'agent' ? askReceipt(thread, now) !== null : routedReceipt(thread, now) !== null
 }
 
@@ -717,22 +717,50 @@ function agentHintTitle(match: AgentMatch): string {
 	}
 }
 
+/** Needs you threads not yet handled (sent on or answered): the Needs you band's count. */
+export function needsYouCount(sections: SignalSections, now: number): number {
+	return sections.needs.filter(thread => !handled(thread, now)).length
+}
+
 /**
- * Header context: `3 need you · 2 managed` (routed threads and answered asks no longer count as needing him). An empty
- * Needs you says `nothing needs you` only when a snapshot arrived and every source that is on answered
- * (`allSourcesOk`); `sources: null` (no snapshot yet) or a source that is down says `nothing listed`
- * instead, never an all-clear.
+ * The column's words with nothing open: `Listening to GitHub and Mail` only while every source
+ * answered (never an all-clear from missing data), else that not every source did.
  */
-export function signalsSummary(
-	sections: SignalSections,
-	now: number,
-	sources: readonly SignalSourceHealth[] | null,
-): string {
-	const fresh = sections.needs.filter(thread => !handled(thread, now)).length
-	const empty = sources !== null && allSourcesOk(sources) ? 'nothing needs you' : 'nothing listed'
-	const parts = [fresh === 0 ? empty : `${fresh} need${fresh === 1 ? 's' : ''} you`]
-	if (sections.managed.length > 0) parts.push(`${sections.managed.length} managed`)
-	return parts.join(' · ')
+export function restingWords(sources: readonly SignalSourceHealth[] | null): {
+	listening: boolean
+	title: string
+	detail: string
+} {
+	if (!sources || !allSourcesOk(sources))
+		return {
+			listening: false,
+			title: 'Not every source answered',
+			detail: 'The footer says which one, and how to fix it.',
+		}
+	const listening = sources.filter(source => source.status === 'ok').map(source => source.source)
+	return {
+		listening: true,
+		title: `Listening to ${spokenList(listening.map(source => SOURCE_LABEL[source]))}`,
+		detail: restingDetail(listening.flatMap(source => RESTING_WHAT[source])),
+	}
+}
+
+/** What each answering source brings to the column, for the resting words. */
+const RESTING_WHAT: Record<SignalSource, readonly string[]> = {
+	github: ['reviews', 'comments', 'failed CI', 'mentions'],
+	mail: ['mail'],
+	slack: ['Slack messages'],
+	agent: [],
+}
+
+/** `New mail shows up here.`, `New reviews, … and mail show up here.` (mail alone is a mass noun). */
+function restingDetail(what: readonly string[]): string {
+	return `New ${spokenList(what)} ${what.length === 1 && what[0] === 'mail' ? 'shows' : 'show'} up here.`
+}
+
+/** `a`, `a and b`, `a, b and c`. */
+function spokenList(words: readonly string[]): string {
+	return words.length < 2 ? (words[0] ?? '') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`
 }
 
 // ---------- source health ----------
@@ -740,7 +768,9 @@ export function signalsSummary(
 /** One dim footer line per source that is on but not ok; never an all-clear from missing data. */
 export function healthLines(sources: readonly SignalSourceHealth[]): string[] {
 	if (sources.length > 0 && sources.every(source => source.status === 'disabled'))
-		return ['GitHub and Mail are off. Turn one on in Settings › Signals']
+		return [
+			`${spokenList(sources.map(source => SOURCE_LABEL[source.source]))} are off. Turn one on in Settings › Signals`,
+		]
 	const lines: string[] = []
 	for (const source of sources) {
 		const label = SOURCE_LABEL[source.source]
@@ -760,7 +790,7 @@ export function healthLines(sources: readonly SignalSourceHealth[]): string[] {
 	return lines
 }
 
-/** Every source that is on answered (at least one is on): `Nothing needs you` may be said. */
+/** Every source that is on answered (at least one is on): the resting words may say `Listening to …`. */
 export function allSourcesOk(sources: readonly SignalSourceHealth[]): boolean {
 	return (
 		sources.some(source => source.status === 'ok') &&

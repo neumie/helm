@@ -148,15 +148,109 @@ test('Settings swaps the column without moving the terminal; Back and ⌘⇧I re
 	await expect(view.signals).toBeFocused()
 })
 
-test('quiet: an empty Needs you says so; a source that needs permission says so instead', async ({ page }) => {
+test('quiet: an empty section leaves the list; at rest the column listens, never with a source down', async ({
+	page,
+}) => {
 	const quiet = await open(page, 'views-signals-column--quiet')
-	await expect(quiet.signals.locator('.signals-empty').first()).toHaveText('Nothing needs you')
+	await expect(quiet.signals.locator('.signals-section[aria-label="Needs you"]')).toHaveCount(0)
+	await expect(quiet.signals.locator('.signals-section[aria-label="Managed"]')).toHaveCount(1)
 	await expect(quiet.signals.locator('.signals-health')).toHaveCount(0)
-	await expect(quiet.signals.locator('.signals-title-context')).toHaveText(/^nothing needs you/)
 
 	const down = await open(page, 'views-signals-column--source-down')
 	await expect(down.signals.locator('.signals-health')).toContainText('Mail needs permission')
-	await expect(down.signals.getByText('Nothing needs you', { exact: true })).toHaveCount(0)
+	await expect(down.signals.getByText(/^Listening to/)).toHaveCount(0)
+
+	const empty = await open(page, 'views-signals-column--empty')
+	await expect(empty.signals.locator('.signals-section')).toHaveCount(0)
+	await expect(empty.signals.locator('.signals-resting-title')).toHaveText('Listening to GitHub and Mail')
+	await expect(empty.signals.locator('.signals-braille[data-unknown="true"]')).toHaveCount(0)
+	await expect(empty.signals.locator('[data-done-header]')).toContainText('Done today 15')
+	await page.screenshot({ path: test.info().outputPath('signals-empty.png') })
+
+	const emptyDown = await open(page, 'views-signals-column--empty-source-down')
+	await expect(emptyDown.signals.locator('.signals-resting-title')).toHaveText('Not every source answered')
+	// Hollow and still: no calm claimed while a source is down.
+	await expect(emptyDown.signals.locator('.signals-braille[data-unknown="true"]')).toHaveCount(1)
+	await expect(emptyDown.signals.locator('.signals-health')).toContainText('Mail needs permission')
+})
+
+test('sections sit under sticky bands with their count; a keyboard-selected row scrolls clear of its band', async ({
+	page,
+}) => {
+	const view = await open(page, 'views-signals-column--column')
+	const labels = await view.signals.locator('.signals-band-label').allTextContents()
+	expect(labels).toEqual(['Needs you', 'Managed', 'Snoozed'])
+	await expect(view.signals.locator('.signals-section[aria-label="Managed"] .signals-band-count')).toHaveText('2')
+	// The Needs you count leaves out the threads already sent on (they stay listed with their receipt).
+	const needs = view.signals.locator('.signals-section[aria-label="Needs you"]')
+	const handled = await needs
+		.locator('.signals-tr')
+		.evaluateAll(rows => rows.filter(row => row.querySelector('.signals-receipt')).length)
+	const listed = await needs.locator('.signals-tr').count()
+	await expect(needs.locator('.signals-band-count')).toHaveText(String(listed - handled))
+	// The done line closes the list, after the last section.
+	expect(
+		await view.signals
+			.locator('[data-done-header]')
+			.evaluate(node => node.previousElementSibling?.getAttribute('aria-label') ?? null),
+	).toBe('Snoozed')
+
+	// A short window: the band sticks to the top while its rows scroll under it.
+	await page.setViewportSize({ width: 1400, height: 480 })
+	const scroller = view.signals.locator('.signals-scroll')
+	await scroller.evaluate(node => {
+		node.scrollTop = 200
+	})
+	const stuck = await view.signals.evaluate(root => {
+		const scroll = root.querySelector('.signals-scroll') as HTMLElement
+		const band = root.querySelector('.signals-section[aria-label="Needs you"] .signals-band') as HTMLElement
+		return Math.round(band.getBoundingClientRect().top - scroll.getBoundingClientRect().top)
+	})
+	expect(stuck).toBe(0)
+	// Walking back up with k never leaves the selected row under a band.
+	await view.signals.focus()
+	for (let step = 0; step < 6; step++) await page.keyboard.press('j')
+	for (let step = 0; step < 6; step++) {
+		await page.keyboard.press('k')
+		const covered = await view.signals.evaluate(root => {
+			const row = root.querySelector('.signals-tr[data-selected="true"]')?.getBoundingClientRect()
+			if (!row) return false
+			return [...root.querySelectorAll('.signals-band')].some(band => {
+				const box = band.getBoundingClientRect()
+				return box.bottom > row.top + 1 && box.top < row.top + 1
+			})
+		})
+		expect(covered).toBe(false)
+	}
+	await page.screenshot({ path: test.info().outputPath('signals-bands-scrolled.png') })
+})
+
+test('Slack rows sit in the Needs you band like the others, their new glyphs toned by kind', async ({ page }) => {
+	const view = await open(page, 'views-signals-slack--column')
+	await expect(view.signals.locator('.signals-band-label')).toHaveText(['Needs you', 'Managed', 'Snoozed'])
+	const needs = view.signals.locator('.signals-section[aria-label="Needs you"]')
+	const row = (id: number) => needs.locator(`.signals-tr[data-signal-id="${id}"]`)
+	for (const id of [701, 702, 703, 704]) await expect(row(id)).toHaveCount(1)
+	// The band counts the Slack threads with the rest (only the one already sent on is left out).
+	const handled = await needs
+		.locator('.signals-tr')
+		.evaluateAll(rows => rows.filter(entry => entry.querySelector('.signals-receipt')).length)
+	await expect(needs.locator('.signals-band-count')).toHaveText(
+		String((await needs.locator('.signals-tr').count()) - handled),
+	)
+	// A new DM reads like a review request (--warn), a new followed thread or mention like comments (--accent).
+	const glyph = (selector: string) =>
+		needs.locator(`${selector} .signals-glyph`).evaluate(node => getComputedStyle(node).color)
+	const warn = await glyph('.signals-tr:has(.signals-glyph[data-kind="review"])')
+	const accent = await glyph('.signals-tr:has(.signals-glyph[data-kind="comments"])')
+	expect(warn).not.toBe(accent)
+	expect(await glyph('.signals-tr[data-signal-id="701"]')).toBe(warn)
+	expect(await glyph('.signals-tr[data-signal-id="702"]')).toBe(warn)
+	expect(await glyph('.signals-tr[data-signal-id="703"]')).toBe(accent)
+	expect(await glyph('.signals-tr[data-signal-id="704"]')).toBe(accent)
+	// The filtered Slack bot message counts on the done line.
+	await expect(view.signals.locator('[data-done-header]')).toContainText('1 filtered')
+	await page.screenshot({ path: test.info().outputPath('signals-slack-bands.png') })
 })
 
 test('send to agent: the PR agent is preselected, digits pick, ⌘↵ sends and the row shows the receipt', async ({

@@ -204,15 +204,15 @@ test('Done today: o on an ask with several links lists them; Esc goes back to Do
 	expect((await calls(page))?.openedLinks).toEqual([expect.objectContaining({ index: 1 })])
 })
 
-test('Line: Done today has its own line after the snoozed rows, the filtered count after it', async ({ page }) => {
+test('Line: Done today closes the list after the snoozed rows, the filtered count after it', async ({ page }) => {
 	const view = await open(page, 'views-signals-done--line')
 	await expect(view.signals).toBeFocused()
 	await expect(view.done).toHaveCount(0)
 	const header = view.signals.locator('[data-done-header]')
 	await expect(header).toHaveText(/^Done today 8 · D · 5 filtered · f$/)
-	// Snoozed keeps its own subhead, before the done line.
-	const subheads = await view.signals.locator('.signals-subhead').allTextContents()
-	expect(subheads.slice(-2)).toEqual(['Snoozed 1', expect.stringMatching(/^Done today 8/)])
+	// Snoozed keeps its own band, the done line closes the list after it.
+	await expect(view.signals.locator('.signals-section[aria-label="Snoozed"] .signals-band-count')).toHaveText('1')
+	expect(await header.evaluate(node => node.previousElementSibling?.getAttribute('aria-label') ?? null)).toBe('Snoozed')
 	// Both counts look alike: dim text buttons, no fill, ≥24px tall.
 	for (const button of [view.count, view.signals.locator('.signals-filtered')]) {
 		const look = await button.evaluate(node => {

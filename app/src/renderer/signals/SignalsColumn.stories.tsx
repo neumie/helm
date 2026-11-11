@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { SignalsWorkspace } from './SignalsWorkspace'
+import { SignalsColumnFrames, SignalsWorkspace } from './SignalsWorkspace'
 
 /**
  * Signals (§3.25): what the world wants from Jakub — review requests, PR comments, failed CI on his
@@ -13,17 +13,43 @@ const meta: Meta<typeof SignalsWorkspace> = {
 	component: SignalsWorkspace,
 	parameters: { layout: 'fullscreen' },
 	args: { scenario: 'column' },
-	argTypes: { scenario: { control: 'inline-radio', options: ['column', 'quiet', 'source-down'] } },
+	argTypes: {
+		scenario: { control: 'inline-radio', options: ['column', 'quiet', 'source-down', 'empty', 'empty-down'] },
+	},
 }
 
 export default meta
 type Story = StoryObj<typeof SignalsWorkspace>
 
-/** Needs you, Managed, Snoozed and the `Done today` line (D opens the done list), with the selected row's keys in the footer. */
+/**
+ * Needs you, Managed and Snoozed, each under its sticky band (Braille count mark, label, count), and the
+ * `Done today` line at the bottom (D opens the done list), with the selected row's keys in the footer.
+ */
 export const Column: Story = {}
 
-/** A quiet afternoon: nothing needs Jakub, every source answered. */
+/** A quiet afternoon: nothing needs Jakub (no Needs you band), two threads managed, one snoozed. */
 export const Quiet: Story = { args: { scenario: 'quiet' } }
 
 /** Mail needs the Automation permission: the footer says so, never an all-clear. */
 export const SourceDown: Story = { args: { scenario: 'source-down' } }
+
+/** Nothing open, every source answered: the slow gray Braille dot field over `Listening to GitHub and Mail`. */
+export const Empty: Story = { args: { scenario: 'empty' } }
+
+/** Nothing open while Mail needs permission: the dots go hollow and still, no all-clear. */
+export const EmptySourceDown: Story = { args: { scenario: 'empty-down' } }
+
+/** The bare column at its narrowest and widest (260 and 420px), at rest and busy. */
+export const Widths: Story = {
+	render: () => (
+		<SignalsColumnFrames
+			height={1000}
+			frames={[
+				{ width: 260, scenario: 'empty', label: '260 · at rest' },
+				{ width: 260, scenario: 'asks', label: '260 · busy' },
+				{ width: 420, scenario: 'empty', label: '420 · at rest' },
+				{ width: 420, scenario: 'asks', label: '420 · busy' },
+			]}
+		/>
+	),
+}
