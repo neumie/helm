@@ -72,3 +72,22 @@ export function describeReviewFailure(error: unknown): { reply: string; log: str
 	}
 	return { reply: UNCERTAIN_REVIEW_FAILURE, log: 'non-error rejection' }
 }
+
+/**
+ * The start of every answer a quitting host gives a caller whose connection it keeps for after the restart (S13).
+ * A caller that sees it may wait for Helm and send the same command again with the same handle; nothing in it is
+ * frame content. Older CLIs simply print it.
+ */
+export const REVIEW_HOST_RESTARTING = 'Helm is restarting its review host.'
+/** The definite answer to a caller command that a quitting host did not run. */
+export const restartingRefusal = (): ReviewRefusal =>
+	refuse(
+		`${REVIEW_HOST_RESTARTING} Nothing was done and this connection is kept: send the same command again once Helm is back.`,
+	)
+/**
+ * The start of an answer to a caller command that ran but could not be written to disk yet. Sending the same command
+ * again with the same connection is safe (confirming and replying are idempotent); the CLI does that by itself.
+ */
+export const REVIEW_RETRY_LATER = 'Helm could not save this yet.'
+export const retryLaterRefusal = (): ReviewRefusal =>
+	refuse(`${REVIEW_RETRY_LATER} Send the same command again with this connection; nothing is lost or repeated.`)

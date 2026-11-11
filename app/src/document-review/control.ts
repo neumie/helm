@@ -5,7 +5,8 @@ import { promisify } from 'node:util'
 import { defaultReviewRoot } from '../../../src/document-review/client'
 import { ReviewControlServer } from '../../../src/document-review/control-server'
 import type { CallerBinding, ReviewControlBackend } from '../../../src/document-review/control-server'
-import { gitRootRefusal, refuse } from '../../../src/document-review/refusal'
+import { gitRootRefusal, refuse, restartingRefusal, retryLaterRefusal } from '../../../src/document-review/refusal'
+import { ReviewOwnerStore } from './owner-store'
 import { wireReceipt } from './sessions'
 import type { DocumentReviewWindows } from './window'
 
@@ -21,7 +22,17 @@ export function createReviewControl(
 	deps: NativeReviewControlDependencies,
 	root = defaultReviewRoot(),
 ): ReviewControlServer {
+	// Callers are kept next to their connection files, so a restart brings them back (S13).
+	deps.windows.keepCallers(new ReviewOwnerStore(root))
 	const sessions = (binding: CallerBinding) => deps.windows.callerSessions(binding.profileId)
+	/** A state change is answered only once it is on disk; a failed write is retried by the caller, never lost. */
+	const kept = async (binding: CallerBinding) => {
+		try {
+			await sessions(binding).flush(binding.id)
+		} catch {
+			throw retryLaterRefusal()
+		}
+	}
 	const current = (binding: CallerBinding) => {
 		if (!deps.allowsToken(binding.profileToken) || deps.profileId() !== binding.profileId) return false
 		try {
@@ -34,6 +45,7 @@ export function createReviewControl(
 	const backend: ReviewControlBackend = {
 		status: () => ({ available: deps.allowsToken(deps.profileToken()) }),
 		current,
+		restore: record => deps.windows.restoreCaller(record),
 		view: (files, signal) => deps.windows.viewFiles(files, signal),
 		connect: async command => {
 			const profileId = deps.profileId()
@@ -77,6 +89,10 @@ export function createReviewControl(
 			if (!current(binding) || signal.aborted)
 				throw refuse('This review connection is no longer current. Nothing was done; open the document again.')
 			const caller = sessions(binding)
+			// A quit has started: nothing changes any more; the caller asks again once Helm is back.
+			if (deps.windows.isSuspended() && !['status', 'list', 'receipt'].includes(command.action))
+				throw restartingRefusal()
+			caller.touch(binding.id, binding.owner)
 			switch (command.action) {
 				case 'open': {
 					const file = resolve(command.file)
@@ -107,26 +123,31 @@ export function createReviewControl(
 						historyTruncated: snapshot.historyTruncated || snapshot.messages.length > 0,
 					}))
 				case 'next':
-					return command.documentId
-						? deps.windows.nextForCallerDocument(
-								binding.profileId,
-								binding.id,
-								binding.owner,
-								command.documentId,
-								command.timeoutMs,
-								signal,
-							)
-						: caller.next(binding.id, binding.owner, command.timeoutMs, signal)
+					if (command.documentId)
+						return deps.windows.nextForCallerDocument(
+							binding.profileId,
+							binding.id,
+							binding.owner,
+							command.documentId,
+							command.timeoutMs,
+							signal,
+							command.listener,
+						)
+					await deps.windows.reopenCallerDocuments(binding.profileId, binding.id, binding.owner, signal)
+					return caller.next(binding.id, binding.owner, command.timeoutMs, signal, undefined, command.listener)
 				case 'ack':
 					caller.confirm(binding.id, binding.owner, command.requestId)
+					await kept(binding)
 					return true
 				case 'reply':
 					caller.report(binding.id, binding.owner, command.requestId, command.sequence, command.state, command.text)
+					await kept(binding)
 					return true
 				case 'receipt':
 					return wireReceipt(caller.receipt(command.requestId, binding.id))
 				case 'disconnect':
 					caller.disconnect(binding.id, binding.owner)
+					await kept(binding).catch(() => {})
 					return true
 			}
 		},

@@ -1,9 +1,15 @@
+import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { open, realpath } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import { z } from 'zod'
 import {
+	REVIEW_RECONNECT_MS,
+	ReviewCallError,
+	ReviewReconnectTimeout,
+	UNREACHABLE_REVIEW_HOST,
 	callReview,
+	callReviewThroughRestart,
 	connectReview,
 	helloReview,
 	loadReviewConnection,
@@ -156,7 +162,13 @@ async function output(value: unknown): Promise<void> {
 export async function runReviewCli(
 	args: string[],
 	writeOutput: (value: unknown) => Promise<void> = output,
-	workflow: { listenAfterReply?: boolean; windowBound?: boolean; documentId?: string } = {},
+	workflow: {
+		listenAfterReply?: boolean
+		windowBound?: boolean
+		documentId?: string
+		/** helm edit / helm open --listen (S13): wait through a Helm restart and keep the same connection. */
+		survivesRestart?: boolean
+	} = {},
 ): Promise<void> {
 	const { values, options, positional } = parse(args)
 	if (workflow.documentId !== undefined) z.string().uuid().parse(workflow.documentId)
@@ -219,23 +231,59 @@ export async function runReviewCli(
 	process.once('SIGTERM', cancelled)
 	try {
 		let opened: z.infer<typeof openedSchema> | undefined
+		// This listening process's own nonce (S13): feedback handed to it but lost in a restart is offered to it again,
+		// never to another process. Sent only to a host whose hello lists `listener`.
+		const listener = randomUUID()
+		const reviewRoot = dirname(authority.socket)
+		const restart = workflow.survivesRestart === true
+		let waitingNoted = false
+		const noteWaiting = () => {
+			if (waitingNoted) return
+			waitingNoted = true
+			process.stderr.write(
+				'Helm is restarting or not running; waiting for it to come back with this same connection (nothing is lost)…\n',
+			)
+		}
+		/** Which listener field this host takes; learned again on every try, since a restarted Helm may differ. */
+		const listenerField = async (): Promise<{ listener?: string }> => {
+			try {
+				const hello = await helloReview(reviewRoot, controller.signal)
+				return (hello.features as readonly string[]).includes('listener') ? { listener } : {}
+			} catch (error) {
+				if (error instanceof ReviewCallError) throw error
+				// No discovery file yet: the host is still starting.
+				throw new ReviewCallError(UNREACHABLE_REVIEW_HOST, 'unreachable')
+			}
+		}
 		// Open, report, reads and confirmation share one captured full owner and cancellation scope.
 		const listen = async () => {
 			const deadline = Date.now() + seconds * 1000
 			const documentId = workflow.documentId ?? (workflow.windowBound ? opened?.documentId : undefined)
 			let feedback: ReviewFeedback | null = null
 			let closed = false
+			let helmUnavailable = false
+			const schema = documentId ? reviewReadSchema : feedbackSchema.nullable()
 			while (Date.now() < deadline && !controller.signal.aborted && !feedback && !closed) {
-				const value = await callReview(
-					authority,
-					{
-						action: 'next',
-						timeoutMs: Math.max(1, Math.min(60000, deadline - Date.now())),
-						...(documentId ? { documentId } : {}),
-					},
-					documentId ? reviewReadSchema : feedbackSchema.nullable(),
-					controller.signal,
-				)
+				const command = (extra: { listener?: string }): Extract<ReviewCommand, { action: 'next' }> => ({
+					action: 'next',
+					timeoutMs: Math.max(1, Math.min(60000, deadline - Date.now())),
+					...(documentId ? { documentId } : {}),
+					...extra,
+				})
+				let value: z.infer<typeof schema>
+				if (!restart) value = await callReview(authority, command({}), schema, controller.signal)
+				else
+					try {
+						value = await callReviewThroughRestart(authority, async () => command(await listenerField()), schema, {
+							until: deadline,
+							signal: controller.signal,
+							onWait: noteWaiting,
+						})
+					} catch (error) {
+						if (!(error instanceof ReviewReconnectTimeout)) throw error
+						helmUnavailable = true
+						break
+					}
 				if (value && 'closed' in value) {
 					if (value.documentId !== documentId) throw new Error('The listening result belongs to another window.')
 					closed = true
@@ -247,14 +295,27 @@ export async function runReviewCli(
 				...(documentId ? { documentId, closed } : {}),
 				feedback,
 				timedOut: feedback === null && !closed,
+				...(helmUnavailable ? { helmUnavailable } : {}),
 			})
-			if (feedback)
-				await callReview(
-					authority,
-					{ action: 'ack', requestId: feedback.request.id },
-					z.literal(true),
-					controller.signal,
+			if (!feedback) return
+			const ack: ReviewCommand = { action: 'ack', requestId: feedback.request.id }
+			if (!restart) {
+				await callReview(authority, ack, z.literal(true), controller.signal)
+				return
+			}
+			try {
+				await callReviewThroughRestart(authority, ack, z.literal(true), {
+					until: Date.now() + REVIEW_RECONNECT_MS,
+					signal: controller.signal,
+					onWait: noteWaiting,
+				})
+			} catch (error) {
+				if (!(error instanceof ReviewReconnectTimeout)) throw error
+				// The feedback above was printed and is the agent's now; its reply confirms it as well.
+				process.stderr.write(
+					'Helm did not come back to confirm the pickup. The feedback above WAS received: handle it and run commands.reply once Helm runs again.\n',
 				)
+			}
 		}
 		if (action === 'open') {
 			if (!argument) throw new Error('open requires a Markdown or JSX file.')
@@ -293,7 +354,22 @@ export async function runReviewCli(
 			}
 			if (workflow.listenAfterReply && command.state === 'working')
 				throw new Error('Complete the reply before listening for another message.')
-			const reported = await callReview(authority, command, z.literal(true), controller.signal)
+			let reported: true
+			if (!restart) reported = await callReview(authority, command, z.literal(true), controller.signal)
+			else
+				try {
+					// An identical reply is deduplicated by Helm, also across its restart: sending it again is safe.
+					reported = await callReviewThroughRestart(authority, command, z.literal(true), {
+						until: Date.now() + REVIEW_RECONNECT_MS,
+						signal: controller.signal,
+						onWait: noteWaiting,
+					})
+				} catch (error) {
+					if (!(error instanceof ReviewReconnectTimeout)) throw error
+					throw new Error(
+						`Helm did not come back within ${REVIEW_RECONNECT_MS / 60000} minutes, so this reply is not confirmed. The connection is kept: run the same helm edit reply command again once Helm runs; a reply Helm already has is not repeated.`,
+					)
+				}
 			if (workflow.listenAfterReply) await listen()
 			else await writeOutput(reported)
 			return

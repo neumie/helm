@@ -7,6 +7,12 @@ export type ArchiveSettlement = {
 	detail?: string
 }
 
+/** A question thread's one final writer; `settle` resolves true once the settlement is in the journal. */
+export interface ArchiveSettlementHandle {
+	id: string
+	thread: CanvasReviewThread
+	settle(value: ArchiveSettlement): Promise<boolean>
+}
 /** Shared by every open or closed file; reserve before the question's first await. */
 export class ReviewArchiveCapacity {
 	private count = 0
@@ -90,7 +96,7 @@ export class ReviewArchivePersistence {
 		appendQuestion: (entry: CanvasReviewEntry) => Promise<void>,
 		appendFinal: (start: CanvasReviewThread, entry: CanvasReviewEntry) => Promise<void> = (_start, entry) =>
 			appendQuestion(entry),
-	): Promise<{ id: string; settle: (value: ArchiveSettlement) => void }> {
+	): Promise<ArchiveSettlementHandle> {
 		if (this.failureId() || this.retrying)
 			throw new Error('Review content still needs saving. Retry review save before sending again.')
 		const release = this.capacity.reserve()
@@ -115,14 +121,44 @@ export class ReviewArchivePersistence {
 		}
 		return this.settlementHandle(value)
 	}
+	/**
+	 * Adopt a question thread a previous Helm process wrote (S13), so its settlement can still be written. Nothing is
+	 * appended now; the final writer skips a thread the journal already settled.
+	 */
+	resume(
+		thread: CanvasReviewThread,
+		appendFinal: (start: CanvasReviewThread, entry: CanvasReviewEntry) => Promise<void>,
+	): ArchiveSettlementHandle {
+		const prior = this.pending.get(thread.id)
+		if (prior) return this.settlementHandle(prior)
+		let release = () => {}
+		try {
+			release = this.capacity.reserve()
+		} catch {
+			// A restored settlement never fails for want of capacity; it only adds a bounded few.
+		}
+		const value: PendingArchive = {
+			thread: structuredClone(thread),
+			settlement: null,
+			active: null,
+			appendFinal,
+			failureId: null,
+			release,
+		}
+		this.pending.set(value.thread.id, value)
+		return this.settlementHandle(value)
+	}
 	/** This closure retains only the accepted final writer, not the question's renderer event. */
-	private settlementHandle(value: PendingArchive): { id: string; settle: (value: ArchiveSettlement) => void } {
+	private settlementHandle(value: PendingArchive): ArchiveSettlementHandle {
 		return {
 			id: value.thread.id,
+			thread: structuredClone(value.thread),
 			settle: settlement => {
-				if (value.settlement) return
+				const written = () => !this.pending.has(value.thread.id)
+				// First settlement wins; a later call never retries a failed write (Retry review save does that).
+				if (value.settlement) return (value.active ?? Promise.resolve()).then(written)
 				value.settlement = { ...settlement }
-				void this.writeFinal(value)
+				return this.writeFinal(value).then(written)
 			},
 		}
 	}

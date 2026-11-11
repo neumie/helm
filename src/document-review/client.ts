@@ -14,10 +14,38 @@ import {
 	viewResultSchema,
 } from './protocol.js'
 import type { ReviewCommand, ReviewConnection, ReviewEnvelope, ReviewHello, ReviewViewResult } from './protocol.js'
-import { UNCERTAIN_REVIEW_FAILURE } from './refusal.js'
+import { REVIEW_HOST_RESTARTING, REVIEW_RETRY_LATER, UNCERTAIN_REVIEW_FAILURE } from './refusal.js'
 
 export const defaultReviewRoot = () => join(homedir(), '.helm', 'document-review')
 export const MALFORMED_REVIEW_RESPONSE = 'Review response is malformed or oversized. No command will be replayed.'
+export const LOST_REVIEW_RESPONSE = 'Review response was lost. Check delivery; do not replay uncertain feedback.'
+export const UNREACHABLE_REVIEW_HOST =
+	'Could not reach the review connection. Start an updated Helm desktop, then reconnect explicitly.'
+/**
+ * Why one call failed, for callers that may wait through a Helm restart. `lost`: the host closed the connection
+ * before a whole answer arrived (it quit or crashed mid-command). `unreachable`: nothing listens on the socket (Helm
+ * is not running, or still starting). `restarting`: the host answered that it is quitting and keeps this connection.
+ * `refused`: any other answer the host gave. The message stays what it always was.
+ */
+export type ReviewCallFailure =
+	| 'lost'
+	| 'unreachable'
+	| 'restarting'
+	| 'refused'
+	| 'timeout'
+	| 'cancelled'
+	| 'malformed'
+export class ReviewCallError extends Error {
+	override readonly name = 'ReviewCallError'
+	constructor(
+		message: string,
+		readonly failure: ReviewCallFailure,
+	) {
+		super(message)
+	}
+}
+export const reviewCallFailure = (error: unknown): ReviewCallFailure | null =>
+	error instanceof ReviewCallError ? error.failure : null
 
 export async function callReview<T>(
 	authority: { socket: string; epoch: string; token: string; id?: string; owner?: string },
@@ -48,9 +76,17 @@ export async function callReview<T>(
 			if (error) reject(error)
 			else resolve(value as T)
 		}
-		const cancelled = () => finish(new Error('Review operation cancelled. Check delivery before sending again.'))
+		let connected = false
+		const cancelled = () =>
+			finish(new ReviewCallError('Review operation cancelled. Check delivery before sending again.', 'cancelled'))
 		const timer = setTimeout(
-			() => finish(new Error('Review operation timed out. Check delivery; do not replay an uncertain command.')),
+			() =>
+				finish(
+					new ReviewCallError(
+						'Review operation timed out. Check delivery; do not replay an uncertain command.',
+						'timeout',
+					),
+				),
 			command.action === 'next'
 				? command.timeoutMs + 2000
 				: command.action === 'view'
@@ -60,19 +96,25 @@ export async function callReview<T>(
 						: 5000,
 		)
 		signal?.addEventListener('abort', cancelled, { once: true })
-		socket.once('connect', () => socket.write(bytes))
+		socket.once('connect', () => {
+			connected = true
+			socket.write(bytes)
+		})
+		// Before the connection exists nothing was sent: the host is not there. After it, the command may have run.
 		socket.once('error', () =>
 			finish(
-				new Error('Could not reach the review connection. Start an updated Helm desktop, then reconnect explicitly.'),
+				connected
+					? new ReviewCallError(LOST_REVIEW_RESPONSE, 'lost')
+					: new ReviewCallError(UNREACHABLE_REVIEW_HOST, 'unreachable'),
 			),
 		)
 		socket.once('close', () => {
-			if (!settled) finish(new Error('Review response was lost. Check delivery; do not replay uncertain feedback.'))
+			if (!settled) finish(new ReviewCallError(LOST_REVIEW_RESPONSE, 'lost'))
 		})
 		socket.on('data', chunk => {
 			count += chunk.length
 			if (count > REVIEW_WIRE_BYTES) {
-				finish(new Error('Review response exceeds its byte limit.'))
+				finish(new ReviewCallError('Review response exceeds its byte limit.', 'malformed'))
 				return
 			}
 			chunks.push(chunk)
@@ -84,15 +126,80 @@ export async function callReview<T>(
 					JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, -1))),
 				)
 				if ('error' in response) {
-					finish(new Error(response.error))
+					finish(
+						new ReviewCallError(
+							response.error,
+							response.error.startsWith(REVIEW_HOST_RESTARTING) || response.error.startsWith(REVIEW_RETRY_LATER)
+								? 'restarting'
+								: 'refused',
+						),
+					)
 					return
 				}
 				finish(undefined, schema.parse(response.data))
 			} catch {
-				finish(new Error(MALFORMED_REVIEW_RESPONSE))
+				finish(new ReviewCallError(MALFORMED_REVIEW_RESPONSE, 'malformed'))
 			}
 		})
 	})
+}
+/** How long a caller command waits for a restarting Helm to come back before it gives up with concrete advice. */
+export const REVIEW_RECONNECT_MS = 15 * 60 * 1000
+/** A restart can only interrupt a command in these ways; anything else is a real answer. */
+const RESTART_FAILURES: ReadonlySet<ReviewCallFailure> = new Set(['lost', 'unreachable', 'restarting'])
+export class ReviewReconnectTimeout extends Error {
+	override readonly name = 'ReviewReconnectTimeout'
+}
+/**
+ * One caller command that survives a Helm restart (S13). It is only for commands the host makes safe to resend
+ * with the SAME connection: `next` (an offered but unconfirmed feedback is offered again, never another one), `ack`
+ * (confirming twice is a no-op) and `reply` (an identical report is deduplicated, also across a restart). The host
+ * keeps the connection on disk, so after it is back the same handle works. Waits about a second between tries
+ * until `until` (a wall-clock time); `onWait` runs once, on the first interruption. Never used for `open`/`connect`.
+ */
+export async function callReviewThroughRestart<T>(
+	authority: { socket: string; epoch: string; token: string; id?: string; owner?: string },
+	command:
+		| Extract<ReviewCommand, { action: 'next' | 'ack' | 'reply' }>
+		| (() => Promise<Extract<ReviewCommand, { action: 'next' | 'ack' | 'reply' }>>),
+	schema: ZodType<T>,
+	options: { until: number; signal?: AbortSignal; onWait?: (failure: ReviewCallFailure) => void; pauseMs?: number },
+): Promise<T> {
+	let waited = false
+	for (;;) {
+		try {
+			// A factory runs on every try, so it can learn the host's features again after a restart.
+			const value = typeof command === 'function' ? await command() : command
+			const now = Date.now()
+			// A read never asks the host for longer than the time that is left.
+			const sent =
+				value.action === 'next'
+					? { ...value, timeoutMs: Math.max(1, Math.min(value.timeoutMs, options.until - now)) }
+					: value
+			return await callReview(authority, sent, schema, options.signal)
+		} catch (error) {
+			const failure = reviewCallFailure(error)
+			if (!failure || !RESTART_FAILURES.has(failure)) throw error
+			if (options.signal?.aborted) throw error
+			if (!waited) {
+				waited = true
+				options.onWait?.(failure)
+			}
+			if (Date.now() >= options.until) throw new ReviewReconnectTimeout((error as Error).message)
+			await new Promise<void>(done => {
+				const timer = setTimeout(done, Math.min(options.pauseMs ?? 1000, Math.max(0, options.until - Date.now())))
+				options.signal?.addEventListener(
+					'abort',
+					() => {
+						clearTimeout(timer)
+						done()
+					},
+					{ once: true },
+				)
+			})
+			if (options.signal?.aborted) throw new ReviewCallError('Review operation cancelled.', 'cancelled')
+		}
+	}
 }
 async function readDiscovery(root: string) {
 	const discovery = discoverySchema.parse(await readPrivateJson(join(root, 'discovery.json')))

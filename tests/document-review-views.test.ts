@@ -448,7 +448,11 @@ test('quit closes clean windows; a window with a dirty view stays and asks there
 		f.manager.requestCloseAll()
 		assert.equal(live(c) && live(d), true)
 		assert.equal(live(e), false)
-		assert.deepEqual(f.contents(d).sent, ['document-review:close-requested'])
+		// A coalesced `changed` from the opens may land first (80 ms timer, load-dependent); only the ask matters.
+		assert.deepEqual(
+			f.contents(d).sent.filter(channel => channel !== 'document-review:changed'),
+			['document-review:close-requested'],
+		)
 		assert.equal(f.allClosed(), 0)
 		// Once the user discards in D, the quit's window close finishes: C closes too and the quit can go on.
 		f.notify('dirty', f.contents(d), false)

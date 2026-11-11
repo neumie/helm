@@ -156,7 +156,7 @@ const capture = () => {
 test('hello answers protocol 2; a version 1 host is learned from hello only and helm open says to update', async () => {
 	const fresh = await newHost()
 	try {
-		assert.deepEqual(await helloReview(fresh.root), { protocol: 2, features: ['session-hint'] })
+		assert.deepEqual(await helloReview(fresh.root), { protocol: 2, features: ['session-hint', 'listener'] })
 	} finally {
 		await fresh.close()
 	}

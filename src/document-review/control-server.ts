@@ -1,21 +1,34 @@
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { constants } from 'node:fs'
 import { chmod, lstat, open, unlink } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import type { Server, Socket } from 'node:net'
 import { basename, join } from 'node:path'
-import { privateDirectory, readPrivateJson, writePrivateJson } from './private-state.js'
+import { z } from 'zod'
+import {
+	privateDirectory,
+	privateNames,
+	readPrivateJson,
+	removePrivateFile,
+	removeStrayTemps,
+	writePrivateJson,
+} from './private-state.js'
 import {
 	REVIEW_ACTIONS,
+	REVIEW_CONNECT_FEATURES,
 	REVIEW_FEATURES,
 	REVIEW_PROTOCOL,
 	REVIEW_VIEW_RATE,
 	REVIEW_WIRE_BYTES,
+	connectionSchema,
 	envelopeSchema,
+	reviewId,
 } from './protocol.js'
 import type { ReviewCallerCommand, ReviewCommand, ReviewConnection, ReviewViewResult } from './protocol.js'
-import { describeReviewFailure, refuse } from './refusal.js'
+import { describeReviewFailure, refuse, restartingRefusal } from './refusal.js'
 
+/** A live process holds the review host lock: another Helm runs, or the previous one is still quitting. */
+export const REVIEW_NAMESPACE_HELD = 'Another review host owns this private namespace.'
 export interface CallerBinding {
 	id: string
 	owner: string
@@ -23,8 +36,45 @@ export interface CallerBinding {
 	profileToken: string
 	workspace: string
 }
+/**
+ * What the host keeps on disk for one caller connection so it survives a Helm restart (S13): the identity, the
+ * profile and workspace it was made in, the epoch it was made under and only a hash of its token (the CLI's own
+ * connection file holds the token). Owner-private, next to the connection file, removed when the connection retires.
+ */
+export interface CallerBindingRecord {
+	version: 1
+	id: string
+	owner: string
+	epoch: string
+	tokenHash: string
+	profileId: string
+	workspace: string
+	createdAt: number
+}
+const bindingRecordSchema = z
+	.object({
+		version: z.literal(1),
+		id: reviewId,
+		owner: z.string().uuid(),
+		epoch: z.string().uuid(),
+		tokenHash: z.string().regex(/^[a-f0-9]{64}$/),
+		profileId: z.string().min(1).max(200),
+		workspace: z.string().min(1).max(2048),
+		createdAt: z.number().int().nonnegative().safe(),
+	})
+	.strict()
+/** At most this many kept connections come back after a restart (newest first); the bound for live ones is 64. */
+export const RESTORED_BINDINGS = 48
+const hashToken = (token: string) => createHash('sha256').update(token).digest('hex')
 export interface ReviewControlBackend {
 	connect(command: Extract<ReviewCommand, { action: 'connect' }>): Promise<CallerBinding>
+	/**
+	 * After a restart: bring back the caller a kept connection belongs to, with the same id and owner and a fresh
+	 * profile token, or null when it cannot come back (its state is gone, expired or unusable): a null retires the
+	 * connection for good. 'later' leaves it on disk untouched (it belongs to a profile that is not active now).
+	 * Absent on hosts that keep nothing; their connections never come back.
+	 */
+	restore?(record: CallerBindingRecord): Promise<CallerBinding | null | 'later'>
 	current(binding: CallerBinding): boolean
 	command(binding: CallerBinding, command: ReviewCallerCommand, signal: AbortSignal): Promise<unknown> | unknown
 	/**
@@ -36,8 +86,12 @@ export interface ReviewControlBackend {
 	status(): { available: boolean }
 }
 interface Binding extends CallerBinding {
-	token: string
+	/** sha256 of the binding token, compared in constant time; the token itself lives only in the CLI's file. */
+	tokenHash: string
+	/** The epoch this connection was made under: a restored connection keeps its own across restarts. */
+	epoch: string
 	file: string
+	record: string
 	operations: number
 }
 interface Identity {
@@ -66,7 +120,7 @@ function parseEnvelope(bytes: Buffer) {
 		const { features, session } = command as { features?: unknown; session?: unknown }
 		if (Array.isArray(features))
 			for (const feature of features)
-				if (typeof feature === 'string' && !(REVIEW_FEATURES as readonly string[]).includes(feature))
+				if (typeof feature === 'string' && !(REVIEW_CONNECT_FEATURES as readonly string[]).includes(feature))
 					throw refuse(
 						`Unknown connect feature "${frameName(feature)}". Nothing was done; update the helm CLI and the Helm desktop to the same version.`,
 						'malformed command (connect feature unknown)',
@@ -124,7 +178,7 @@ export class ReviewControlServer {
 			if (!Number.isSafeInteger(pid) || (pid as number) <= 0) throw new Error('Review host lock is unavailable.')
 			try {
 				process.kill(pid as number, 0)
-				throw new Error('Another review host owns this private namespace.')
+				throw new Error(REVIEW_NAMESPACE_HELD)
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
 			}
@@ -174,6 +228,7 @@ export class ReviewControlServer {
 			await lease.close()
 		}
 		try {
+			await this.restore(root)
 			this.server = createServer(socket => this.accept(socket))
 			await new Promise<void>((resolve, reject) => {
 				const server = this.server as Server
@@ -193,6 +248,76 @@ export class ReviewControlServer {
 			await this.stop()
 			throw error
 		}
+	}
+	/**
+	 * Bring back the connections a previous host kept (S13). Each needs its record AND the CLI's connection file
+	 * with the same identity, epoch and token; the backend decides whether the caller itself can come back. Anything
+	 * that does not come back is removed, as are connection files no record names (crashes, older desktops).
+	 */
+	private async restore(root: string): Promise<void> {
+		await removeStrayTemps(root)
+		const records: { uuid: string; record: CallerBindingRecord }[] = []
+		const named = new Set<string>()
+		for (const name of await privateNames(root, /^binding-[a-f0-9-]{36}\.json$/)) {
+			// `binding-<key>` pairs with `connection-<key>`; the key is random, never the caller's id.
+			const uuid = name.slice('binding-'.length, -'.json'.length)
+			named.add(uuid)
+			const parsed = bindingRecordSchema.safeParse(await readPrivateJson(join(root, name)).catch(() => null))
+			if (parsed.success) records.push({ uuid, record: parsed.data })
+			else await this.removeKept(root, uuid)
+		}
+		for (const name of await privateNames(root, /^connection-[a-f0-9-]{36}\.json$/))
+			if (!named.has(name.slice('connection-'.length, -'.json'.length)))
+				await removePrivateFile(join(root, name)).catch(() => {})
+		records.sort((a, b) => b.record.createdAt - a.record.createdAt)
+		const restored = new Set<string>()
+		for (const [index, { uuid, record }] of records.entries()) {
+			const file = join(root, `connection-${uuid}.json`)
+			let binding: Binding | null = null
+			let later = false
+			try {
+				const descriptor = connectionSchema.parse(await readPrivateJson(file))
+				if (
+					index < RESTORED_BINDINGS &&
+					!restored.has(record.id) &&
+					descriptor.id === record.id &&
+					descriptor.owner === record.owner &&
+					descriptor.epoch === record.epoch &&
+					descriptor.socket === join(root, 'control.sock') &&
+					equal(hashToken(descriptor.token), record.tokenHash)
+				) {
+					const owner = await this.backend.restore?.(record)
+					if (owner === 'later') later = true
+					else if (owner && owner.id === record.id && owner.owner === record.owner && this.backend.current(owner))
+						binding = {
+							...owner,
+							tokenHash: record.tokenHash,
+							epoch: record.epoch,
+							file,
+							record: join(root, `binding-${uuid}.json`),
+							operations: 0,
+						}
+					else if (owner) this.backend.disconnect(owner)
+				}
+			} catch {
+				binding = null
+			}
+			if (later) continue
+			if (!binding) {
+				await this.removeKept(root, uuid)
+				continue
+			}
+			restored.add(binding.id)
+			await this.capture(binding.file)
+			await this.capture(binding.record)
+			this.bindings.set(binding.id, binding)
+		}
+	}
+	private async removeKept(root: string, uuid: string): Promise<void> {
+		for (const name of [`connection-${uuid}.json`, `binding-${uuid}.json`])
+			await removePrivateFile(join(root, name)).catch(() =>
+				console.warn('[helm] review connection state retained after cleanup failure'),
+			)
 	}
 	private async capture(path: string): Promise<void> {
 		const stat = await lstat(path)
@@ -262,9 +387,13 @@ export class ReviewControlServer {
 	private async handle(bytes: Buffer, signal: AbortSignal, context: { action: string }): Promise<unknown> {
 		const message = parseEnvelope(bytes)
 		context.action = message.command.action
-		if (this.stopping) throw refuse('Helm is closing its review host. Nothing was done.')
+		// A caller's connection outlives this host: tell it to come back rather than to start over.
+		if (this.stopping)
+			throw message.id ? restartingRefusal() : refuse('Helm is closing its review host. Nothing was done.')
 		if (signal.aborted) throw refuse('The review command was cancelled before it ran.')
-		if (message.epoch !== this.epoch)
+		const kept = message.id ? this.bindings.get(message.id) : undefined
+		// Discovery frames are this host's own; a connection is checked against the epoch it was made under.
+		if (message.epoch !== (kept ? kept.epoch : this.epoch))
 			throw refuse(
 				'Helm restarted its review host since this handle was made. Nothing was done; open the document again.',
 			)
@@ -288,10 +417,15 @@ export class ReviewControlServer {
 				owner = await this.backend.connect(message.command)
 				if (this.stopping || signal.aborted || !this.backend.current(owner))
 					throw refuse('The active Helm profile changed while connecting. Nothing was opened; connect again.')
+				const token = randomBytes(32).toString('hex')
+				// One random key names the connection file and its record, so a restart can pair them.
+				const uuid = randomUUID()
 				const binding: Binding = {
 					...owner,
-					token: randomBytes(32).toString('hex'),
-					file: join(this.root, `connection-${randomUUID()}.json`),
+					tokenHash: hashToken(token),
+					epoch: this.epoch,
+					file: join(this.root, `connection-${uuid}.json`),
+					record: join(this.root, `binding-${uuid}.json`),
 					operations: 0,
 				}
 				published = binding
@@ -301,10 +435,22 @@ export class ReviewControlServer {
 					socket: join(this.root, 'control.sock'),
 					id: owner.id,
 					owner: owner.owner,
-					token: binding.token,
+					token,
 				}
 				await writePrivateJson(binding.file, descriptor)
 				await this.capture(binding.file)
+				const record: CallerBindingRecord = {
+					version: 1,
+					id: owner.id,
+					owner: owner.owner,
+					epoch: this.epoch,
+					tokenHash: binding.tokenHash,
+					profileId: owner.profileId,
+					workspace: owner.workspace,
+					createdAt: Date.now(),
+				}
+				await writePrivateJson(binding.record, record)
+				await this.capture(binding.record)
 				if (this.stopping || signal.aborted || !this.backend.current(owner))
 					throw refuse('The active Helm profile changed while connecting. Nothing was opened; connect again.')
 				this.bindings.set(owner.id, binding)
@@ -317,11 +463,11 @@ export class ReviewControlServer {
 				this.pendingConnections--
 			}
 		}
-		const binding = this.bindings.get(message.id)
+		const binding = kept
 		if (
 			!binding ||
 			message.owner !== binding.owner ||
-			!equal(message.token, binding.token) ||
+			!equal(hashToken(message.token), binding.tokenHash) ||
 			message.command.action === 'connect' ||
 			message.command.action === 'hello' ||
 			message.command.action === 'view' ||
@@ -334,11 +480,10 @@ export class ReviewControlServer {
 		binding.operations++
 		try {
 			const value = await this.backend.command(binding, message.command as ReviewCallerCommand, signal)
-			if (
-				signal.aborted ||
-				this.stopping ||
-				(message.command.action !== 'disconnect' && !this.backend.current(binding))
-			)
+			// Quitting while it ran: every caller command is safe to send again with the same connection (an offered
+			// feedback goes again only to the same listener, acks and replies are idempotent).
+			if (this.stopping && !signal.aborted) throw restartingRefusal()
+			if (signal.aborted || (message.command.action !== 'disconnect' && !this.backend.current(binding)))
 				throw new Error('Connection admission changed.')
 			return value
 		} finally {
@@ -375,25 +520,44 @@ export class ReviewControlServer {
 	private async retire(binding: Binding): Promise<void> {
 		if (this.bindings.get(binding.id) === binding) this.bindings.delete(binding.id)
 		this.backend.disconnect(binding)
-		const index = this.identities.findIndex(value => value.path === binding.file)
-		if (index < 0) return
-		const identity = this.identities.splice(index, 1)[0] as Identity
-		try {
-			const stat = await lstat(identity.path)
-			if (stat.dev === identity.dev && stat.ino === identity.ino) await unlink(identity.path)
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
-				console.warn('[helm] review connection state retained after cleanup failure')
+		for (const path of [binding.file, binding.record]) {
+			const index = this.identities.findIndex(value => value.path === path)
+			if (index < 0) continue
+			const identity = this.identities.splice(index, 1)[0] as Identity
+			try {
+				const stat = await lstat(identity.path)
+				if (stat.dev === identity.dev && stat.ino === identity.ino) await unlink(identity.path)
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+					console.warn('[helm] review connection state retained after cleanup failure')
+			}
 		}
 	}
+	/**
+	 * Stop listening (quit or restart). Live connections are KEPT: their connection files and records stay, so the
+	 * next host brings them back (S13); the backend has already suspended its callers. Commands still running are
+	 * cut off; a caller sends the same command again once Helm is back. Only retired connections were removed.
+	 */
 	async stop(): Promise<void> {
 		if (this.stopping) return
 		this.stopping = true
-		for (const binding of this.bindings.values()) this.backend.disconnect(binding)
+		// Commands still running answer first (a suspended backend refuses them as restarting), so the caller reads
+		// "send it again", never a lost answer; only what does not settle within a second is cut off.
+		await Promise.race([Promise.allSettled(this.active), new Promise(done => setTimeout(done, 1000).unref())])
+		await Promise.race([
+			Promise.all(
+				[...this.sockets].map(
+					socket => new Promise(done => (socket.destroyed ? done(null) : socket.once('close', done))),
+				),
+			),
+			new Promise(done => setTimeout(done, 1000).unref()),
+		])
 		for (const socket of this.sockets) socket.destroy()
 		await Promise.allSettled(this.active)
 		if (this.server) await new Promise<void>(resolve => this.server?.close(() => resolve()))
+		const kept = new Set([...this.bindings.values()].flatMap(binding => [binding.file, binding.record]))
 		for (const identity of this.identities.reverse()) {
+			if (kept.has(identity.path)) continue
 			try {
 				const stat = await lstat(identity.path)
 				if (stat.dev === identity.dev && stat.ino === identity.ino) await unlink(identity.path)
