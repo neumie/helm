@@ -141,7 +141,7 @@ Open (`o`): the message's https permalink
 
 - `r` reply → `POST /api/signals/:id/slack-reply {text}` (Helm only: local control token) →
   `chat.postMessage` in that DM or thread (`thread_ts`); text escaped (`& < >`), ≤4000. Row closes
-  `answered in Slack`. Reply flow UI: **Open question** below.
+  `answered in Slack`. Reply flow UI: heads only (see **Reply flow** below).
 - `x` mute sender → latest sender's user id onto `signals.slack.excludeUsers`; Jakub's open Slack rows
   whose latest sender is that user close (`sender muted`) and list as filtered `excluded`.
 - `i` on a filtered Slack entry → unmute (drop from `excludeUsers`) or, for a bot, add to `includeUsers`.
@@ -182,11 +182,12 @@ message sent with Jakub's own token to himself lands in his "You" DM and Slack w
   threads(true), teams(''), includeUsers(''), excludeUsers(''), agentSendTo('') }`.
 - **Protocol 64 → 65** (new source, kinds, filtered source/reason, reply route).
 
-## Open question for the dispatcher (UI)
+## Reply flow (resolved)
 
-How the reply flow (`r`) shows the Slack thread is new UI. Storybook (port 6152),
-**Views / Signals / Slack reply**: A heads only (title + latest line), B the latest few messages as a
-plain excerpt, C the thread read live with author + time. Production ships A until one is picked.
+The reply flow (`r`) is **heads only** (Jakub's pick, 2026-11-11, reviewed on the port-6152 preview):
+the flow header (`↩ Reply to <ref>` + the thread title), the latest line, and the answer field; ⌘↵
+posts to Slack and closes the thread, Esc goes back. The alternative excerpt / live-thread layouts were
+dropped. Story: **Views / Signals / Slack** (`Reply`).
 
 ## Slices
 
@@ -200,7 +201,7 @@ plain excerpt, C the thread read live with author + time. Production ships A unt
 3. Pure Slack → Signals mapping (DMs, mentions, threads, mrkdwn→plain) with fixtures; the reader.
 4. Routes: slack reply, mute/include for Slack.
 5. `helm slack` CLI (connect/disconnect/status/user/read/send).
-6. Desktop: main (reply IPC, opener), renderer rows/actions/prompts, Slack reply flow + variants, stories.
+6. Desktop: main (reply IPC, opener), renderer rows/actions/prompts, Slack reply flow (heads only), stories.
 7. Docs (AGENTS.md, design-system §3.25), adversarial review, checks, live test (two self-DM messages).
 
 ## Live testing
