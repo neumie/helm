@@ -29,6 +29,9 @@ export type SignalsLook =
 	| 'folded-title'
 	| 'folded-number'
 	| 'folded-bare'
+	| 'folded-rule'
+	| 'folded-band'
+	| 'folded-rail'
 
 export const SIGNALS_LOOKS: readonly SignalsLook[] = [
 	'today',
@@ -41,6 +44,9 @@ export const SIGNALS_LOOKS: readonly SignalsLook[] = [
 	'folded-title',
 	'folded-number',
 	'folded-bare',
+	'folded-rule',
+	'folded-band',
+	'folded-rail',
 ]
 
 /**
@@ -56,6 +62,23 @@ const FOLDED_TOP: Partial<Record<SignalsLook, FoldedTop>> = {
 	'folded-title': 'title',
 	'folded-number': 'number',
 	'folded-bare': 'bare',
+	'folded-rule': 'bare',
+	'folded-band': 'bare',
+	'folded-rail': 'bare',
+}
+
+/**
+ * How `folded-bare` separates its sections (Jakub 2026-11-11: "Needs you, Managed and Snoozed must
+ * be set apart from the rest"): `rule` — a full-width hairline over every title but the first;
+ * `band` — the title on a full-width `--chrome` band that sticks to the top while its rows scroll;
+ * `rail` — a wider gap and a 2px rail down the left edge of each section, title to last row.
+ */
+type FoldedSeparation = 'rule' | 'band' | 'rail'
+
+const FOLDED_SEPARATION: Partial<Record<SignalsLook, FoldedSeparation>> = {
+	'folded-rule': 'rule',
+	'folded-band': 'band',
+	'folded-rail': 'rail',
 }
 
 export interface SignalsLookBodyProps {
@@ -506,8 +529,8 @@ function FoldedTitle({ label, count, tone, counts }: { label: string; count: num
 }
 
 /** 6–9. Folded (4 with 2): only sections with threads, in the calm look's Braille dots; the top varies. */
-function FoldedLook(props: SignalsLookBodyProps & { top: FoldedTop }) {
-	const { sections, quietEmpty, row, done, filtered, sources, now, top } = props
+function FoldedLook(props: SignalsLookBodyProps & { top: FoldedTop; separation?: FoldedSeparation }) {
+	const { sections, quietEmpty, row, done, filtered, sources, now, top, separation } = props
 	const fresh = freshNeeds(sections, now)
 	const handledCount = sections.needs.length - fresh
 	const parts = [
@@ -530,7 +553,7 @@ function FoldedLook(props: SignalsLookBodyProps & { top: FoldedTop }) {
 	const counts = top !== 'status'
 	const handledNote = handledCount > 0 ? `${handledCount} handled` : undefined
 	return (
-		<div className="signals-look-summary signals-look-folded" data-top={top}>
+		<div className="signals-look-summary signals-look-folded" data-top={top} data-separation={separation}>
 			{top === 'status' ? (
 				<div className="signals-look-status">
 					<span className="signals-look-status-text">
@@ -567,7 +590,7 @@ function FoldedLook(props: SignalsLookBodyProps & { top: FoldedTop }) {
 			{open ? (
 				<>
 					{sections.needs.length > 0 ? (
-						<>
+						<section className="signals-look-section" aria-label="Needs you">
 							<FoldedTitle
 								label="Needs you"
 								count={fresh}
@@ -575,19 +598,19 @@ function FoldedLook(props: SignalsLookBodyProps & { top: FoldedTop }) {
 								counts={counts && top !== 'number'}
 							/>
 							<Rows threads={sections.needs} row={row} label="Needs you" />
-						</>
+						</section>
 					) : null}
 					{sections.managed.length > 0 ? (
-						<>
+						<section className="signals-look-section" aria-label="Managed">
 							<FoldedTitle label="Managed" count={sections.managed.length} counts={counts} />
 							<Rows threads={sections.managed} row={row} label="Managed" />
-						</>
+						</section>
 					) : null}
 					{sections.snoozed.length > 0 ? (
-						<>
+						<section className="signals-look-section" aria-label="Snoozed">
 							<FoldedTitle label="Snoozed" count={sections.snoozed.length} counts={counts} />
 							<Rows threads={sections.snoozed} row={row} label="Snoozed" />
-						</>
+						</section>
 					) : null}
 				</>
 			) : (
@@ -736,7 +759,7 @@ export function SignalsLookBody(props: SignalsLookBodyProps) {
 		) : look === 'summary' ? (
 			<SummaryLook {...props} />
 		) : FOLDED_TOP[look] ? (
-			<FoldedLook {...props} top={FOLDED_TOP[look] ?? 'status'} />
+			<FoldedLook {...props} top={FOLDED_TOP[look] ?? 'status'} separation={FOLDED_SEPARATION[look]} />
 		) : (
 			<LedgerLook {...props} />
 		)

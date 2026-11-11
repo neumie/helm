@@ -4266,7 +4266,7 @@ body.dragging {
 	margin-top: 20px;
 }
 
-.signals-look-folded .signals-look-status + .signals-look-subhead {
+.signals-look-folded .signals-look-status + .signals-look-section > .signals-look-subhead {
 	margin-top: 10px;
 }
 
@@ -4276,7 +4276,7 @@ body.dragging {
 	display: none;
 }
 
-.signals-look-folded > .signals-look-subhead:first-child {
+.signals-look-folded > .signals-look-section:first-child > .signals-look-subhead {
 	margin-top: 6px;
 }
 
@@ -4313,8 +4313,71 @@ body.dragging {
 	color: var(--dock-dim);
 }
 
-.signals-look-folded .signals-look-number + .signals-look-subhead {
+.signals-look-folded .signals-look-number + .signals-look-section > .signals-look-subhead {
 	margin-top: 14px;
+}
+
+/* 10–12. how `folded-bare` sets its sections apart (FOLDED_SEPARATION). Rows keep their 16px
+ * grid and square full-width selection; only the section edges change. */
+.signals-look-section {
+	position: relative;
+	flex: none;
+	display: flex;
+	flex-direction: column;
+}
+
+/* 10 rule: a full-width hairline (the only line weight) over every title but the first. */
+.signals-look-folded[data-separation="rule"] .signals-look-section + .signals-look-section {
+	margin-top: 16px;
+	border-top: 1px solid var(--hairline);
+}
+
+.signals-look-folded[data-separation="rule"] .signals-look-section + .signals-look-section > .signals-look-subhead {
+	margin-top: 10px;
+}
+
+/* 11 band: the title on a full-width --chrome band (the topbar's material) that sticks to the top
+ * of the scroll owner while its rows pass under it; rows scrolled into view clear it. */
+.signals-look-folded[data-separation="band"] .signals-look-section > .signals-look-subhead {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	align-items: center;
+	height: 28px;
+	margin: 0;
+	background: var(--chrome);
+}
+
+.signals-look-folded[data-separation="band"] .signals-look-section + .signals-look-section {
+	margin-top: 12px;
+}
+
+.signals-look-folded[data-separation="band"] > .signals-look-section:first-child > .signals-look-subhead {
+	margin-top: 0;
+}
+
+.signals-look-folded[data-separation="band"] .signals-tr {
+	scroll-margin-top: 28px;
+}
+
+/* 12 rail: a wider gap and a 2px rail at the left edge, title to last row (the Background list's
+ * group rail, here in neutral --hairline-strong). */
+.signals-look-folded[data-separation="rail"] .signals-look-section::before {
+	content: "";
+	position: absolute;
+	top: 4px;
+	bottom: 4px;
+	left: 0;
+	width: 2px;
+	background: var(--hairline-strong);
+}
+
+.signals-look-folded[data-separation="rail"] .signals-look-section + .signals-look-section {
+	margin-top: 20px;
+}
+
+.signals-look-folded[data-separation="rail"] .signals-look-section > .signals-look-subhead {
+	margin-top: 4px;
 }
 
 /* 5. ledger: a count strip under the title, then only sections with threads; at rest the legend. */
