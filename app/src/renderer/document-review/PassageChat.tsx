@@ -18,7 +18,8 @@ export function PassageChat({
 }: {
 	anchor: PassageChatAnchor
 	owner: HTMLElement | null
-	onClose: (restoreFocus: boolean) => void
+	/** `shown`: the chat was on screen. A chat that could not open never owned the reader's native selection. */
+	onClose: (restoreFocus: boolean, shown: boolean) => void
 	children: ReactNode
 }) {
 	const panel = useRef<HTMLDialogElement>(null)
@@ -29,8 +30,11 @@ export function PassageChat({
 		target: HTMLElement
 		expected: Element | null
 	} | null>(null)
-	const close = useRef(onClose)
-	close.current = onClose
+	const onCloseRef = useRef(onClose)
+	onCloseRef.current = onClose
+	const close = useRef((restoreFocus: boolean) =>
+		onCloseRef.current(restoreFocus, !!panel.current?.matches(':popover-open')),
+	)
 	useLayoutEffect(() => {
 		const element = panel.current
 		const retained = cleanupFocus.current

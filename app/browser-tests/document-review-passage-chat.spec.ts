@@ -381,3 +381,119 @@ test('zoom moves an open passage bubble with its passage', async ({ page }) => {
 	})
 	expect(placed).not.toBeNull()
 })
+
+// Closing the selection chat ends the selection: no native range, painted highlight, block fill or figure
+// mark stays in the document. While the chat is open the selection stays.
+async function selectionLeft(page: Page) {
+	return page.evaluate(() => {
+		const reading = document.querySelector('.review-reading')
+		const selection = window.getSelection()
+		const range = selection?.rangeCount ? selection.getRangeAt(0) : null
+		return {
+			highlight: CSS.highlights?.get('helm-review-selection')?.size ?? 0,
+			native: !!range && !range.collapsed && !!reading?.contains(range.commonAncestorContainer),
+			block: document.querySelectorAll('.review-block[data-selected="true"]').length,
+			figure: document.querySelectorAll('[data-figure-selected]').length,
+		}
+	})
+}
+const cleared = { highlight: 0, native: false, block: 0, figure: 0 }
+const closeRoutes: Record<string, (page: Page) => Promise<void>> = {
+	Escape: page => page.keyboard.press('Escape'),
+	'close button': page => bubble(page).getByRole('button', { name: 'Close passage conversation' }).click(),
+	'outside click': page => page.getByRole('textbox', { name: 'Whole-document message' }).click(),
+	'outside keyboard focus': page => page.getByRole('textbox', { name: 'Whole-document message' }).focus(),
+	'scrolled away': page =>
+		page.locator('.review-reading').evaluate(element => {
+			element.scrollTop = element.scrollHeight
+		}),
+}
+for (const [route, close] of Object.entries(closeRoutes))
+	test(`closing the selection chat by ${route} clears the selection and its highlight`, async ({ page }) => {
+		await page.setViewportSize({ width: 1197, height: 807 })
+		await open(page)
+		await select(page)
+		await page.keyboard.type('Kept draft')
+		await expect.poll(() => selectionLeft(page).then(state => state.highlight)).toBe(1)
+		await close(page)
+		await expect(bubble(page)).toHaveCount(0)
+		await expect.poll(() => selectionLeft(page)).toEqual(cleared)
+		// The draft slot is kept: choosing the passage again brings the typed text back.
+		if (route !== 'scrolled away') {
+			await select(page)
+			await expect(bubble(page).getByRole('textbox')).toHaveValue('Kept draft')
+			await expect.poll(() => selectionLeft(page).then(state => state.highlight)).toBe(1)
+		}
+	})
+
+test('closing a passage chat opened from its marker clears its highlight', async ({ page }) => {
+	await page.setViewportSize({ width: 1197, height: 807 })
+	await open(page, 'passage-conversations')
+	await page.getByRole('button', { name: 'Show passage conversation', exact: true }).first().click()
+	await expect(bubble(page)).toBeVisible()
+	await expect.poll(() => selectionLeft(page).then(state => state.highlight)).toBe(1)
+	await page.keyboard.press('Escape')
+	await expect(bubble(page)).toHaveCount(0)
+	await expect.poll(() => selectionLeft(page)).toEqual(cleared)
+})
+
+test('closing a canvas selection chat clears the text selection', async ({ page }) => {
+	await page.setViewportSize({ width: 1180, height: 800 })
+	await open(page, 'interactive-canvas')
+	await select(page, '.review-canvas p', 'Keep the reading surface calm')
+	await expect.poll(() => selectionLeft(page).then(state => state.highlight)).toBe(1)
+	await bubble(page).getByRole('button', { name: 'Close passage conversation' }).click()
+	await expect(bubble(page)).toHaveCount(0)
+	await expect.poll(() => selectionLeft(page)).toEqual(cleared)
+})
+
+test('closing a canvas figure chat clears the figure mark', async ({ page }) => {
+	await page.setViewportSize({ width: 1180, height: 800 })
+	await open(page, 'interactive-canvas')
+	await page.locator('.review-canvas p').filter({ hasText: 'Keep the reading surface calm' }).first().click()
+	await expect(bubble(page)).toBeVisible()
+	await expect.poll(() => selectionLeft(page).then(state => state.figure)).toBe(1)
+	await bubble(page).getByRole('button', { name: 'Close passage conversation' }).click()
+	await expect(bubble(page)).toHaveCount(0)
+	await expect.poll(() => selectionLeft(page)).toEqual(cleared)
+})
+
+for (const retire of ['revision', 'owner'] as const)
+	test(`a figure chat retired by a new ${retire} takes its figure mark with it`, async ({ page }) => {
+		await page.setViewportSize({ width: 1197, height: 807 })
+		await open(page)
+		const text = (other: string) => `# Figures\n\n![Diagram of the flow](flow.png)\n\n${other}\n`
+		await page.evaluate(value => window.__helmDocumentReviewProof?.edit(value), text('First paragraph.'))
+		await page.locator('[data-review-image]').filter({ hasText: 'Diagram of the flow' }).click()
+		await expect(bubble(page)).toBeVisible()
+		await expect.poll(() => selectionLeft(page).then(state => state.figure)).toBe(1)
+		if (retire === 'revision')
+			await page.evaluate(value => window.__helmDocumentReviewProof?.edit(value), text('Changed paragraph.'))
+		else await page.evaluate(() => window.__helmDocumentReviewProof?.replaceOwner())
+		await expect(bubble(page)).toHaveCount(0)
+		await expect.poll(() => selectionLeft(page)).toEqual(cleared)
+	})
+
+test('a selection whose chat cannot open keeps the reader’s own native selection', async ({ page }) => {
+	await page.setViewportSize({ width: 1197, height: 807 })
+	await open(page)
+	const reading = page.locator('.review-reading')
+	await reading.focus()
+	// Backward selection: its end lies far below the reading area, so the chat has nowhere to anchor.
+	await page.evaluate(() => {
+		const root = document.querySelector('.review-reading')
+		const text = (quote: string) => {
+			const walker = document.createTreeWalker(root as Node, NodeFilter.SHOW_TEXT)
+			for (let node = walker.nextNode(); node; node = walker.nextNode())
+				if (node.textContent?.includes(quote)) return node
+			throw new Error(`Missing ${quote}`)
+		}
+		const end = text('nothing truncated')
+		const start = text('The selected owner must remain exact.')
+		window.getSelection()?.setBaseAndExtent(end, 5, start, 0)
+	})
+	await page.keyboard.press('Shift+ArrowRight')
+	await page.keyboard.press('Alt+Enter')
+	await expect(bubble(page)).toHaveCount(0)
+	expect(await selectionLeft(page)).toMatchObject({ native: true, highlight: 0, figure: 0 })
+})

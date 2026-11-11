@@ -750,6 +750,21 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 					: reading.current
 		if (target?.isConnected && target.getClientRects().length) target.focus()
 	})
+	// A chat retired by a new revision, owner, session or API unmounts through effect cleanup, never onClose.
+	// Retire its commit too, with its paint and figure mark, so it never returns on its own without its
+	// selection (a file reverted to identical bytes) and a stray Escape never acts on it. The reader may be
+	// selecting text right now, so the native selection is left alone.
+	useLayoutEffect(() => {
+		const commit = bubbleCommit.current
+		if (
+			!commit ||
+			(commit.api === api && commit.binding === selectionBinding && commit.generation === lifecycle.current)
+		)
+			return
+		bubbleCommit.current = null
+		setBubble(null)
+		clearSelectionMarks(false)
+	})
 	// Display-only DOM selection. Never derive source offsets or search repeated prose for its location.
 	useLayoutEffect(() => {
 		const previous = paintedHighlight.current
@@ -1126,10 +1141,30 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 				range.toString() === commit.anchor.text)
 		)
 	}
-	function dismissPassage(commit: PassageBubbleCommit, restoreFocus: boolean): void {
+	// The selection lives only as long as its chat: closing the chat by any route (Escape, Close, outside
+	// pointer or focus, scrolled away, re-rendered passage, retired binding) drops the painted range and the
+	// figure mark; a chat the reader saw also takes a native selection left in the reading area with it.
+	// The passage draft text and its scope stay untouched.
+	function clearSelectionMarks(native = true): void {
+		selectionPaint.current = null
+		clearFigureMark()
+		if (!native) return
+		const selection = window.getSelection()
+		const owner = reading.current
+		if (
+			selection?.rangeCount &&
+			owner &&
+			((selection.anchorNode && owner.contains(selection.anchorNode)) ||
+				(selection.focusNode && owner.contains(selection.focusNode)))
+		)
+			selection.removeAllRanges()
+	}
+	function dismissPassage(commit: PassageBubbleCommit, restoreFocus: boolean, shown: boolean): void {
 		if (bubbleCommit.current !== commit) return
 		bubbleCommit.current = null
 		setBubble(null)
+		// A chat that never got on screen (its passage outside the reading area) leaves the reader's own selection.
+		clearSelectionMarks(shown)
 		if (restoreFocus) {
 			focusRequest.current = { target: 'reading', expected: document.activeElement, binding: selectionBinding, api }
 		}
@@ -1150,6 +1185,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	function finishPassage(): void {
 		bubbleCommit.current = null
 		setBubble(null)
+		clearSelectionMarks()
 		focusRequest.current = { target: 'reading', expected: document.activeElement, binding: selectionBinding, api }
 		reanchoring.current = null
 		setPassage(null)
@@ -1160,6 +1196,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 	function returnToDocument(): void {
 		bubbleCommit.current = null
 		setBubble(null)
+		clearSelectionMarks()
 		if (view === 'comments') {
 			setView('document')
 			opener.current = reading.current
@@ -1559,6 +1596,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 		if (selectionLocked() || commentSave.current) return
 		bubbleCommit.current = null
 		setBubble(null)
+		clearSelectionMarks()
 		focusRequest.current = { target: 'reading', expected: document.activeElement, binding: selectionBinding, api }
 		reanchoring.current = null
 		setPassage(null)
@@ -2634,7 +2672,9 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 								<article className="review-prose" data-reading-width="">
 									<ReviewMarkdown
 										blocks={model.blocks}
-										selectedStart={passage?.revision === state.document.revision ? passage.start : null}
+										selectedStart={
+											visibleBubble && passage?.revision === state.document.revision ? passage.start : null
+										}
 										passageThreads={passageThreads.size ? passageThreads : undefined}
 										commentBinding={selectionBinding}
 										api={api}
@@ -2673,7 +2713,7 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 							key={visibleBubble.id}
 							anchor={visibleBubble.anchor}
 							owner={documentPane.current}
-							onClose={restore => dismissPassage(visibleBubble, restore)}
+							onClose={(restore, shown) => dismissPassage(visibleBubble, restore, shown)}
 						>
 							{/* biome-ignore lint/a11y/noNoninteractiveTabindex: Passage history owns bounded keyboard scrolling. */}
 							<section
