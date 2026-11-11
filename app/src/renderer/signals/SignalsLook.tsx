@@ -18,7 +18,17 @@ import { KIND_GLYPH, KIND_WORD, SOURCE_LABEL, type SignalSections, formatAgo, ha
  * (2026-11-11, "4 with 2"): `summary`'s status block and folded sections with `calm`'s Braille dots,
  * the count marks on the section titles and the dot field as the illustration at rest.
  */
-export type SignalsLook = 'today' | 'card' | 'calm' | 'terminal' | 'summary' | 'ledger' | 'folded'
+export type SignalsLook =
+	| 'today'
+	| 'card'
+	| 'calm'
+	| 'terminal'
+	| 'summary'
+	| 'ledger'
+	| 'folded'
+	| 'folded-title'
+	| 'folded-number'
+	| 'folded-bare'
 
 export const SIGNALS_LOOKS: readonly SignalsLook[] = [
 	'today',
@@ -28,7 +38,25 @@ export const SIGNALS_LOOKS: readonly SignalsLook[] = [
 	'summary',
 	'ledger',
 	'folded',
+	'folded-title',
+	'folded-number',
+	'folded-bare',
 ]
+
+/**
+ * The top of the `folded` look (Jakub 2026-11-11: "still don't like the top part"): `status` — the
+ * two-line status block; `title` — the header's dim summary, counts on the section titles; `number`
+ * — one large count of what needs you; `bare` — nothing above the list. All but `status` pin the
+ * done line to the bottom of the list.
+ */
+type FoldedTop = 'status' | 'title' | 'number' | 'bare'
+
+const FOLDED_TOP: Partial<Record<SignalsLook, FoldedTop>> = {
+	folded: 'status',
+	'folded-title': 'title',
+	'folded-number': 'number',
+	'folded-bare': 'bare',
+}
 
 export interface SignalsLookBodyProps {
 	look: Exclude<SignalsLook, 'today'>
@@ -466,9 +494,20 @@ function SummaryLook(props: SignalsLookBodyProps) {
 	)
 }
 
-/** 6. Folded (4 with 2): the summary's status block and folded sections in the calm look's Braille dots. */
-function FoldedLook(props: SignalsLookBodyProps) {
-	const { sections, quietEmpty, row, done, filtered, sources, now } = props
+/** A folded section title: its Braille count mark, the label and (`counts`) its number on the age column. */
+function FoldedTitle({ label, count, tone, counts }: { label: string; count: number; tone?: 'new'; counts: boolean }) {
+	return (
+		<div className="signals-look-subhead" data-marked="true">
+			<BrailleCount count={count} tone={tone} />
+			<span className="signals-look-subhead-label">{label}</span>
+			{counts ? <span className="signals-look-subhead-count">{count}</span> : null}
+		</div>
+	)
+}
+
+/** 6–9. Folded (4 with 2): only sections with threads, in the calm look's Braille dots; the top varies. */
+function FoldedLook(props: SignalsLookBodyProps & { top: FoldedTop }) {
+	const { sections, quietEmpty, row, done, filtered, sources, now, top } = props
 	const fresh = freshNeeds(sections, now)
 	const handledCount = sections.needs.length - fresh
 	const parts = [
@@ -486,39 +525,67 @@ function FoldedLook(props: SignalsLookBodyProps) {
 	if (sections.snoozed.length > 0) parts.push(`${sections.snoozed.length} snoozed`)
 	const listening = (sources ?? []).filter(source => source.status === 'ok').map(source => SOURCE_LABEL[source.source])
 	const anyNew = sections.needs.some(thread => thread.state === 'new' && !handled(thread, now))
+	const open = openCount(sections) > 0
+	// Counts on the titles wherever the top no longer says them.
+	const counts = top !== 'status'
+	const handledNote = handledCount > 0 ? `${handledCount} handled` : undefined
 	return (
-		<div className="signals-look-summary signals-look-folded">
-			<div className="signals-look-status">
-				<span className="signals-look-status-text">
-					{parts.map((part, index) => (
-						<Fragment key={part}>
-							{index > 0 ? ' ' : null}
-							<span className="signals-look-status-part">
-								{index > 0 ? '· ' : null}
-								{part}
+		<div className="signals-look-summary signals-look-folded" data-top={top}>
+			{top === 'status' ? (
+				<div className="signals-look-status">
+					<span className="signals-look-status-text">
+						{parts.map((part, index) => (
+							<Fragment key={part}>
+								{index > 0 ? ' ' : null}
+								<span className="signals-look-status-part">
+									{index > 0 ? '· ' : null}
+									{part}
+								</span>
+							</Fragment>
+						))}
+					</span>
+					<DoneLine done={done} filtered={filtered} />
+				</div>
+			) : null}
+			{top === 'number' && open ? (
+				<div className="signals-look-number" data-zero={fresh === 0 ? 'true' : undefined}>
+					{fresh > 0 ? (
+						<>
+							<span className="signals-look-number-n">{fresh}</span>
+							<span className="signals-look-number-label">
+								need{fresh === 1 ? 's' : ''} you
+								{handledNote ? <span className="signals-look-number-dim"> · {handledNote}</span> : null}
 							</span>
-						</Fragment>
-					))}
-				</span>
-				<DoneLine done={done} filtered={filtered} />
-			</div>
-			{openCount(sections) > 0 ? (
+						</>
+					) : (
+						<span className="signals-look-number-label">
+							{sections.needs.length > 0 ? 'All handled' : quietEmpty ? 'Nothing needs you' : 'Nothing listed'}
+						</span>
+					)}
+				</div>
+			) : null}
+			{open ? (
 				<>
 					{sections.needs.length > 0 ? (
 						<>
-							<Title label="Needs you" mark={<BrailleCount count={fresh} tone={anyNew ? 'new' : undefined} />} />
+							<FoldedTitle
+								label="Needs you"
+								count={fresh}
+								tone={anyNew ? 'new' : undefined}
+								counts={counts && top !== 'number'}
+							/>
 							<Rows threads={sections.needs} row={row} label="Needs you" />
 						</>
 					) : null}
 					{sections.managed.length > 0 ? (
 						<>
-							<Title label="Managed" mark={<BrailleCount count={sections.managed.length} />} />
+							<FoldedTitle label="Managed" count={sections.managed.length} counts={counts} />
 							<Rows threads={sections.managed} row={row} label="Managed" />
 						</>
 					) : null}
 					{sections.snoozed.length > 0 ? (
 						<>
-							<Title label="Snoozed" mark={<BrailleCount count={sections.snoozed.length} />} />
+							<FoldedTitle label="Snoozed" count={sections.snoozed.length} counts={counts} />
 							<Rows threads={sections.snoozed} row={row} label="Snoozed" />
 						</>
 					) : null}
@@ -536,6 +603,7 @@ function FoldedLook(props: SignalsLookBodyProps) {
 					</span>
 				</div>
 			)}
+			{top === 'status' ? null : <DoneLine done={done} filtered={filtered} className="signals-look-pinned-done" />}
 		</div>
 	)
 }
@@ -667,8 +735,8 @@ export function SignalsLookBody(props: SignalsLookBodyProps) {
 			<TerminalLook {...props} />
 		) : look === 'summary' ? (
 			<SummaryLook {...props} />
-		) : look === 'folded' ? (
-			<FoldedLook {...props} />
+		) : FOLDED_TOP[look] ? (
+			<FoldedLook {...props} top={FOLDED_TOP[look] ?? 'status'} />
 		) : (
 			<LedgerLook {...props} />
 		)
@@ -677,7 +745,7 @@ export function SignalsLookBody(props: SignalsLookBodyProps) {
 			<Header
 				summary={
 					look === 'summary' ||
-					look === 'folded' ||
+					(FOLDED_TOP[look] !== undefined && FOLDED_TOP[look] !== 'title') ||
 					look === 'ledger' ||
 					(look === 'calm' && openCount(props.sections) === 0)
 						? null

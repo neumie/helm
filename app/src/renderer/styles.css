@@ -4270,6 +4270,53 @@ body.dragging {
 	margin-top: 10px;
 }
 
+/* The folded tops (7–9): the done line pinned low. A hidden key hint (`· D`) takes no room there,
+ * else an unfocused column shows a gap between `Done today 2` and `· 5 filtered`. */
+.signals:not(:focus-within) .signals-look-folded .signals-look-done .signals-list-key {
+	display: none;
+}
+
+.signals-look-folded > .signals-look-subhead:first-child {
+	margin-top: 6px;
+}
+
+/* 8. one large count of what needs you, the sections under it. */
+.signals-look-number {
+	flex: none;
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	padding: 2px 16px 4px;
+	min-width: 0;
+}
+
+.signals-look-number-n {
+	flex: none;
+	font-size: calc(32px * var(--ui-scale));
+	line-height: 1;
+	font-weight: 300;
+	font-variant-numeric: tabular-nums;
+	color: var(--text-0);
+}
+
+.signals-look-number-label {
+	min-width: 0;
+	font-size: var(--dock-prose-fs);
+	line-height: var(--dock-prose-lh);
+	color: var(--text-1);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.signals-look-number-dim {
+	color: var(--dock-dim);
+}
+
+.signals-look-folded .signals-look-number + .signals-look-subhead {
+	margin-top: 14px;
+}
+
 /* 5. ledger: a count strip under the title, then only sections with threads; at rest the legend. */
 .signals-look-ledger-strip {
 	flex: none;

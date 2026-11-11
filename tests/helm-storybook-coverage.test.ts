@@ -34,6 +34,15 @@ const storyCoverage = [
 		'app/src/renderer/signals/SignalsLookFolded.stories.tsx',
 		'Views/Signals/Sidebar look/6 Folded summary with calm dots',
 	],
+	[
+		'app/src/renderer/signals/SignalsLookFoldedTitle.stories.tsx',
+		'Views/Signals/Sidebar look/7 Folded, counts in the title',
+	],
+	[
+		'app/src/renderer/signals/SignalsLookFoldedNumber.stories.tsx',
+		'Views/Signals/Sidebar look/8 Folded, one big number',
+	],
+	['app/src/renderer/signals/SignalsLookFoldedBare.stories.tsx', 'Views/Signals/Sidebar look/9 Folded, nothing on top'],
 ] as const
 
 test('Storybook discovers the whole renderer and sorts large review views first', () => {
