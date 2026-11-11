@@ -30,6 +30,10 @@ const storyCoverage = [
 	['app/src/renderer/signals/SignalsLookTerminal.stories.tsx', 'Views/Signals/Sidebar look/3 Terminal transcript'],
 	['app/src/renderer/signals/SignalsLookSummary.stories.tsx', 'Views/Signals/Sidebar look/4 Folded summary'],
 	['app/src/renderer/signals/SignalsLookLedger.stories.tsx', 'Views/Signals/Sidebar look/5 Ledger and legend'],
+	[
+		'app/src/renderer/signals/SignalsLookFolded.stories.tsx',
+		'Views/Signals/Sidebar look/6 Folded summary with calm dots',
+	],
 ] as const
 
 test('Storybook discovers the whole renderer and sorts large review views first', () => {

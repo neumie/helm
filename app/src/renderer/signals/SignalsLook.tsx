@@ -1,4 +1,4 @@
-// Design review only (Views / Signals / Sidebar look): five alternative looks for the Signals
+// Design review only (Views / Signals / Sidebar look): alternative looks for the Signals
 // column's header and list, behind `SignalsColumnProps.look` (default `today`, which keeps the
 // production SignalsTable untouched). Each look renders the header and the scroll owner over the
 // SAME sections, rows, done/filtered buttons and source health; the footer, the keys and every flow
@@ -14,11 +14,21 @@ import { KIND_GLYPH, KIND_WORD, SOURCE_LABEL, type SignalSections, formatAgo, ha
  * is empty. `calm` — a full-height calm state in the Braille dot language, Braille count marks on
  * the section titles. `terminal` — a compact `helm signal ls` transcript. `summary` — every count in
  * one status block under the title, empty sections folded into it, one centered illustration.
- * `ledger` — a count strip and, at rest, the legend of what lands here.
+ * `ledger` — a count strip and, at rest, the legend of what lands here. `folded` — Jakub's pick
+ * (2026-11-11, "4 with 2"): `summary`'s status block and folded sections with `calm`'s Braille dots,
+ * the count marks on the section titles and the dot field as the illustration at rest.
  */
-export type SignalsLook = 'today' | 'card' | 'calm' | 'terminal' | 'summary' | 'ledger'
+export type SignalsLook = 'today' | 'card' | 'calm' | 'terminal' | 'summary' | 'ledger' | 'folded'
 
-export const SIGNALS_LOOKS: readonly SignalsLook[] = ['today', 'card', 'calm', 'terminal', 'summary', 'ledger']
+export const SIGNALS_LOOKS: readonly SignalsLook[] = [
+	'today',
+	'card',
+	'calm',
+	'terminal',
+	'summary',
+	'ledger',
+	'folded',
+]
 
 export interface SignalsLookBodyProps {
 	look: Exclude<SignalsLook, 'today'>
@@ -456,6 +466,80 @@ function SummaryLook(props: SignalsLookBodyProps) {
 	)
 }
 
+/** 6. Folded (4 with 2): the summary's status block and folded sections in the calm look's Braille dots. */
+function FoldedLook(props: SignalsLookBodyProps) {
+	const { sections, quietEmpty, row, done, filtered, sources, now } = props
+	const fresh = freshNeeds(sections, now)
+	const handledCount = sections.needs.length - fresh
+	const parts = [
+		sections.needs.length === 0
+			? quietEmpty
+				? 'Nothing needs you'
+				: 'Nothing listed'
+			: fresh === 0
+				? 'All handled'
+				: `${fresh} need${fresh === 1 ? 's' : ''} you`,
+	]
+	// The Needs you list keeps the rows already sent on or answered: say how many, so the count adds up.
+	if (fresh > 0 && handledCount > 0) parts.push(`${handledCount} handled`)
+	parts.push(sections.managed.length === 0 ? 'nothing managed' : `${sections.managed.length} managed`)
+	if (sections.snoozed.length > 0) parts.push(`${sections.snoozed.length} snoozed`)
+	const listening = (sources ?? []).filter(source => source.status === 'ok').map(source => SOURCE_LABEL[source.source])
+	const anyNew = sections.needs.some(thread => thread.state === 'new' && !handled(thread, now))
+	return (
+		<div className="signals-look-summary signals-look-folded">
+			<div className="signals-look-status">
+				<span className="signals-look-status-text">
+					{parts.map((part, index) => (
+						<Fragment key={part}>
+							{index > 0 ? ' ' : null}
+							<span className="signals-look-status-part">
+								{index > 0 ? '· ' : null}
+								{part}
+							</span>
+						</Fragment>
+					))}
+				</span>
+				<DoneLine done={done} filtered={filtered} />
+			</div>
+			{openCount(sections) > 0 ? (
+				<>
+					{sections.needs.length > 0 ? (
+						<>
+							<Title label="Needs you" mark={<BrailleCount count={fresh} tone={anyNew ? 'new' : undefined} />} />
+							<Rows threads={sections.needs} row={row} label="Needs you" />
+						</>
+					) : null}
+					{sections.managed.length > 0 ? (
+						<>
+							<Title label="Managed" mark={<BrailleCount count={sections.managed.length} />} />
+							<Rows threads={sections.managed} row={row} label="Managed" />
+						</>
+					) : null}
+					{sections.snoozed.length > 0 ? (
+						<>
+							<Title label="Snoozed" mark={<BrailleCount count={sections.snoozed.length} />} />
+							<Rows threads={sections.snoozed} row={row} label="Snoozed" />
+						</>
+					) : null}
+				</>
+			) : (
+				<div className="signals-look-stage">
+					<BrailleField unknown={!quietEmpty} />
+					<span className="signals-look-stage-title">
+						{quietEmpty ? `Listening to ${listening.join(' and ') || 'your sources'}` : 'Not every source answered'}
+					</span>
+					<span className="signals-look-stage-detail">
+						{quietEmpty
+							? 'New reviews, comments, failed CI, mentions and mail show up here.'
+							: 'The footer says which one, and how to fix it.'}
+					</span>
+				</div>
+			)}
+		</div>
+	)
+}
+
 const LEGEND: readonly (keyof typeof KIND_GLYPH)[] = ['review', 'comments', 'ci', 'mention', 'mail', 'sentry', 'ask']
 
 /** 5. Ledger: a count strip under the title, then only the sections that hold threads; at rest the legend. */
@@ -583,6 +667,8 @@ export function SignalsLookBody(props: SignalsLookBodyProps) {
 			<TerminalLook {...props} />
 		) : look === 'summary' ? (
 			<SummaryLook {...props} />
+		) : look === 'folded' ? (
+			<FoldedLook {...props} />
 		) : (
 			<LedgerLook {...props} />
 		)
@@ -590,7 +676,10 @@ export function SignalsLookBody(props: SignalsLookBodyProps) {
 		<>
 			<Header
 				summary={
-					look === 'summary' || look === 'ledger' || (look === 'calm' && openCount(props.sections) === 0)
+					look === 'summary' ||
+					look === 'folded' ||
+					look === 'ledger' ||
+					(look === 'calm' && openCount(props.sections) === 0)
 						? null
 						: summary
 				}

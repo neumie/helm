@@ -3995,7 +3995,7 @@ body.dragging {
 }
 
 @media (prefers-reduced-motion: no-preference) {
-	.signals-look-calm .signals-look-braille-dot {
+	:is(.signals-look-calm, .signals-look-folded .signals-look-stage) .signals-look-braille-dot {
 		animation: signals-look-calm-wave 4.8s ease-in-out infinite;
 	}
 }
@@ -4254,6 +4254,20 @@ body.dragging {
 	max-width: 30ch;
 	color: var(--dock-dim);
 	text-wrap: balance;
+}
+
+/* 6. folded (Jakub's pick, "4 with 2"): summary's status block, calm's dots. The Braille field
+ * sits where the arcs were; it brings its own 14px gap, so the stage title drops its margin. */
+.signals-look-folded .signals-look-stage .signals-look-stage-title {
+	margin-top: 0;
+}
+
+.signals-look-folded .signals-look-subhead {
+	margin-top: 20px;
+}
+
+.signals-look-folded .signals-look-status + .signals-look-subhead {
+	margin-top: 10px;
 }
 
 /* 5. ledger: a count strip under the title, then only sections with threads; at rest the legend. */
