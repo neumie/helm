@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { isAllowed, parseAllow } from '../src/cli/slack.js'
+import { isAllowed, parseAllow, parseFlags } from '../src/cli/slack.js'
 import { SlackActions, escapeSlackText, parseSlackThreadTarget } from '../src/signals/slack-actions.js'
 import type { SlackSession, SlackSessionStore } from '../src/slack/session.js'
 import type { SlackClient } from '../src/slack/web-api.js'
@@ -74,4 +74,13 @@ test('isAllowed matches id, @handle and #channel forms', () => {
 	assert.equal(isAllowed({ channel: 'C1' }, '#general', ['general']), true)
 	assert.equal(isAllowed({ user: 'UBOB' }, 'UBOB', ['ubob']), true)
 	assert.equal(isAllowed({ user: 'UEVE' }, '@eve', ['@bob']), false)
+})
+
+test('CLI parseFlags: --to is parsed (regression: was treated as a positional target)', () => {
+	const flags = parseFlags(['--to', 'U06PS1XG3UG', '--text', 'hi'])
+	assert.equal(flags.to, 'U06PS1XG3UG')
+	assert.equal(flags.text, 'hi')
+	assert.deepEqual(flags.rest, [])
+	// read keeps its positional target.
+	assert.equal(parseFlags(['#general', '--limit', '5']).rest[0], '#general')
 })

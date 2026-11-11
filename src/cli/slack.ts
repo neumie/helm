@@ -42,11 +42,12 @@ Options:
   --url <baseUrl>    Daemon base URL (default: $HELM_URL or http://localhost:7474)
 `
 
-interface Flags {
+export interface Flags {
 	team?: string
 	thread?: string
 	signal?: number
 	text?: string
+	to?: string
 	textFile?: string
 	limit?: number
 	json: boolean
@@ -54,12 +55,15 @@ interface Flags {
 	rest: string[]
 }
 
-function parseFlags(args: string[]): Flags {
+export function parseFlags(args: string[]): Flags {
 	const flags: Flags = { json: false, rest: [] }
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i]
 		const next = () => args[++i]
 		switch (arg) {
+			case '--to':
+				flags.to = next()
+				break
 			case '--team':
 				flags.team = next()
 				break
@@ -248,10 +252,8 @@ async function resolveTarget(
 		if (parts[0] !== 'slack') fail('That signal is not a Slack thread')
 		return { teamId: parts[1], channel: parts[2], threadTs: parts[3] ?? flags.thread }
 	}
-	const target = flags.rest[0] ?? (flags.text !== undefined || flags.textFile !== undefined ? undefined : undefined)
-	const to = flags.rest[0]
+	const to = flags.to ?? flags.rest[0]
 	if (!to) return { teamId: flags.team, threadTs: flags.thread }
-	void target
 	if (/^[CGD][A-Z0-9]+$/i.test(to)) return { teamId: flags.team, channel: to, threadTs: flags.thread }
 	if (/^#/.test(to)) fail('Open the channel by its id (C…) — channel-name lookup is not supported')
 	// @handle / U… / email → a user (DM).
@@ -299,7 +301,7 @@ async function runRead(actions: SlackActions, store: SlackSessionStore, flags: F
 
 async function runSend(actions: SlackActions, store: SlackSessionStore, flags: Flags): Promise<void> {
 	const baseUrl = daemonBaseUrl(flags.url)
-	const to = flags.rest[0]
+	const to = flags.to ?? flags.rest[0]
 	const fromSignal = flags.signal !== undefined
 	if (!to && !fromSignal) fail('Give --to <target> (or --signal ID)')
 	// A positional target alongside --signal is ambiguous and could slip a matching name past the
