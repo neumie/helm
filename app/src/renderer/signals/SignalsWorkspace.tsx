@@ -14,6 +14,8 @@ import {
 	createSignalsFixture,
 	signalAskFixtures,
 	signalDoneFixtures,
+	signalSlackFilteredFixture,
+	signalSlackFixtures,
 	signalSourcesFixture,
 	signalThreadFixtures,
 	signalsAskSessions,
@@ -26,12 +28,12 @@ export interface SignalsWorkspaceProps {
 	 * `asks`: agent asks on top of the column's threads, their agents in the dock; `done`: more
 	 * threads done today, one per way a thread gets done.
 	 */
-	scenario?: 'column' | 'quiet' | 'source-down' | 'asks' | 'done'
+	scenario?: 'column' | 'quiet' | 'source-down' | 'asks' | 'done' | 'slack'
 	/**
 	 * Open a flow on its fixture thread (send: crane-rental#970, new agent: the Sentry alert, reply
 	 * and links: the `Signals asks` row-layout ask), or the filtered mail or done today list.
 	 */
-	flow?: 'send' | 'new-agent' | 'reply' | 'links' | 'filtered' | 'done'
+	flow?: 'send' | 'new-agent' | 'reply' | 'slack-reply' | 'links' | 'filtered' | 'done'
 	/**
 	 * Story only: 1 s after load, Jakub types this prompt into the idle ask agent's Okena terminal
 	 * (`ASK_TERMINAL_IDLE`); main's real ask resolver closes the open asks bound to it.
@@ -73,6 +75,12 @@ function fixtureFor(scenario: SignalsWorkspaceProps['scenario']): SignalsFixture
 			dock: { ...dock, sessions: [...dock.sessions, ...signalsAskSessions(now)] },
 		})
 	}
+	if (scenario === 'slack') {
+		return createSignalsFixture({
+			threads: [...signalSlackFixtures(now), ...threads],
+			filtered: [signalSlackFilteredFixture(now)],
+		})
+	}
 	return createSignalsFixture({ threads })
 }
 
@@ -80,11 +88,12 @@ const FLOW_THREAD: Record<Exclude<NonNullable<SignalsWorkspaceProps['flow']>, 'f
 	send: 970,
 	'new-agent': 42,
 	reply: 501,
+	'slack-reply': 701,
 	links: 501,
 }
 
 export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt }: SignalsWorkspaceProps) {
-	const fixture = useMemo(() => fixtureFor(scenario), [scenario])
+	const fixture = useMemo(() => fixtureFor(flow === 'slack-reply' ? 'slack' : scenario), [scenario, flow])
 	const options = useMemo<TerminalWorkspaceFixtureOptions>(
 		() => ({ agentDock: { scenario: 'real-case', position: 'bottom', output: 'claude-code' } }),
 		[],

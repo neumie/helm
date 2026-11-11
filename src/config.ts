@@ -89,6 +89,27 @@ const signalsSchema = z
 				mailboxes: z.string().max(2000).default(''),
 			})
 			.default({}),
+		// Slack: DMs, group DMs, @mentions and followed threads with new replies that need Jakub,
+		// read through the session Slack.app already holds (helm slack connect). Off by default
+		// because connecting prompts for the macOS Keychain. Noise control mirrors Mail.
+		slack: z
+			.object({
+				enabled: z.boolean().default(true),
+				pollSeconds: z.number().int().min(30).default(60),
+				maxAgeDays: z.number().int().min(1).max(60).default(7),
+				// Watch @mentions / followed threads (DMs are always watched when enabled).
+				mentions: z.boolean().default(true),
+				threads: z.boolean().default(true),
+				// Which connected workspaces to watch, one team id or domain per line (empty = all).
+				teams: z.string().max(2000).default(''),
+				// Always / never count these senders, one Slack user id or handle per line.
+				includeUsers: z.string().max(4000).default(''),
+				excludeUsers: z.string().max(4000).default(''),
+				// Targets an agent's `helm slack send` may post to besides Jakub's own DM, one per line
+				// (`@handle`, a user/channel id, `#channel`, or `*` for any). Empty = Jakub only.
+				agentSendTo: z.string().max(4000).default(''),
+			})
+			.default({}),
 	})
 	.default({})
 

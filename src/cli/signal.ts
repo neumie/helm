@@ -571,6 +571,7 @@ export const FILTER_REASON_TEXT: Record<SignalFilterReason, string> = {
 	junk: 'junk (Precedence: junk)',
 	'auto-reply': 'auto-reply (Auto-Submitted: auto-replied)',
 	excluded: 'excluded sender',
+	bot: 'bot',
 }
 
 function senderText(entry: SignalFilteredEntry): string {

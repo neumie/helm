@@ -1191,4 +1191,104 @@ ALTER TABLE signal_threads ADD COLUMN sender_address TEXT;
 CREATE INDEX IF NOT EXISTS idx_signal_threads_sender ON signal_threads(sender);
 `,
 	},
+	{
+		// Slack as a fourth source: widen the `source` CHECK on both signal_threads and signal_filtered
+		// to include 'slack'. SQLite cannot alter a CHECK in place, so both tables are rebuilt, keeping
+		// every row, id, column and AUTOINCREMENT high-water mark (events still point at thread ids).
+		// FK enforcement is off for the rebuild in case a later table references signal_threads.
+		version: 44,
+		disableForeignKeys: true,
+		sql: `
+CREATE TABLE signal_threads_v44 (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread_key TEXT NOT NULL UNIQUE,
+  source TEXT NOT NULL CHECK (source IN ('github','mail','agent','slack')),
+  kind TEXT NOT NULL,
+  reasons TEXT NOT NULL DEFAULT '[]',
+  ref TEXT NOT NULL,
+  full_ref TEXT NOT NULL,
+  title TEXT NOT NULL,
+  head TEXT NOT NULL,
+  actor TEXT,
+  url TEXT,
+  repo TEXT,
+  number INTEGER,
+  branch TEXT,
+  state TEXT NOT NULL DEFAULT 'new' CHECK (state IN ('new','seen','snoozed','done')),
+  owner TEXT NOT NULL DEFAULT 'jakub' CHECK (owner IN ('jakub','managed')),
+  snoozed_until TEXT,
+  activity_key TEXT NOT NULL,
+  last_activity_at TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  missed_polls INTEGER NOT NULL DEFAULT 0,
+  closed_reason TEXT,
+  closed_by TEXT CHECK (closed_by IS NULL OR closed_by IN ('jakub','agent')),
+  note TEXT,
+  note_at TEXT,
+  managed_by TEXT,
+  routed_agent TEXT,
+  routed_how TEXT,
+  routed_at TEXT,
+  body TEXT,
+  links TEXT NOT NULL DEFAULT '[]',
+  ask_terminal TEXT,
+  reply TEXT,
+  reply_at TEXT,
+  sender TEXT,
+  sender_address TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+INSERT INTO signal_threads_v44 (
+  id, thread_key, source, kind, reasons, ref, full_ref, title, head, actor, url, repo, number, branch,
+  state, owner, snoozed_until, activity_key, last_activity_at, active, missed_polls, closed_reason, closed_by,
+  note, note_at, managed_by, routed_agent, routed_how, routed_at, body, links, ask_terminal, reply, reply_at,
+  sender, sender_address, created_at, updated_at
+)
+SELECT
+  id, thread_key, source, kind, reasons, ref, full_ref, title, head, actor, url, repo, number, branch,
+  state, owner, snoozed_until, activity_key, last_activity_at, active, missed_polls, closed_reason, closed_by,
+  note, note_at, managed_by, routed_agent, routed_how, routed_at, body, links, ask_terminal, reply, reply_at,
+  sender, sender_address, created_at, updated_at
+FROM signal_threads;
+DELETE FROM sqlite_sequence WHERE name = 'signal_threads_v44';
+INSERT INTO sqlite_sequence (name, seq)
+SELECT 'signal_threads_v44', seq FROM sqlite_sequence WHERE name = 'signal_threads';
+DROP TABLE signal_threads;
+ALTER TABLE signal_threads_v44 RENAME TO signal_threads;
+CREATE INDEX idx_signal_threads_state ON signal_threads(state, last_activity_at);
+CREATE INDEX idx_signal_threads_sender ON signal_threads(sender);
+
+CREATE TABLE signal_filtered_v44 (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  message_key TEXT NOT NULL UNIQUE,
+  source TEXT NOT NULL CHECK (source IN ('mail','slack')),
+  sender_name TEXT NOT NULL,
+  sender_address TEXT NOT NULL,
+  sender_identity TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  mailbox TEXT,
+  url TEXT,
+  received_at TEXT NOT NULL,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL
+);
+INSERT INTO signal_filtered_v44 (
+  id, message_key, source, sender_name, sender_address, sender_identity, subject, reason, mailbox, url,
+  received_at, first_seen_at, last_seen_at
+)
+SELECT
+  id, message_key, source, sender_name, sender_address, sender_identity, subject, reason, mailbox, url,
+  received_at, first_seen_at, last_seen_at
+FROM signal_filtered;
+DELETE FROM sqlite_sequence WHERE name = 'signal_filtered_v44';
+INSERT INTO sqlite_sequence (name, seq)
+SELECT 'signal_filtered_v44', seq FROM sqlite_sequence WHERE name = 'signal_filtered';
+DROP TABLE signal_filtered;
+ALTER TABLE signal_filtered_v44 RENAME TO signal_filtered;
+CREATE INDEX idx_signal_filtered_received ON signal_filtered(received_at);
+CREATE INDEX idx_signal_filtered_identity ON signal_filtered(sender_identity);
+`,
+	},
 ]

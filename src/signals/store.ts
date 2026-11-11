@@ -12,6 +12,7 @@ import {
 	SIGNAL_EVENT_TYPES,
 	SIGNAL_FILTERED_RETENTION_DAYS,
 	SIGNAL_FILTER_REASONS,
+	SIGNAL_FILTER_SOURCES,
 	SIGNAL_KINDS,
 	SIGNAL_LIMITS,
 	SIGNAL_OWNERS,
@@ -27,6 +28,7 @@ import {
 	type SignalCloser,
 	type SignalEvent,
 	type SignalEventType,
+	type SignalFilterSource,
 	type SignalFilteredEntry,
 	type SignalFilteredObservation,
 	type SignalFilteredPage,
@@ -77,6 +79,9 @@ export const SIGNAL_ANSWERED_SKEW_MS = 60_000
  * as filtered (`excluded`) instead; showing the sender again reopens it on the next poll.
  */
 export const SIGNAL_MUTED_REASON = 'sender muted'
+
+/** A Slack thread closed because Jakub replied to it from Helm (`r`). */
+export const SIGNAL_SLACK_ANSWERED_REASON = 'answered in Slack'
 /**
  * Open (not done) agent asks at most. A new one beyond this is refused so asks can never push
  * GitHub and Mail threads out of the `SIGNAL_LIST_CAP` snapshot. Renewing or refreshing an open
@@ -386,8 +391,11 @@ function sanitizeObservation(observation: SignalObservation, source: SignalPollS
 		branch: cleanOptional(observation.branch, SIGNAL_LIMITS.branch),
 		activityKey: clean(String(observation.activityKey ?? ''), SIGNAL_LIMITS.activityKey),
 		lastActivityAt,
-		sender: source === 'mail' ? signalSenderAddress(observation.sender) || null : null,
-		senderAddress: source === 'mail' ? signalSenderAddress(observation.senderAddress) || null : null,
+		// Mail stores the relay-decoded sender address; Slack stores the latest sender's user id.
+		// Both feed `x` (mute), neither is served.
+		sender: source === 'mail' || source === 'slack' ? signalSenderAddress(observation.sender) || null : null,
+		senderAddress:
+			source === 'mail' || source === 'slack' ? signalSenderAddress(observation.senderAddress) || null : null,
 	}
 }
 
@@ -436,7 +444,7 @@ export function toSignalThread(row: ThreadRow): SignalThread {
 export function toSignalFilteredEntry(row: FilteredRow): SignalFilteredEntry {
 	return {
 		id: row.id,
-		source: 'mail',
+		source: oneOf(SIGNAL_FILTER_SOURCES, row.source) ? row.source : 'mail',
 		senderName: row.sender_name,
 		senderAddress: row.sender_address,
 		senderIdentity: row.sender_identity,
@@ -450,7 +458,10 @@ export function toSignalFilteredEntry(row: FilteredRow): SignalFilteredEntry {
 }
 
 /** Sanitized filtered observation, or null when it cannot be stored. */
-function sanitizeFiltered(observation: SignalFilteredObservation): SignalFilteredObservation | null {
+function sanitizeFiltered(
+	observation: SignalFilteredObservation,
+	source: SignalFilterSource,
+): SignalFilteredObservation | null {
 	if (!oneOf(SIGNAL_FILTER_REASONS, observation.reason)) return null
 	const messageKey = clean(String(observation.messageKey ?? ''), SIGNAL_LIMITS.activityKey).toLowerCase()
 	const receivedAt = isoTime(String(observation.receivedAt ?? ''))
@@ -465,10 +476,12 @@ function sanitizeFiltered(observation: SignalFilteredObservation): SignalFiltere
 		subject: clean(String(observation.subject ?? ''), SIGNAL_LIMITS.title),
 		reason: observation.reason,
 		mailbox: cleanOptional(observation.mailbox, SIGNAL_LIMITS.ref),
-		// Only Mail links: a filtered entry is always mail.
+		// Mail opens via message:, Slack via its https permalink; nothing else opens.
 		url: (() => {
 			const url = cleanUrl(observation.url)
-			return url?.startsWith('message:') ? url : null
+			if (!url) return null
+			if (source === 'mail') return url.startsWith('message:') ? url : null
+			return url.startsWith('https://') && /\.slack\.com\//.test(url) ? url : null
 		})(),
 		receivedAt,
 	}
@@ -558,7 +571,7 @@ export class SignalStore {
 					}
 				}
 			}
-			if (source === 'mail' && result.filtered) this.applyFiltered(result.filtered, now)
+			if ((source === 'mail' || source === 'slack') && result.filtered) this.applyFiltered(result.filtered, source, now)
 			this.wakeSnoozedAt(at)
 			this.pruneEvents()
 			return counts
@@ -672,6 +685,102 @@ export class SignalStore {
 			if (rows.length > 0) this.pruneEvents()
 			return rows.map(row => row.id)
 		})
+	}
+
+	/**
+	 * Jakub muted Slack user `userId` (`x`): his open Slack threads whose latest sender is that user
+	 * close at once (done, `sender muted`) and their latest message is listed as filtered `excluded`
+	 * (source slack) so showing the user again reopens them. Managed threads stay with their agent.
+	 * Returns the closed ids. The channel in the dedup key comes from the thread key
+	 * (`slack:<team>:<channel>[:<thread_ts>]`).
+	 */
+	muteSlackUser(userId: string, now: Date): number[] {
+		const sender = signalSenderAddress(userId)
+		if (sender === '') return []
+		const at = now.toISOString()
+		const cutoff = this.filteredCutoff(now)
+		return this.transaction(() => {
+			const rows = this.db
+				.prepare(
+					`SELECT * FROM signal_threads
+					 WHERE source = 'slack' AND sender = ? AND owner = 'jakub' AND state <> 'done'`,
+				)
+				.all(sender) as ThreadRow[]
+			const close = this.db.prepare(
+				`UPDATE signal_threads SET state = 'done', snoozed_until = NULL, closed_reason = ?, closed_by = 'jakub',
+				   active = 0, missed_polls = 0, updated_at = ?
+				 WHERE id = ?`,
+			)
+			const listed = this.db.prepare(
+				`INSERT INTO signal_filtered (
+				   message_key, source, sender_name, sender_address, sender_identity, subject, reason, mailbox, url,
+				   received_at, first_seen_at, last_seen_at
+				 ) VALUES (?, 'slack', ?, ?, ?, ?, 'excluded', ?, ?, ?, ?, ?)
+				 ON CONFLICT (message_key) DO UPDATE SET reason = 'excluded', last_seen_at = excluded.last_seen_at`,
+			)
+			for (const row of rows) {
+				close.run(SIGNAL_MUTED_REASON, at, row.id)
+				this.insertEvent(
+					row.id,
+					'state',
+					{ owner: row.owner, from: row.state, to: 'done', reason: SIGNAL_MUTED_REASON },
+					at,
+				)
+				const channel = row.thread_key.split(':')[2] ?? ''
+				const messageKey = channel ? `slack:${channel}:${row.activity_key}` : ''
+				if (messageKey === '' || row.last_activity_at < cutoff) continue
+				listed.run(
+					messageKey,
+					row.actor ?? '',
+					sender,
+					sender,
+					row.title,
+					channel || null,
+					row.url?.startsWith('https://') ? row.url : null,
+					row.last_activity_at,
+					at,
+					at,
+				)
+			}
+			if (rows.length > 0) this.pruneEvents()
+			return rows.map(row => row.id)
+		})
+	}
+
+	/**
+	 * Jakub replied to a Slack thread from Helm (`r`): close it as `answered in Slack`, gone from the
+	 * poll's view so a later foreign reply reopens it. Slack threads only.
+	 */
+	markSlackAnswered(id: number, now: Date): SignalThread {
+		const at = now.toISOString()
+		return this.transaction(() => {
+			const row = this.requireRow(id)
+			if (row.source !== 'slack') throw new SignalInvalidError('Not a Slack thread')
+			if (row.state !== 'done') {
+				this.db
+					.prepare(
+						`UPDATE signal_threads SET state = 'done', snoozed_until = NULL, closed_reason = ?, closed_by = 'jakub',
+						   active = 0, missed_polls = 0, updated_at = ?
+						 WHERE id = ?`,
+					)
+					.run(SIGNAL_SLACK_ANSWERED_REASON, at, id)
+				this.insertEvent(
+					id,
+					'state',
+					{ owner: row.owner, from: row.state, to: 'done', reason: SIGNAL_SLACK_ANSWERED_REASON },
+					at,
+				)
+				this.pruneEvents()
+			}
+			return toSignalThread(this.requireRow(id))
+		})
+	}
+
+	/** A Slack thread's latest sender user id and owner, for `x`. Null when not slack / not known. */
+	threadSlackSender(id: number): { userId: string; owner: SignalOwner } | null {
+		const row = this.row(id)
+		if (row?.source !== 'slack' || !row.sender) return null
+		return { userId: row.sender, owner: row.owner as SignalOwner }
 	}
 
 	/** Snoozed threads whose time has come are new again. */
@@ -1133,7 +1242,11 @@ export class SignalStore {
 	}
 
 	/** Log this poll's filtered candidates; forget the ones it kept; prune by age and count. */
-	private applyFiltered(filtered: NonNullable<SignalPollResult['filtered']>, now: Date): void {
+	private applyFiltered(
+		filtered: NonNullable<SignalPollResult['filtered']>,
+		source: SignalFilterSource,
+		now: Date,
+	): void {
 		const at = now.toISOString()
 		const cutoff = this.filteredCutoff(now)
 		const forget = this.db.prepare('DELETE FROM signal_filtered WHERE message_key = ?')
@@ -1144,7 +1257,7 @@ export class SignalStore {
 			`INSERT INTO signal_filtered (
 			   message_key, source, sender_name, sender_address, sender_identity, subject, reason, mailbox, url,
 			   received_at, first_seen_at, last_seen_at
-			 ) VALUES (?, 'mail', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT (message_key) DO UPDATE SET
 			   sender_name = excluded.sender_name,
 			   sender_address = excluded.sender_address,
@@ -1157,10 +1270,11 @@ export class SignalStore {
 			   last_seen_at = excluded.last_seen_at`,
 		)
 		for (const raw of Array.isArray(filtered.entries) ? filtered.entries : []) {
-			const entry = sanitizeFiltered(raw)
+			const entry = sanitizeFiltered(raw, source)
 			if (!entry || entry.receivedAt < cutoff) continue
 			upsert.run(
 				entry.messageKey,
+				source,
 				entry.senderName,
 				entry.senderAddress,
 				entry.senderIdentity,

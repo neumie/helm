@@ -30,6 +30,8 @@ export const KIND_GLYPH: Record<SignalKind, string> = {
 	sentry: '!',
 	mail: '@',
 	ask: '?',
+	dm: '@',
+	thread: '○',
 }
 
 export const KIND_WORD: Record<SignalKind, string> = {
@@ -40,9 +42,16 @@ export const KIND_WORD: Record<SignalKind, string> = {
 	sentry: 'Sentry alert',
 	mail: 'Mail',
 	ask: 'Agent ask',
+	dm: 'Direct message',
+	thread: 'Thread reply',
 }
 
-export const SOURCE_LABEL: Record<SignalSource, string> = { github: 'GitHub', mail: 'Mail', agent: 'Agents' }
+export const SOURCE_LABEL: Record<SignalSource, string> = {
+	github: 'GitHub',
+	mail: 'Mail',
+	agent: 'Agents',
+	slack: 'Slack',
+}
 
 /** Jakub's answer to an agent ask (UTF-16 units): `SIGNAL_LIMITS.reply`, which the daemon enforces. */
 export const REPLY_MAX = 2_000
@@ -185,13 +194,19 @@ export function threadActions(thread: SignalThread, now: number): SignalAction[]
 	const section = signalSection(thread, now) ?? 'done'
 	if (thread.source === 'agent') return askActions(thread, section)
 	const open: SignalAction | null = thread.url ? { key: 'o', label: 'open' } : null
-	// Mail from a person or a list (never a Sentry alert, which always shows): never show its sender
-	// again. Only Jakub's own threads: a managed one stays with its agent (the daemon refuses it).
+	// Mail from a person or a list, or a Slack DM/mention/thread from a person (never a Sentry alert,
+	// which always shows): never show its sender again. Only Jakub's own threads: a managed one stays
+	// with its agent (the daemon refuses it).
 	const mute: SignalAction | null =
-		thread.kind === 'mail' && thread.source === 'mail' && thread.owner === 'jakub' ? MUTE_ACTION : null
+		thread.owner === 'jakub' && ((thread.kind === 'mail' && thread.source === 'mail') || thread.source === 'slack')
+			? MUTE_ACTION
+			: null
+	// A Slack thread can be answered from Helm: `r` posts to that thread/DM (like an agent ask reply).
+	const reply: SignalAction | null = thread.source === 'slack' ? { key: 'r', label: 'reply' } : null
 	const list: Array<SignalAction | null> =
 		section === 'needs'
 			? [
+					reply,
 					{ key: 'p', label: 'send to agent' },
 					{ key: 'n', label: 'new agent' },
 					{ key: 'm', label: 'manage' },
@@ -204,6 +219,7 @@ export function threadActions(thread: SignalThread, now: number): SignalAction[]
 				? [{ key: 'p', label: 'send to agent' }, { key: 't', label: 'take back' }, { key: 's', label: 'snooze' }, open]
 				: section === 'snoozed'
 					? [
+							reply,
 							{ key: 'p', label: 'send to agent' },
 							{ key: 'n', label: 'new agent' },
 							{ key: 't', label: 'wake' },
@@ -499,6 +515,9 @@ export function managingSession(
 const MAIL_GONE_PREFIX = 'no longer unread in the inbox'
 const ASK_CLOSED_REASON = 'closed by the agent'
 const ASK_ANSWERED_REASON = 'answered in the terminal'
+/** `SIGNAL_SLACK_ANSWERED_REASON` (store.ts) and the Slack poller's gone reason. */
+const SLACK_ANSWERED_REASON = 'answered in Slack'
+const SLACK_GONE_PREFIX = 'read or answered in Slack'
 
 /**
  * How a done thread got done. `read`: Mail stopped listing it unread (read in Mail or on the
@@ -536,6 +555,12 @@ export function doneReason(thread: SignalThread): DoneReason | null {
 	} else if (reason?.startsWith(MAIL_GONE_PREFIX)) {
 		kind = 'read'
 		word = 'read in Mail'
+	} else if (reason === SLACK_ANSWERED_REASON && thread.source === 'slack') {
+		kind = 'answered'
+		word = 'answered in Slack'
+	} else if (reason?.startsWith(SLACK_GONE_PREFIX)) {
+		kind = 'read'
+		word = 'read in Slack'
 	} else if (reason !== null) {
 		kind = 'gone'
 		word = thread.source === 'agent' ? 'gone' : `gone from ${SOURCE_LABEL[thread.source]}`
@@ -752,6 +777,7 @@ export const FILTER_REASON_WORD: Record<SignalFilterReason, string> = {
 	junk: 'junk',
 	'auto-reply': 'auto-reply',
 	excluded: 'excluded',
+	bot: 'bot',
 }
 
 /** The rule behind a reason, for the row tooltip. */
@@ -761,6 +787,7 @@ export const FILTER_REASON_TITLE: Record<SignalFilterReason, string> = {
 	junk: 'Precedence: junk',
 	'auto-reply': 'Auto-Submitted: auto-replied (vacation or out-of-office)',
 	excluded: 'Sender is on the exclude list in Settings › Signals',
+	bot: 'A Slack bot or app, not a person',
 }
 
 /** The dim `12 filtered` after the done count, or null when nothing was filtered or the daemon cannot say. */
@@ -833,6 +860,7 @@ const fenced = (text: string, max: number): string => oneLine(text, max).replace
 const attribute = (text: string): string => fenced(text, 200).replace(/"/g, "'")
 
 function threadNoun(thread: SignalThread): string {
+	if (thread.source === 'slack') return 'Slack message'
 	if (thread.source === 'mail') return thread.kind === 'sentry' ? 'Sentry alert' : 'mail'
 	return thread.url?.includes('/issues/') || (!thread.branch && thread.kind === 'mention') ? 'issue' : 'PR'
 }
@@ -852,6 +880,11 @@ function readInstruction(thread: SignalThread): string {
 		return `Read the full thread with \`${command} ${ref.number} --repo ${ref.repo} --comments\`.`
 	}
 	if (thread.source === 'github') return 'Read the full thread at the url above.'
+	if (thread.source === 'slack') {
+		return Number.isSafeInteger(thread.id) && thread.id > 0
+			? `Read the thread with \`helm slack read --signal ${thread.id}\`.`
+			: 'Open the link above to read the Slack thread.'
+	}
 	return 'The full message is in Mail: open the link above in Mail to read it.'
 }
 
@@ -887,6 +920,7 @@ const where = (thread: SignalThread): string => {
 	if (ref) return `${ref.repo}#${ref.number}`
 	if (thread.kind === 'sentry') return 'the Sentry alert below'
 	if (thread.source === 'mail') return 'the mail below'
+	if (thread.source === 'slack') return 'the Slack message below'
 	return 'the thread below'
 }
 
@@ -907,6 +941,12 @@ export function sendPrompt(thread: SignalThread): string {
 			return prompt(`Jakub was mentioned on ${ref}. Read it and tell him what is asked of him.`, thread)
 		case 'sentry':
 			return prompt(`Find the cause of ${ref} and fix it with a regression test.`, thread)
+		case 'dm':
+		case 'thread':
+			return prompt(
+				`Jakub has ${ref} on Slack. Read it and tell him what it asks for and, if useful, draft a reply he can send.`,
+				thread,
+			)
 		default:
 			return prompt(`Read ${ref} and tell Jakub what it asks for.`, thread)
 	}
@@ -929,6 +969,12 @@ export function newAgentPrompt(thread: SignalThread): string {
 			return prompt(`Jakub was mentioned on ${ref}. Do what is asked and open a PR if it needs code.`, thread)
 		case 'sentry':
 			return prompt(`Find the cause of ${ref}, fix it with a regression test and open a PR.`, thread)
+		case 'dm':
+		case 'thread':
+			return prompt(
+				`Jakub has ${ref} on Slack. Read it, do what it asks, and draft a reply he can send; open a PR only if it needs code.`,
+				thread,
+			)
 		default:
 			return prompt(`Make the change ${ref} asks for and open a PR.`, thread)
 	}

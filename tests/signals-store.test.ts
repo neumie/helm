@@ -381,6 +381,7 @@ test('source health defaults to disabled and remembers the last good poll', () =
 			[
 				['github', 'disabled'],
 				['mail', 'disabled'],
+				['slack', 'disabled'],
 			],
 		)
 		db.signals.setSourceHealth('github', 'ok', null, T0, true)
@@ -1425,7 +1426,7 @@ test('polls never touch agent asks; agent is no poll source', () => {
 		)
 		assert.deepEqual(
 			db.signals.sources().map(source => source.source),
-			['github', 'mail'],
+			['github', 'mail', 'slack'],
 		)
 		assert.equal(db.signals.list({ source: 'agent' }, at(6)).length, 1)
 	})
@@ -1531,8 +1532,8 @@ test('migration 41 keeps every thread, id and event, and ids continue after the 
 			const versions = (db.signals as unknown as { db: Database.Database }).db
 				.prepare('SELECT MAX(version) AS v FROM schema_version')
 				.get() as { v: number }
-			// 41 rebuilt the table, 42 added closed_by, 43 the mail sender (both null for every existing row).
-			assert.equal(versions.v, 43)
+			// 41 rebuilt the table, 42 added closed_by, 43 the mail sender, 44 widened source for slack.
+			assert.equal(versions.v, 44)
 			assert.equal(db.signals.get(15)?.closedBy, null)
 			assert.equal(db.signals.threadSender(15), null)
 			const ask = db.signals.upsertAsk({ title: 'After the migration' }, at(4)).thread

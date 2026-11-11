@@ -169,6 +169,7 @@ test('GET /signals returns the snapshot with filters, health and cursor', async 
 			[
 				['github', 'ok'],
 				['mail', 'disabled'],
+				['slack', 'disabled'],
 			],
 		)
 
@@ -662,7 +663,7 @@ test('agent asks: add, upsert by key, read by key, reply and done by id or key',
 		assert.equal(snapshot.threads.length, 2)
 		assert.deepEqual(
 			snapshot.sources.map(source => source.source),
-			['github', 'mail'],
+			['github', 'mail', 'slack'],
 		)
 
 		// Only Helm (the local control token) records Jakub's reply and its replied receipt: no agent

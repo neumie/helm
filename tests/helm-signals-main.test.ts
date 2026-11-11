@@ -255,6 +255,9 @@ test('update and routed POST, then re-read at once; the IPC gate refuses other w
 			'signals:open-link',
 			'signals:reply',
 			'signals:routed',
+			'signals:slack-include',
+			'signals:slack-mute',
+			'signals:slack-reply',
 			'signals:subscribe',
 			'signals:update',
 		].sort(),
@@ -384,10 +387,20 @@ test('open allows only github.com https links and Mail message ids', async () =>
 		'message:%3Cabc%40x%3E',
 		'javascript:alert(1)',
 		`https://github.com/${'a'.repeat(2050)}`,
+		// Slack: only the /archives/ path on a slack.com subdomain.
+		'https://cntmbr.slack.com/team/U1',
+		'http://cntmbr.slack.com/archives/C1/p1',
+		'https://cntmbr.slack.com.evil.example/archives/C1',
 		42,
 		null,
 	])
 		assert.equal(signalOpenableUrl(bad), null, String(bad))
+
+	for (const good of [
+		'https://cntmbr.slack.com/archives/C1/p1700000000000000',
+		'https://cntmbr.slack.com/archives/D1/p1?thread_ts=1.0&cid=C1',
+	])
+		assert.equal(signalOpenableUrl(good), good, good)
 
 	const opened: string[] = []
 	const h = harness()
@@ -397,7 +410,7 @@ test('open allows only github.com https links and Mail message ids', async () =>
 		}
 	assert.deepEqual(await h.main.open('https://github.com/acme/widgets/pull/7'), { data: true })
 	assert.deepEqual(await h.main.open('https://example.com/'), {
-		error: 'Only GitHub and Mail links can be opened.',
+		error: 'Only GitHub, Slack and Mail links can be opened.',
 		status: 400,
 	})
 	assert.deepEqual(opened, ['https://github.com/acme/widgets/pull/7'])

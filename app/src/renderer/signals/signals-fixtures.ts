@@ -252,6 +252,97 @@ export function signalThreadFixtures(now = Date.now()): SignalThread[] {
 	]
 }
 
+/** Slack threads for the Slack stories: a DM, a group DM, an @mention and a followed thread. */
+export function signalSlackFixtures(now = Date.now()): SignalThread[] {
+	const permalink = (channel: string, ts: string) =>
+		`https://cntmbr.slack.com/archives/${channel}/p${ts.replace('.', '')}`
+	return [
+		thread(
+			{
+				id: 701,
+				threadKey: 'slack:T054:D01',
+				source: 'slack',
+				kind: 'dm',
+				ref: 'Klára D.',
+				fullRef: 'DM · Klára D.',
+				title: 'Můžeš se kouknout na fakturaci u Psyonu dnes?',
+				head: 'Klára D.: Můžeš se kouknout na fakturaci u Psyonu dnes?',
+				actor: 'Klára D.',
+				url: permalink('D01', '1731240000.000100'),
+				ago: 6,
+			},
+			now,
+		),
+		thread(
+			{
+				id: 702,
+				threadKey: 'slack:T054:G02',
+				source: 'slack',
+				kind: 'dm',
+				ref: 'dev-tým',
+				fullRef: 'group DM · dev-tým',
+				title: 'Deploy prošel, můžeme mergovat?',
+				head: 'Matěj: Deploy prošel, můžeme mergovat?',
+				actor: 'Matěj',
+				url: permalink('G02', '1731241000.000200'),
+				ago: 14,
+			},
+			now,
+		),
+		thread(
+			{
+				id: 703,
+				threadKey: 'slack:T054:C03:1731239000.000050',
+				source: 'slack',
+				kind: 'mention',
+				reasons: ['mention'],
+				ref: '#general',
+				fullRef: 'mention · #general',
+				title: 'díky @jakub, můžeš to prosím odsouhlasit?',
+				head: 'Petra: díky @jakub, můžeš to prosím odsouhlasit?',
+				actor: 'Petra',
+				url: permalink('C03', '1731239000.000050'),
+				ago: 42,
+			},
+			now,
+		),
+		thread(
+			{
+				id: 704,
+				threadKey: 'slack:T054:C04:1731200000.000010',
+				source: 'slack',
+				kind: 'thread',
+				reasons: ['thread'],
+				ref: '#clientcare',
+				fullRef: 'thread · #clientcare',
+				title: 'nová odpověď ve vlákně, kde jsi psal',
+				head: 'Ondra: a ještě jedna věc k tomu reportu…',
+				actor: 'Ondra',
+				url: `${permalink('C04', '1731242000.000300')}?thread_ts=1731200000.000010&cid=C04`,
+				ago: 70,
+			},
+			now,
+		),
+	]
+}
+
+/** One Slack message the rules kept out (a bot), for the filtered list's Slack row. */
+export function signalSlackFilteredFixture(now = Date.now()): SignalFilteredEntry {
+	return {
+		id: 820,
+		source: 'slack',
+		senderName: 'GitHub',
+		senderAddress: 'ub01',
+		senderIdentity: 'ub01',
+		subject: '[contember/okena] PR #311 merged',
+		reason: 'bot',
+		mailbox: 'C03',
+		url: 'https://cntmbr.slack.com/archives/C03/p1731238000000400',
+		receivedAt: iso(now - 90 * MINUTE),
+		lastSeenAt: iso(now - 20 * MINUTE),
+	}
+}
+
 /** The Okena terminals agent asks came from (`$OKENA_TERMINAL_ID`): one idle agent, one working. */
 export const ASK_TERMINAL_IDLE = '5d3f8a2e-1c47-4b9e-9a06-3e7b2c8f41d0'
 export const ASK_TERMINAL_BUSY = 'c81e4f6a-27b3-4d58-b9e2-6f0a3d7c95b4'
@@ -1010,6 +1101,19 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 			calls.openedLinks.push({ id, index, shown, url })
 			if (!url) return { error: 'That link does not exist.', status: 404 }
 			return url === shown ? { data: true } : { error: 'The links changed; look at the ask again.', status: 409 }
+		},
+		async slackReply(id, body) {
+			calls.replies.push({ id, text: body.text })
+			const target = threads.find(entry => entry.id === id)
+			if (target && target.source !== 'slack')
+				return { error: 'Only Slack threads can be replied to here', status: 400 }
+			return change(id, (entry, at) => ({ ...entry, state: 'done', closedReason: 'answered in Slack', updatedAt: at }))
+		},
+		async slackMute(id) {
+			return { data: { userId: 'u', added: true, unincluded: false, threadIds: [id] } }
+		},
+		async slackInclude(_id) {
+			return { data: { userId: 'u', added: true, unmuted: true } }
 		},
 	}
 	let dockSnapshot = options.dock === undefined ? signalsDockFixture(start) : options.dock

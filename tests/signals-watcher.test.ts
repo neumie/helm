@@ -142,7 +142,7 @@ test(
 		assert.equal(mail.calls(), 0)
 		assert.deepEqual(
 			db.signals.sources().map(source => source.status),
-			['disabled', 'disabled'],
+			['disabled', 'disabled', 'disabled'],
 		)
 
 		// Mail is off by default; a missing reader counts as off too.
@@ -360,6 +360,7 @@ test(
 			[
 				['github', 'ok'],
 				['mail', 'ok'],
+				['slack', 'disabled'],
 			],
 		)
 	}),
