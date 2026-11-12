@@ -5,7 +5,9 @@
 // widget), `<style>` blocks and `style=""` attributes in HTML, and inline style objects/strings in
 // production TS/TSX, and reports every value the spec says must come from a token or a scale:
 // literal colours, z-index, durations, easings, off-scale radii/spacing/font sizes, unscaled sidebar type,
-// uppercase, letter-spacing, weights outside 400/500/600 and inline SVG outside the icon module.
+// uppercase, letter-spacing, weights outside 400/500/600 and inline SVG outside the icon module. It also
+// holds stage S7's ownership rule: a shared primitive's own base rules live only in the primitive's CSS file
+// (`PRIMITIVES`, `primitiveOutsideOwner`).
 //
 // A finding is keyed by {file, selector, property, value, rule}; line numbers are only for display because
 // they move. `app/src/design/lint-allowlist.ts` is the ratchet baseline, `tests/design-lint.test.ts` holds it,
@@ -29,6 +31,7 @@ export const RULES = [
 	'letter-spacing',
 	'font-weight',
 	'inline-svg',
+	'primitive-outside-owner',
 ] as const
 export type Rule = (typeof RULES)[number]
 
@@ -115,8 +118,7 @@ export const SCALED_TYPE_DIRS = ['app/src/renderer/sidebar/'] as const
  * `:root` mirrors `HELM_TOKENS` for the pre-JS first paint; the extension's `:host` holds the `--vg-` copy.
  */
 export const TOKEN_SOURCES: readonly { file: string; selector: string }[] = [
-	// Both paths while S7 splits styles.css (its `:root` moves to tokens.css); a missing file is skipped.
-	{ file: 'app/src/renderer/styles.css', selector: ':root' },
+	// `styles.css` is only the ordered @import manifest (S7); the app `:root` lives in tokens.css.
 	{ file: 'app/src/renderer/tokens.css', selector: ':root' },
 	{ file: 'extension/src/widget.styles.ts', selector: ':host' },
 ]
@@ -127,9 +129,7 @@ export const TOKEN_SOURCES: readonly { file: string; selector: string }[] = [
  * reported as `token-definition` (allowlisted under the decision that keeps the palette).
  */
 export const SCOPED_TOKEN_BLOCKS: readonly { file: string; selector: string }[] = [
-	// The dock/Signals dim text (§3.24); both paths while S7 moves them out of styles.css.
-	{ file: 'app/src/renderer/styles.css', selector: '.agent-dock' },
-	{ file: 'app/src/renderer/styles.css', selector: '.signals' },
+	// The dock/Signals dim text (§3.24).
 	{ file: 'app/src/renderer/agent-dock/agent-dock.css', selector: '.agent-dock' },
 	{ file: 'app/src/renderer/signals/signals.css', selector: '.signals' },
 	{ file: 'app/src/renderer/remote/remote.css', selector: ':root.remote-page' },
@@ -141,6 +141,43 @@ export const SCOPED_TOKEN_BLOCKS: readonly { file: string; selector: string }[] 
 	{ file: 'app/src/renderer/viewer/viewer.css', selector: '.viewer-window' },
 	{ file: 'app/src/renderer/viewer/viewer.css', selector: '.viewer-window[data-review-theme="light"]' },
 ]
+
+// ---------------------------------------------------------------------------------------------------------
+// Shared primitives and the one file that owns each one's CSS (§3; plan stage S7: "a primitive's CSS only in
+// its own file").
+
+export interface Primitive {
+	/** Display name, used as the finding's property. */
+	name: string
+	/** The stylesheet that owns the primitive's base rules. */
+	owner: string
+	/** The primitive's class names; only those its owner file actually uses count (`primitiveVocabulary`). */
+	classes: RegExp
+}
+
+/**
+ * §3.1 buttons (`button.tsx` + `button.css`; the icon button is `IconBtn` in `sidebar/ui.tsx`), §3.2 segmented,
+ * §3.3 list row, §3.4 chips, §3.7 inputs, §3.8 menus, §3.15 action rows, §3.16 toggle, §3.20 disclosure.
+ */
+export const PRIMITIVES: readonly Primitive[] = [
+	{ name: 'button', owner: 'app/src/renderer/button.css', classes: /^btn(-|$)/ },
+	{ name: 'icon button', owner: 'app/src/renderer/sidebar/sidebar.css', classes: /^icon-btn(-|$)/ },
+	{ name: 'segmented', owner: 'app/src/renderer/sidebar/sidebar.css', classes: /^(segmented|segment)(-|$)/ },
+	{ name: 'list row', owner: 'app/src/renderer/sidebar/sidebar.css', classes: /^item-row(-|$)/ },
+	{ name: 'chip', owner: 'app/src/renderer/sidebar/sidebar.css', classes: /^chip(-|$)/ },
+	{ name: 'field', owner: 'app/src/renderer/sidebar/sidebar.css', classes: /^(input|select|textarea|field)(-|$)/ },
+	{ name: 'menu', owner: 'app/src/renderer/sidebar/sidebar.css', classes: /^menu(-|$)/ },
+	{ name: 'action row', owner: 'app/src/renderer/sidebar/sidebar.css', classes: /^action-row(-|$)/ },
+	{ name: 'toggle', owner: 'app/src/renderer/sidebar/sidebar.css', classes: /^toggle(-|$)/ },
+	{ name: 'disclosure', owner: 'app/src/renderer/sidebar/detail-redesign.css', classes: /^disclosure(-|$)/ },
+]
+
+/** A primitive with the exact class names its owner file uses. */
+export interface PrimitiveVocabulary {
+	name: string
+	owner: string
+	classes: ReadonlySet<string>
+}
 
 // ---------------------------------------------------------------------------------------------------------
 // Scales from docs/design-system.md.
@@ -753,6 +790,8 @@ function hasSvgDataUri(nodes: ValueNode[]): boolean {
 export interface LintOptions {
 	/** Core token names (custom properties a token source defines). */
 	coreTokens?: ReadonlySet<string>
+	/** Shared primitives with their owner files' class names (`primitiveVocabulary`); CSS files only. */
+	primitives?: readonly PrimitiveVocabulary[]
 }
 
 const MAX_VALUE = 120
@@ -793,7 +832,94 @@ export function lintDeclarations(file: string, declarations: Declaration[], opts
 }
 
 export function lintCss(file: string, text: string, opts: LintOptions = {}, firstLine = 1): Finding[] {
-	return lintDeclarations(file, parseCss(text, { firstLine }), opts)
+	const declarations = parseCss(text, { firstLine })
+	const out = lintDeclarations(file, declarations, opts)
+	if (opts.primitives?.length) out.push(...primitiveOutsideOwner(file, declarations, opts.primitives))
+	return out
+}
+
+/** Class names in a selector, outside pseudo-class arguments and attribute values. */
+const SELECTOR_CLASS = /\.(-?[_a-zA-Z][\w-]*)/g
+
+/** Removes `(…)` arguments, `[…]` attribute selectors and strings, so only the top-level compounds remain. */
+function stripSelectorArguments(selector: string): string {
+	let out = ''
+	let depth = 0
+	let quote = ''
+	for (let i = 0; i < selector.length; i++) {
+		const c = selector[i] as string
+		if (quote) {
+			if (c === '\\') i++
+			else if (c === quote) quote = ''
+			continue
+		}
+		if (c === '"' || c === "'") quote = c
+		else if (c === '(' || c === '[') depth++
+		else if (c === ')' || c === ']') depth = Math.max(0, depth - 1)
+		else if (depth === 0) out += c
+	}
+	return out
+}
+
+/**
+ * Stage S7's ownership rule. A rule styles a primitive's own base when one complex selector of its list is a
+ * single compound (no ancestor, child or sibling context) whose classes are all primitive classes, e.g.
+ * `.btn`, `.btn-primary:hover:not(:disabled)`, `button.btn.btn-sm`, `.menu-item[data-force-state="hover"]`,
+ * `.icon-btn.menu-trigger-counted`. Such a rule may live only in the owner file of one of the primitives it
+ * names. Context selectors stay with their surface: a descendant (`.review-intents .btn`) or a surface class in
+ * the same compound (`.agent-dock-key.btn`, `.menu-panel.menu-fixed` where `.menu-fixed` is not a class of the
+ * menu's owner file) is a surface modifier, not the primitive's base, and is never reported.
+ */
+export function primitiveOutsideOwner(
+	file: string,
+	declarations: readonly Declaration[],
+	primitives: readonly PrimitiveVocabulary[],
+): Finding[] {
+	const out: Finding[] = []
+	const seen = new Set<string>()
+	for (const d of declarations) {
+		const prefix = d.atRules.length ? `${d.atRules.join(' ')} ` : ''
+		const selectorList = d.selector.startsWith(prefix) ? d.selector.slice(prefix.length) : d.selector
+		for (const complex of splitTopLevel(selectorList)) {
+			const top = stripSelectorArguments(complex).trim()
+			if (top === '' || /[\s>+~]/.test(top)) continue
+			const classes = [...top.matchAll(SELECTOR_CLASS)].map(m => m[1] as string)
+			if (!classes.length) continue
+			const owners = classes.map(c => primitives.filter(p => p.classes.has(c)))
+			if (owners.some(list => list.length === 0)) continue
+			const involved = [...new Set(owners.flat())]
+			if (involved.some(p => p.owner === file)) continue
+			const value = normalizeSelector(complex)
+			const key = `${d.selector}\u0000${value}`
+			if (seen.has(key)) continue
+			seen.add(key)
+			out.push({
+				file,
+				selector: d.selector,
+				property: involved.map(p => p.name).join(' + '),
+				value: keyValue(value),
+				rule: 'primitive-outside-owner',
+				line: d.line,
+			})
+		}
+	}
+	return out
+}
+
+/** Every primitive with the class names (matching its pattern) that its owner file uses in any selector. */
+export function primitiveVocabulary(
+	root: string,
+	primitives: readonly Primitive[] = PRIMITIVES,
+): PrimitiveVocabulary[] {
+	return primitives.map(p => {
+		const classes = new Set<string>()
+		const path = join(root, p.owner)
+		if (existsSync(path))
+			for (const d of parseCss(readFileSync(path, 'utf8')))
+				for (const m of stripSelectorArguments(d.selector).matchAll(SELECTOR_CLASS))
+					if (p.classes.test(m[1] as string)) classes.add(m[1] as string)
+		return { name: p.name, owner: p.owner, classes }
+	})
 }
 
 export function lintHtml(file: string, text: string, opts: LintOptions = {}): Finding[] {
@@ -1117,8 +1243,9 @@ export const PRESET_TOKENS: readonly string[] = [
 /** Scans the whole repository. */
 export function scanRepository(root: string): Finding[] {
 	const coreTokens = coreTokensFrom(root, PRESET_TOKENS)
+	const primitives = primitiveVocabulary(root)
 	return collectSources(root)
-		.flatMap(source => lintSource(root, source, { coreTokens }))
+		.flatMap(source => lintSource(root, source, source.kind === 'css' ? { coreTokens, primitives } : { coreTokens }))
 		.sort((a, b) => compareFindings(a, b) || a.line - b.line)
 }
 
@@ -1256,7 +1383,10 @@ export function defaultReason(f: FindingKey): string {
 		case 'font-weight':
 			return 'D8 off-scale values (weights 650/700)'
 		case 'inline-svg':
-			return 'D6 hand-drawn icons (S7 moves them to the icon module)'
+			return 'D6 hand-drawn icons (outside the icon module: list it in ICONS_OUTSIDE_MODULE)'
+		case 'primitive-outside-owner':
+			if (isRemote(f.file) || isReview(f.file)) return 'D7 surface reach (the surface restyles the shared primitive)'
+			return 'S7 primitive CSS outside its owner file (move it there when the surface is next touched)'
 		default:
 			return 'D8 off-scale values'
 	}

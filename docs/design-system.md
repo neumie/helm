@@ -26,6 +26,7 @@ Where every Helm surface lives, which sections specify it, which Storybook title
 | Native window chrome, menus, notifications | `app/src/main.ts`, `app/src/app-menu.ts`, `app/src/native-window-zoom.ts`, `app/src/agent-dock-notify-main.ts` | §3.18, §3.30 | none (native) | `tests/helm-window-drag.test.ts`, `tests/helm-native-window-zoom.test.ts`, `tests/helm-app-menu.test.ts`, `tests/helm-agent-dock-notify.test.ts` |
 | Shared primitives and compositions | `app/src/renderer/button.tsx`, `button.css`, `sidebar/ui.tsx`, `activity-indicator.tsx`, `toast.ts`, `storybook/StateGrid.tsx` (forced-state stories, S5) | §3.1–§3.13, §3.15–§3.17, §3.20, §3.21, §8 | Primitives/Activity indicator, Primitives/Banner, Primitives/Button, Primitives/Chip and dot, Primitives/Clamp text, Primitives/Empty state, Primitives/Field, Primitives/Segmented control, Primitives/State grid, Compositions/Disclosure group, Compositions/Flat group, Compositions/List row, Compositions/Menu and navigation, Compositions/Toast | `tests/helm-storybook-coverage.test.ts`, `tests/helm-toast.test.ts`, `tests/helm-banner.test.ts`, `tests/helm-disclosure.test.ts` |
 | Icons (every production icon, its source, React and DOM forms) | `app/src/renderer/icons/icons.ts`, `app/src/renderer/icons/Icon.tsx` (the GLYPH table, re-exported from `sidebar/ui.tsx`) | §3.1, §3.18, §9 ruling 54 | Primitives/Icons | `tests/design-icons.test.ts`, `tests/helm-background-terminals.test.ts` |
+| Design data and checks (contrast pairs, token lint and its ratchet baseline, the `npm run check:design` gate, pixel-identity proof) | `app/src/design/contrast-pairs.ts`, `app/src/design/contrast.ts`, `app/src/design/lint.ts`, `app/src/design/lint-allowlist.ts`; scripts `app/scripts/contrast-table.ts`, `app/scripts/design-lint.ts`, `app/scripts/check-design.mjs`, `app/scripts/visual-diff.mjs` | §2.9, §9, §10 | none (checks) | `tests/design-lint.test.ts`, `tests/design-contrast.test.ts`, `tests/design-spec.test.ts`, `tests/design-force-state.test.ts`, `tests/design-icons.test.ts` |
 | Design proposals (variants awaiting a pick) | `app/src/renderer/proposals/` | §7, §9 | Proposals/… | none (not production) |
 
 **Reading guide.**
@@ -162,7 +163,7 @@ Never 10/12/14px radii (extension card's 14px is reconciled to 8 — see appendi
 
 - Animate `transform` and `opacity` only; `background-color`/`color` may transition at 140ms. Never animate layout properties (width/height/top/left) — the pane divider drag is direct manipulation, not animation.
 - Entrances travel **8px** (translateY(8px)→0 for toasts/sheets; see §3.10 for push).
-- **Sanctioned exceptions, each specified where it lives:** direct-manipulation settles (§3.10 swipe curves 90–240ms, §3.18 drag FLIP 160ms / settle 180ms on `cubic-bezier(0.2, 0.8, 0.2, 1)`) and live-status ambients (§3.21 activity indicator 1s / 0.9s / 1.8s, §3.24 arrival pulse 1.4s, §3.25 resting dot field 4.8s). Anything else outside this table is drift (pending S3 lint, §10).
+- **Sanctioned exceptions, each specified where it lives:** direct-manipulation settles (§3.10 swipe curves 90–240ms, §3.18 drag FLIP 160ms / settle 180ms on `cubic-bezier(0.2, 0.8, 0.2, 1)`) and live-status ambients (§3.21 activity indicator 1s / 0.9s / 1.8s, §3.24 arrival pulse 1.4s, §3.25 resting dot field 4.8s). Anything else outside this table is drift (`tests/design-lint.test.ts` raw-duration/raw-easing, baseline under S2 until motion tokens land, §10).
 - Ambient (live-status only): running-dot pulse `1.6s ease-in-out infinite`. (The retired topbar connection dot's offline breathe `2.4s ease-in-out infinite`, opacity 1→0.4, is no longer used by any surface; reuse that spec if a future surface genuinely needs an offline ambient.)
 - Global reduced-motion clamp is mandatory on every surface (pattern from `app/src/renderer/reduced-motion.css`):
 
@@ -1154,7 +1155,7 @@ Ship-blocking: a UI change is not done until every item that applies to it is ch
 - [ ] Text meets WCAG AA contrast on its real background in Helm and High contrast: 4.5:1 body/meta, 3:1 large text and non-text UI (§2.9). Check: `tests/design-contrast.test.ts` (pending S4); today's failures are open as D5.
 - [ ] State is never color-only: every status has words or an accessible label (§3.5, §4). Check: `tests/helm-model.test.ts` (status words), axe over every story (pending S6).
 - [ ] Icons and icon-only buttons have an accessible name; decorative glyphs are `aria-hidden` (§3.1, §3.18 tab numbers). Check: axe (pending S6).
-- [ ] UI text follows `--ui-scale` (§2.2). Check: pending S3 lint; unscaled sizes open as D13.
+- [ ] UI text follows `--ui-scale` (§2.2). Check: `tests/design-lint.test.ts` (font-size-unscaled); unscaled sizes open as D13.
 - [ ] `forced-colors: active` keeps focus rings, borders and selected states visible. Check: pending S6.
 
 **Operation**
@@ -1167,7 +1168,7 @@ Ship-blocking: a UI change is not done until every item that applies to it is ch
 
 **Understanding**
 
-- [ ] Copy is sentence case, active voice, gives a next step (§5, §3.13). Check: pending S3 (uppercase lint); copy review by story.
+- [ ] Copy is sentence case, active voice, gives a next step (§5, §3.13). Check: `tests/design-lint.test.ts` (uppercase); copy review by story.
 - [ ] Disabled controls stay legible and explain themselves where the reason is not obvious (§3.1). Check: StateGrid stories (pending S5).
 - [ ] Errors and refusals are named next to the control that caused them, not only in a banner (§3.12). Check: per-surface browser specs.
 
@@ -1192,27 +1193,27 @@ Every design decision already made, numbered, with where it came from and what h
 
 | # | Topic | Ruled | Source | Where | Enforced by |
 | --- | --- | --- | --- | --- | --- |
-| 1 | Register | Quiet, Apple-flat, flat-editorial; the machined register (uppercase micro-labels, glyph chips, outline buttons, wireframe boxes) is retired. "Polished flat editorial" picked over macOS grouped cards | Jakub 2026-07-16; 9cbe937 2026-07-16 | §1, Appendix: 2026-07 flat-editorial redesign | pending S3 |
-| 2 | Uppercase | No uppercase text anywhere; `text-transform: uppercase` is removed on sight | 9cbe937 2026-07-16 | §2.2, §5 | pending S3 |
-| 3 | In-flow cards | No bordered cards in flow; grouping is rule + section header + spacing; boxes only for detached surfaces and wells | 9cbe937 2026-07-16 | §1, §3.15 | `tests/helm-flat-group.test.ts` (shared resource group); pending S3 |
-| 4 | Button borders | No border in any button tone; weight comes from the fill (quiet = `--fill-raised`, hover `--fill-strong`) | 9cbe937 2026-07-16 | §3.1 | pending S3 |
+| 1 | Register | Quiet, Apple-flat, flat-editorial; the machined register (uppercase micro-labels, glyph chips, outline buttons, wireframe boxes) is retired. "Polished flat editorial" picked over macOS grouped cards | Jakub 2026-07-16; 9cbe937 2026-07-16 | §1, Appendix: 2026-07 flat-editorial redesign | `tests/design-lint.test.ts` (uppercase, letter-spacing, button borders); `tests/helm-flat-group.test.ts` (in-flow cards); pending S10 (glyph chips, wireframe boxes) |
+| 2 | Uppercase | No uppercase text anywhere; `text-transform: uppercase` is removed on sight | 9cbe937 2026-07-16 | §2.2, §5 | `tests/design-lint.test.ts` |
+| 3 | In-flow cards | No bordered cards in flow; grouping is rule + section header + spacing; boxes only for detached surfaces and wells | 9cbe937 2026-07-16 | §1, §3.15 | `tests/helm-flat-group.test.ts` (shared resource group); pending S10 (other in-flow boxes) |
+| 4 | Button borders | No border in any button tone; weight comes from the fill (quiet = `--fill-raised`, hover `--fill-strong`) | 9cbe937 2026-07-16 | §3.1 | `tests/design-lint.test.ts` (every button rule in the app and the widget) |
 | 5 | One primary | One primary button per surface; danger is soft-filled, never opaque or primary; never two filled-accent elements visible at once | d499fd6 2026-07-11; 9cbe937 2026-07-16 (danger soft-filled) | §1, §3.1 | `tests/helm-detail-actions.test.ts`; D11 (on toggles) |
 | 6 | Color tokens | The §2.1 values are canonical; `app/src/theme-presets.ts` `HELM_TOKENS` owns them and every surface mirrors them unchanged | d499fd6 2026-07-11 | §2, §2.1, §2.8 | `tests/helm-appearance.test.ts` (theme layering); pending S2; D7 (Remote palette); D9 (popup colors) |
-| 7 | Soft fills | Tone soft fills are exactly 15% (`color-mix`), never a per-component alpha | d499fd6 2026-07-11 | §2.1, §2.8 | pending S3 |
+| 7 | Soft fills | Tone soft fills are exactly 15% (`color-mix`), never a per-component alpha | d499fd6 2026-07-11 | §2.1, §2.8 | pending S10 |
 | 8 | Status → tone | inbox/queued/cancelled neutral, active/running accent, review warn, done success, failed danger; never remapped per surface | d499fd6 2026-07-11 | §2.1 | `tests/helm-model.test.ts` |
-| 9 | Literal colors | Components consume `var(--token)`; a hex/rgba literal in component CSS is drift | b22415b 2026-07-13 | §2.8 | pending S3 |
+| 9 | Literal colors | Components consume `var(--token)`; a hex/rgba literal in component CSS is drift | b22415b 2026-07-13 | §2.8 | `tests/design-lint.test.ts` (raw-color); pending S2 (the allowlisted literals get tokens); D7; D9 |
 | 10 | Dark only | No light preset; the Document Review light reading palette is the one scoped, operator-approved exception | b22415b 2026-07-13; 6081eba 2026-10-02 | §2.8, §3.26, Native document review workspace | pending S2; D7 |
 | 11 | Presets | Helm + High contrast; macOS Increase contrast applies High contrast until a theme is picked; no surface ships its own contrast override | b22415b 2026-07-13; eb34454 2026-10-31 | §2.8 | `tests/helm-appearance.test.ts`; D7; D10 |
 | 12 | Terminal font | 9–24px, default 13, via ⌘= / ⌘− / ⌘0 or Appearance | b22415b 2026-07-13 | §2.2, §2.8 | `tests/helm-appearance.test.ts` |
-| 13 | UI scale | Sidebar type multiplies by `--ui-scale` (0.92 / 1 / 1.08); layout metrics and the terminal do not scale | b22415b 2026-07-13 | §2.2 | pending S3; D13 |
-| 14 | Font stacks | `--font-ui` / `--font-mono` defined once on `:root`; never a hand-written stack | `app/src/renderer/tokens.css` `:root`; AGENTS.md "Document Review reading width" | §2.2 | pending S3 |
-| 15 | Spacing | 4/8/12/16/20/24/32 only; one 16px text grid shared with the terminal well | d499fd6 2026-07-11; 9cbe937 2026-07-16 | §2.3 | pending S3; D8 |
+| 13 | UI scale | Sidebar type multiplies by `--ui-scale` (0.92 / 1 / 1.08); layout metrics and the terminal do not scale | b22415b 2026-07-13 | §2.2 | `tests/design-lint.test.ts` (font-size-unscaled); D13 |
+| 14 | Font stacks | `--font-ui` / `--font-mono` defined once on `:root`; never a hand-written stack | `app/src/renderer/tokens.css` `:root`; AGENTS.md "Document Review reading width" | §2.2 | pending S10 |
+| 15 | Spacing | 4/8/12/16/20/24/32 only; one 16px text grid shared with the terminal well | d499fd6 2026-07-11; 9cbe937 2026-07-16 | §2.3 | `tests/design-lint.test.ts` (spacing-off-scale); D8 |
 | 16 | Row states | Hover/selection/current fills of list, nav and terminal rows are square full-width stripes (radius 0), clearing hairlines by 4px; controls stay rounded | a93a07e 2026-07-21; 9ff0e82 2026-07-21 | §2.3, §3.15 | `tests/helm-flat-group.test.ts` |
-| 17 | Radii | 8 / 6 / 4 / 999; never 10, 12 or 14 | d499fd6 2026-07-11 | §2.4 | pending S3; D4; D8 |
-| 18 | Motion | 120 / 140 / 150ms ease-out, transform and opacity only, 8px entrances; ambient animation only for live status | d499fd6 2026-07-11 | §1, §2.5 | pending S3 |
+| 17 | Radii | 8 / 6 / 4 / 999; never 10, 12 or 14 | d499fd6 2026-07-11 | §2.4 | `tests/design-lint.test.ts` (radius-off-scale); D4; D8 |
+| 18 | Motion | 120 / 140 / 150ms ease-out, transform and opacity only, 8px entrances; ambient animation only for live status | d499fd6 2026-07-11 | §1, §2.5 | `tests/design-lint.test.ts` (raw-duration, raw-easing); pending S2 (motion tokens) |
 | 19 | Reduced motion | The global clamp applies on every surface; ambient pulses stop or hold statically | d499fd6 2026-07-11 | §2.5, §4 | `app/browser-tests/agent-dock-arrival.spec.ts`; pending S6 |
-| 20 | Elevation | Exactly two shadows; attached surfaces get none | d499fd6 2026-07-11 | §2.6 | pending S3 |
-| 21 | Z-layers | 0 / 10 / 40 / 60 / 100; the max z-index only at the widget's shadow host | d499fd6 2026-07-11 | §2.7 | pending S2; pending S3 |
+| 20 | Elevation | Exactly two shadows; attached surfaces get none | d499fd6 2026-07-11 | §2.6 | pending S10 |
+| 21 | Z-layers | 0 / 10 / 40 / 60 / 100; the max z-index only at the widget's shadow host | d499fd6 2026-07-11 | §2.7 | `tests/design-lint.test.ts` (raw-z-index); pending S2 (z tokens) |
 | 22 | Segmented | 28px track, inset ring, at most 4–5 segments; filters never accent-filled, only a true either/or commit may be, and one per surface | d499fd6 2026-07-11 | §3.2 | pending S5 |
 | 23 | Lifecycle index | Left-aligned 44px targets, 24px gaps, 2px accent underline, no fills, one-tab-stop `radiogroup` | 9cbe937 2026-07-16 (supersedes 45cf682 40px / 18px / accent text) | §3.2 | pending S5 |
 | 24 | List row | 64px, no separators, no persistent selection; a running Item shows the activity indicator before its title, no status word | a93a07e 2026-07-21; 9cbe937 2026-07-16 | §3.3 | `tests/helm-model.test.ts` |
@@ -1277,7 +1278,7 @@ Every design decision already made, numbered, with where it came from and what h
 | 83 | Focus | 2px `--accent` ring, offset 2, on `:focus-visible` only; fields signal focus with an accent border | d499fd6 2026-07-11 | §3.1, §3.7, §4 | pending S5; pending S6 |
 | 84 | Hover | Hover changes fills only; it never reveals functionality keyboard or touch users cannot reach | d499fd6 2026-07-11 | §1, §4 | pending S6 |
 | 85 | Hit targets | At least 24×24, 28 standard; drag hairlines get an invisible ≥8px hit area | d499fd6 2026-07-11 | §4 | pending S6 |
-| 86 | Copy voice | Sentence case, active voice, state then direction, "…" only when more input follows, relative times under 24h | d499fd6 2026-07-11 | §5 | pending S3 |
+| 86 | Copy voice | Sentence case, active voice, state then direction, "…" only when more input follows, relative times under 24h | d499fd6 2026-07-11 | §5 | `tests/design-lint.test.ts` (uppercase); pending S10 (the rest of the voice) |
 
 ---
 
@@ -1288,16 +1289,20 @@ Which check holds each rule family, and its state. **enforced** = a check in the
 | Rule family | Sections | Check | Status |
 | --- | --- | --- | --- |
 | Spec references, ruling citations, §9 table, story names, §0 index | §0, §9, §10 | `tests/design-spec.test.ts` | enforced |
+| The design process in AGENTS.md (spec, rulings, proposals, the `npm run check:design` gate) and its scripts and paths | §0, §7, §9 | `tests/design-spec.test.ts` | enforced |
+| Soft fills at 15%, the two elevation shadows, font stacks only through `--font-ui`/`--font-mono`, glyph chips, copy voice | §2.1, §2.2, §2.6, §5 | lint rules not written yet | pending S10 |
 | Storybook coverage of §3 families and views | §7 | `tests/helm-storybook-coverage.test.ts` | enforced |
 | Token values from one source (CSS `:root`, extension `--vg-`, Remote, native window backgrounds) | §2.1, §2.8, §3.28, §3.30 | `app/src/design/` tokens + generated CSS check | pending S2 |
 | Undefined tokens used in CSS | §2.1 | token lint | D4 |
-| Literal colors, off-scale spacing/radii/sizes/weights, letter-spacing, uppercase, unscaled sidebar type, durations and easings | §2.1–§2.5, §5 | design lint over app/ and extension/ CSS and TSX | pending S3; D8; D13 |
-| Measured contrast of every drawn token pair | §2.9 | `tests/design-contrast.test.ts` | pending S4; D5 |
+| Literal colors, off-scale spacing/radii/sizes/weights, letter-spacing, uppercase, unscaled sidebar type, durations and easings | §2.1–§2.5, §5 | `tests/design-lint.test.ts` (the scanner in app/src/design/lint.ts over every production stylesheet, HTML style and inline TS/TSX style in app/ and extension/; ratchet baseline app/src/design/lint-allowlist.ts; npm run lint:design prints it) | enforced; D8; D13 |
+| Buttons draw no border in any tone | §3.1 | `tests/design-lint.test.ts` (every button rule of the app and the widget stylesheet) | enforced |
+| A shared primitive's base rules only in its owner file (`button.css` for buttons, `sidebar/sidebar.css` for segmented, list row, chips, fields, menus, action rows, toggle and icon button, `sidebar/detail-redesign.css` for disclosure); surface modifiers (`.agent-dock-key.btn`) and descendant overrides stay with their surface | §3 | `tests/design-lint.test.ts` (primitive-outside-owner; the PRIMITIVES table in app/src/design/lint.ts) | enforced |
+| Measured contrast of every drawn token pair | §2.9 | `tests/design-contrast.test.ts` | enforced; D5 |
 | Extension popup colors | §3.28 | `tests/design-contrast.test.ts`, design lint | D9 |
-| Every interactive primitive shows forced hover/focus/active/disabled states | §3, §7 | `States` stories with `data-force-state` (StateGrid) | pending S5 |
+| Every interactive primitive shows forced hover/focus/active/disabled states | §3, §7 | `tests/design-force-state.test.ts` (States stories on StateGrid with data-force-state selectors) | enforced |
 | axe in every theme, focus ring, hit targets, hover-only functionality, forced colors | §4, §8 | axe over every story | pending S6 |
-| Shared primitives instead of local button/menu/field chrome | §3.1, §3.8 | component-reach check | pending S7 |
-| Every production icon drawn by the icon module with its source; Heroicons notices current; the hand-drawn set closed | §3.18, §9 ruling 54 | `tests/design-icons.test.ts` | enforced; D6 (hand-drawn glyphs) |
+| Shared primitives instead of local button/menu/field chrome | §3.1, §3.8 | component-reach check (markup that recreates `.btn`, menu or field chrome without `Btn`/`MenuButton`/`Field`) | pending S10 |
+| Every production icon drawn by the icon module with its source; Heroicons notices current; the hand-drawn set closed | §3.18, §9 ruling 54 | `tests/design-icons.test.ts`, `tests/design-lint.test.ts` (inline-svg: any svg markup, SVG data URI or createElementNS svg outside app/src/renderer/icons/) | enforced; D6 (hand-drawn glyphs) |
 | Which surfaces follow presets, user themes and UI scale | §2.8, §3.23, §3.26 | appearance reach | D7; D10 |
 | One filled accent per surface (on toggles) | §1, §3.16 | `tests/helm-detail-actions.test.ts` (detail) | enforced (Item detail); D11 (on toggles) |
 | Extension control height | §3.1, §3.28 | design lint | D12 |

@@ -262,6 +262,89 @@ test('inline-svg: data URIs, JSX, markup strings and createElementNS outside the
 	)
 })
 
+test('inline-svg in the repository: the icon module is scanned and exempt, every other svg is a finding', () => {
+	const production = lint.productionFiles(ROOT)
+	assert.ok(production.has('app/src/renderer/icons/icons.ts'), 'the icon module is production code the lint reads')
+	const icons = read('app/src/renderer/icons/icons.ts')
+	assert.ok(/<svg\b|createElementNS\(/.test(icons), 'the icon module holds the svg markup')
+	assert.deepEqual(
+		findings.filter(f => f.rule === 'inline-svg' && f.file.startsWith('app/src/renderer/icons/')),
+		[],
+	)
+	for (const dir of lint.ICON_MODULE_DIRS) assert.ok(read(`${dir}icons.ts`).length > 0, `${dir} exists`)
+})
+
+test('primitive-outside-owner: base rules of a shared primitive only in its owner file', () => {
+	const primitives = [
+		{ name: 'button', owner: 'app/src/renderer/button.css', classes: new Set(['btn', 'btn-primary', 'btn-sm']) },
+		{ name: 'menu', owner: 'app/src/renderer/sidebar/sidebar.css', classes: new Set(['menu-panel', 'menu-item']) },
+	]
+	const own = (text: string, file = 'app/src/renderer/x.css') =>
+		lint
+			.lintCss(file, text, { coreTokens: CORE, primitives })
+			.filter(f => f.rule === 'primitive-outside-owner')
+			.map(f => `${f.selector} | ${f.property}: ${f.value}`)
+	const text = `
+		.btn { color: var(--pane) }
+		.btn-primary:hover:not(:disabled), .x { color: var(--pane) }
+		button.btn.btn-sm[data-force-state="hover"] { color: var(--pane) }
+		@media (hover: hover) { .menu-item:hover { color: var(--pane) } }
+		.review .btn, .a > .btn, .a + .menu-item { color: var(--pane) }
+		.agent-dock-key.btn, .menu-panel.menu-fixed { color: var(--pane) }
+		.btn:not(.a .b) { color: var(--pane); background: var(--pane) }
+		.b { & .btn { color: var(--pane) } &.btn { color: var(--pane) } }
+	`
+	assert.deepEqual(own(text), [
+		'.btn | button: .btn',
+		'.btn-primary:hover:not(:disabled), .x | button: .btn-primary:hover:not(:disabled)',
+		'button.btn.btn-sm[data-force-state="hover"] | button: button.btn.btn-sm[data-force-state="hover"]',
+		'@media (hover: hover) .menu-item:hover | menu: .menu-item:hover',
+		'.btn:not(.a .b) | button: .btn:not(.a .b)',
+	])
+	assert.deepEqual(own(text, 'app/src/renderer/button.css').length, 1, 'the owner file may style its own base')
+	assert.deepEqual(own(text, 'app/src/renderer/sidebar/sidebar.css').length, 4)
+	assert.deepEqual(own('.btn.menu-item { color: var(--pane) }', 'app/src/renderer/sidebar/sidebar.css'), [])
+})
+
+test('every shared primitive owner file exists and defines the primitive (the rule cannot go blind)', () => {
+	for (const p of lint.primitiveVocabulary(ROOT)) {
+		assert.ok(read(p.owner).length > 0, `${p.name}: owner ${p.owner} exists`)
+		assert.ok(p.classes.size > 0, `${p.name}: ${p.owner} uses the primitive's classes`)
+	}
+})
+
+test(`buttons draw no border in any tone (${S}9 ruling 4): every stylesheet, every button subject`, () => {
+	const BORDER = /^border(-(top|right|bottom|left|block|inline)(-(start|end))?)?(-(width|style|color))?$/
+	const BUTTON = /\.(icon-btn|btn|vg-btn)(-[\w-]+)?(?![\w-])/
+	const sheets = lint
+		.collectSources(ROOT)
+		.filter(source => source.kind === 'css')
+		.map(source => ({ file: source.file, text: read(source.file) }))
+	const widget = /WIDGET_STYLES\s*=\s*`([^`]*)`/.exec(read('extension/src/widget.styles.ts'))?.[1]
+	assert.ok(widget, 'the widget stylesheet constant is found')
+	sheets.push({ file: 'extension/src/widget.styles.ts', text: widget })
+	const drawn: string[] = []
+	let buttonRules = 0
+	for (const { file, text } of sheets) {
+		for (const d of lint.parseCss(text)) {
+			const subjects = lint.splitTopLevel(d.selector).map(
+				complex =>
+					complex
+						.replace(/\([^)]*\)|\[[^\]]*\]/g, '')
+						.trim()
+						.split(/\s*[>+~]\s*|\s+/)
+						.pop() ?? '',
+			)
+			if (!subjects.some(subject => BUTTON.test(subject))) continue
+			buttonRules++
+			if (BORDER.test(d.property) && !/^(none|0(px)?)$/.test(d.value))
+				drawn.push(`${file}  ${d.selector} { ${d.property}: ${d.value} }`)
+		}
+	}
+	assert.ok(buttonRules > 50, 'button rules are found in the app and the widget')
+	assert.deepEqual(drawn, [], 'buttons take their weight from the fill, never a border')
+})
+
 test('inline styles in TS/TSX: JSX objects (also conditional and cast), DOM style writes, CSS constants', () => {
 	assert.deepEqual(
 		tsx(`
