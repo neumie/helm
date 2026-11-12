@@ -15,7 +15,9 @@
 		"start": "node scripts/start.mjs",
 		"start:daemon": "node dist/index.js",
 		"lint": "biome check .",
-		"lint:fix": "biome check --write ."
+		"lint:fix": "biome check --write .",
+		"lint:design": "node --import tsx app/scripts/design-lint.ts",
+		"check:design": "node app/scripts/check-design.mjs"
 	},
 	"dependencies": {
 		"@hono/node-server": "^2.0.12",

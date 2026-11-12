@@ -371,3 +371,66 @@ test('every ruling source is a real commit, quote, date or file', () => {
 	for (const line of answer.trim().split('\n')) if (!/ commit \d+$/.test(line)) problems.push(`not a commit: ${line}`)
 	assert.deepEqual(problems, [])
 })
+
+/** The text of the `## Design system` section of AGENTS.md. */
+function agentsSection() {
+	const start = agents.indexOf('\n## Design system\n')
+	assert.notEqual(start, -1, 'AGENTS.md has a ## Design system section')
+	const end = agents.indexOf('\n## ', start + 1)
+	return agents.slice(start, end === -1 ? undefined : end)
+}
+
+test('AGENTS.md names the design gate, the spec, the rulings and the proposal process', () => {
+	const text = agentsSection()
+	for (const phrase of [
+		'npm run check:design',
+		'docs/design-system.md',
+		'§9',
+		'Proposals/',
+		'app/src/design/lint-allowlist.ts',
+		'visual-diff.mjs',
+	])
+		assert.ok(text.includes(phrase), `AGENTS.md ## Design system names ${phrase}`)
+	assert.ok(agents.indexOf('\n## Design system\n') < agents.indexOf('\n## Mandatory abstractions\n'))
+})
+
+test('the root package.json has the design scripts AGENTS.md names', () => {
+	const scripts: Record<string, string> = JSON.parse(read('package.json')).scripts
+	for (const name of ['check:design', 'lint:design']) assert.ok(scripts[name], `package.json has a ${name} script`)
+	const missing = [...agentsSection().matchAll(/\bnpm run ([\w:-]+)/g)]
+		.map(match => match[1])
+		.filter(name => name !== 'test' && !scripts[name])
+	assert.deepEqual(missing, [], 'npm scripts AGENTS.md ## Design system names')
+})
+
+test('every repository path AGENTS.md ## Design system names exists', () => {
+	const REPO_PATH = /^(?:app|extension|src|tests|docs|scripts|packages)\/\S*$|^[A-Z][A-Z_]+\.md$/
+	const paths = new Set<string>()
+	for (const [, token] of agentsSection().matchAll(/`([^`]+)`/g))
+		for (const word of token.split(/\s+/)) if (REPO_PATH.test(word)) paths.add(word)
+	assert.ok(paths.size > 10, 'the section names repository paths')
+	const missing: string[] = []
+	for (const path of paths) {
+		// A glob or placeholder segment (`**`, `*.ts`, `<dN-topic>`) is checked up to its parent folder.
+		const parts = path.replace(/\/$/, '').split('/')
+		const cut = parts.findIndex(part => /[*<>]/.test(part))
+		const real = (cut === -1 ? parts : parts.slice(0, cut)).join('/')
+		if (existsSync(join(ROOT, real))) continue
+		// Build output named as the place it goes (gitignored) need not exist in a fresh checkout.
+		// A folder pattern (`storybook-static/`) matches only what is inside it, so ask about a child too.
+		const ignored = [real, `${real}/x`].some(candidate => {
+			try {
+				execFileSync('git', ['check-ignore', '-q', candidate], { cwd: ROOT })
+				return true
+			} catch {
+				return false
+			}
+		})
+		if (!ignored) missing.push(path)
+	}
+	assert.deepEqual(missing, [], 'paths in AGENTS.md ## Design system that do not exist')
+})
+
+test('AGENTS.md carries no guidance for the retired CPU-lease tool', () => {
+	assert.ok(!agents.includes('sysbudget'), 'AGENTS.md mentions sysbudget')
+})
