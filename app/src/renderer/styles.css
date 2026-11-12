@@ -3665,10 +3665,12 @@ body.dragging {
 	color: var(--dock-dim);
 }
 
-/* A footer with nothing to show (no selected thread's keys, no note, no source line, no action)
- * takes no room, so at rest the done line sits on the column's bottom edge instead of over an
- * empty 40px band. The status line stays mounted (a live region), only collapsed. */
-.signals-foot:not(:has(.signals-hint, .signals-note:not(:empty), .signals-health, .signals-foot-actions)) {
+/* A footer with nothing to show (no selected thread's keys, or keys hidden while Signals does not
+ * hold them; no note, no source line, no action) takes no room, so the done line sits on the
+ * column's bottom edge instead of over an empty band. Focusing the column brings the keys back
+ * under it (Jakub's pick 2026-11-12, variant B). The status line stays mounted (a live region). */
+.signals-foot:not(:has(.signals-hint, .signals-note:not(:empty), .signals-health, .signals-foot-actions)),
+.signals:not(:focus-within) .signals-foot:not(:has(.signals-note:not(:empty), .signals-health, .signals-foot-actions)) {
 	min-height: 0;
 	padding: 0;
 }
@@ -3746,7 +3748,12 @@ body.dragging {
 	color: var(--text-1);
 }
 
-/* Key hints and choice numbers show only while Signals holds the keys (§3.24). */
+/* Key hints and choice numbers show only while Signals holds the keys (§3.24). Hidden footer hints
+ * take no room (below). */
+.signals:not(:focus-within) .signals-foot-hints {
+	display: none;
+}
+
 .signals:not(:focus-within) :is(.signals-foot-hints, .signals-choice-n, .signals-list-key),
 .signals:has(:is(textarea, input):focus) .signals-foot-hints [data-hint="pick"] {
 	visibility: hidden;

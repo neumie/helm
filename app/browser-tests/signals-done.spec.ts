@@ -311,7 +311,9 @@ test('at rest the empty footer takes no room: the done line sits 8px over the bo
 	for (const index of [0, 2]) expect((await bottom(frames.nth(index))).gap).toBe(8)
 })
 
-test('a busy column keeps the selected row keys under the done line', async ({ page }) => {
+test('a busy column: the keys sit under the done line, and take no room while Signals does not hold them', async ({
+	page,
+}) => {
 	const view = await open(page, 'views-signals-done--line')
 	await expect(view.signals).toBeFocused()
 	await expect(view.signals.locator('.signals-foot-hints')).toBeVisible()
@@ -319,4 +321,15 @@ test('a busy column keeps the selected row keys under the done line', async ({ p
 	expect(busy.toFoot).toBe(4)
 	expect(busy.foot).toBeGreaterThanOrEqual(40)
 	expect(busy.gap).toBe(busy.foot + 8)
+
+	// Without the keys the hidden hints take no room: the done line sits on the edge, like at rest.
+	await view.signals.evaluate(node => (node as HTMLElement).blur())
+	await expect(view.signals.locator('.signals-foot-hints')).toBeHidden()
+	expect(await bottom(view.signals)).toEqual({ gap: 8, toFoot: 4, foot: 0, note: true })
+	await page.screenshot({ path: test.info().outputPath('signals-done-busy-unfocused.png') })
+
+	// Giving it the keys back brings the hints back under the line.
+	await view.signals.focus()
+	await expect(view.signals.locator('.signals-foot-hints')).toBeVisible()
+	expect(await bottom(view.signals)).toEqual(busy)
 })
