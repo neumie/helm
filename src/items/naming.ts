@@ -295,6 +295,12 @@ export interface EnsureItemNameParams {
 	force?: boolean
 	/** Authorized Plan Main→Worktree transition; permits branch reservation before pointer swap. */
 	transitionFromMain?: boolean
+	/**
+	 * Keep the Item's plan dir name (name only the branch). A run carrying a Main
+	 * plan into a new worktree still reads that plan from the old dir name until
+	 * the new worktree is recorded, including on a retry after a failed attempt.
+	 */
+	keepPlanDirName?: boolean
 }
 
 /**
@@ -362,7 +368,8 @@ export async function ensureItemWorkspaceName(params: EnsureItemNameParams): Pro
 		const prefix = parsed.type ? `${parsed.type}/` : ''
 		const descriptionSlug = clampSlug(parsed.descriptionSlug, Math.max(8, MAX_BRANCH_LEN - prefix.length))
 		const base = `${prefix}${descriptionSlug}`
-		const planDirName = derivedItemPlanDirName(item, descriptionSlug)
+		const planDirName =
+			params.keepPlanDirName && item.planDirName ? item.planDirName : derivedItemPlanDirName(item, descriptionSlug)
 
 		// Git existence is checked here (not transactional); the DB existence check +
 		// suffix decision + write happen atomically inside recordDerivedWorkspaceName

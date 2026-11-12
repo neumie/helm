@@ -13,14 +13,61 @@ import {
 	renameSync,
 	rmSync,
 	statSync,
+	utimesSync,
 	writeFileSync,
 } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { type AgentKnowledgeCandidate, agentKnowledgeCandidatesSchema } from '../knowledge/schema.js'
 import { type SolverResult, solverResultSchema } from '../solver/result-schema.js'
 import { log } from '../util/logger.js'
 
 const KNOWLEDGE_CANDIDATE_FILE_MAX_BYTES = 25_000
+/** Bounds for carrying a Main plan into a new worktree (see `carryPlanFrom`). */
+const PLAN_CARRY_MAX_FILES = 256
+const PLAN_CARRY_MAX_FILE_BYTES = 1024 * 1024
+const PLAN_CARRY_MAX_TOTAL_BYTES = 8 * 1024 * 1024
+
+export interface PlanCarryResult {
+	/** Plan-relative names written into this workspace. */
+	copied: string[]
+	/** Names left alone because this workspace already had a different file. */
+	kept: string[]
+	/** Names not copied because the source is not a plain regular file. */
+	skipped: string[]
+}
+
+/** Read one regular, non-symlinked file with a size cap. Null = not a plain file. */
+function readPlainFile(path: string, maxBytes: number): { bytes: Buffer; atime: Date; mtime: Date } | null {
+	let descriptor: number | null = null
+	try {
+		descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code
+		if (code === 'ELOOP' || code === 'ENOENT' || code === 'EISDIR') return null
+		throw error
+	}
+	try {
+		const stat = fstatSync(descriptor)
+		if (!stat.isFile()) return null
+		if (stat.size > maxBytes) throw new Error(`Plan file ${path} exceeds ${maxBytes} bytes`)
+		const bytes = Buffer.alloc(maxBytes + 1)
+		let length = 0
+		while (length < bytes.length) {
+			const count = readSync(descriptor, bytes, length, bytes.length - length, null)
+			if (count === 0) break
+			length += count
+		}
+		if (length > maxBytes) throw new Error(`Plan file ${path} exceeds ${maxBytes} bytes`)
+		return { bytes: bytes.subarray(0, length), atime: stat.atime, mtime: stat.mtime }
+	} finally {
+		closeSync(descriptor)
+	}
+}
+
+function isRealDirectory(path: string): boolean {
+	// lstat: a symlinked directory is not a directory here.
+	return lstatIfPresent(path)?.isDirectory() === true
+}
 
 function lstatIfPresent(path: string) {
 	try {
@@ -262,6 +309,66 @@ export class PlanWorkspace {
 	/** Remove candidate bytes only after durable enqueue or deliberate unmapped discard. */
 	clearKnowledgeCandidates(): void {
 		rmSync(this.knowledgeCandidatesPath, { force: true })
+	}
+
+	/**
+	 * Copy the public plan documents of `source` (another checkout's plan dir) into
+	 * this workspace: top-level `*.md` plus `issues/*.md`, keeping their mtimes so
+	 * `readArtifacts` keeps its order. Used when an Item planned in the canonical
+	 * checkout (Main) runs in a new worktree. It only reads `source` and never
+	 * replaces a file that already exists here; a differing one is reported in
+	 * `kept`. Run evidence (`solver-result.json`) and hidden `.helm-*`/prompt files
+	 * are never carried: they belong to the earlier attempt.
+	 */
+	carryPlanFrom(source: PlanWorkspace): PlanCarryResult {
+		const result: PlanCarryResult = { copied: [], kept: [], skipped: [] }
+		if (resolve(source.dir) === resolve(this.dir)) return result
+		if (!isRealDirectory(source.dir)) return result
+		const names: string[] = readdirSync(source.dir).filter(isPublicPlanMarkdown)
+		if (isRealDirectory(join(source.dir, 'issues'))) {
+			for (const name of readdirSync(join(source.dir, 'issues')).filter(isPublicPlanMarkdown)) {
+				names.push(`issues/${name}`)
+			}
+		}
+		if (names.length > PLAN_CARRY_MAX_FILES) {
+			throw new Error(`Plan ${source.dir} has more than ${PLAN_CARRY_MAX_FILES} documents`)
+		}
+		let total = 0
+		const files: Array<{ name: string; bytes: Buffer; atime: Date; mtime: Date }> = []
+		for (const name of names.sort()) {
+			const file = readPlainFile(join(source.dir, name), PLAN_CARRY_MAX_FILE_BYTES)
+			if (!file) {
+				result.skipped.push(name)
+				continue
+			}
+			total += file.bytes.length
+			if (total > PLAN_CARRY_MAX_TOTAL_BYTES) {
+				throw new Error(`Plan ${source.dir} exceeds ${PLAN_CARRY_MAX_TOTAL_BYTES} bytes`)
+			}
+			files.push({ name, ...file })
+		}
+		for (const file of files) {
+			const destination = join(this.dir, file.name)
+			const existing = lstatIfPresent(destination)
+			if (existing) {
+				let same = false
+				try {
+					same =
+						existing.isFile() &&
+						readPlainFile(destination, PLAN_CARRY_MAX_FILE_BYTES)?.bytes.equals(file.bytes) === true
+				} catch {
+					same = false
+				}
+				if (!same) result.kept.push(file.name)
+				continue
+			}
+			mkdirSync(dirname(destination), { recursive: true })
+			// `wx` never follows or replaces whatever appears at the destination.
+			writeFileSync(destination, file.bytes, { flag: 'wx' })
+			utimesSync(destination, file.atime, file.mtime)
+			result.copied.push(file.name)
+		}
+		return result
 	}
 
 	/** Read the local spec + ticket queue without interpreting Item lifecycle. */
