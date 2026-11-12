@@ -13,10 +13,11 @@ import type { LoopRunner } from '../src/queue/loop-runner.js'
 import { processLoopItem, processSolveItem } from '../src/queue/worker.js'
 import type { Solver } from '../src/solver/solver.js'
 import type { Spawner } from '../src/spawner/spawner.js'
-import { taskCancelled } from '../src/util/errors.js'
+import { phaseError, taskCancelled } from '../src/util/errors.js'
 import { createWorktree } from '../src/worktree/manager.js'
 
 const exec = promisify(execFile)
+const sameRealPath = (left: string, right: string) => realpathSync(left) === realpathSync(right)
 const provider: TaskProvider = {
 	name: 'fixture',
 	async pollNewTasks() {
@@ -115,8 +116,23 @@ for (const state of ['OPEN', 'MERGED', 'CLOSED'] as const) {
 	})
 }
 
+async function gitStatus(cwd: string): Promise<string> {
+	return (await exec('git', ['status', '--porcelain', '--untracked-files=all'], { cwd })).stdout
+}
+
+/** A Main plan as the Plan route leaves it in the canonical checkout. */
+function writeMainPlan(repo: string, planDirName: string): string {
+	const dir = join(repo, 'docs', 'plans', planDirName)
+	mkdirSync(join(dir, 'issues'), { recursive: true })
+	writeFileSync(join(dir, 'prd.md'), '# Plan written in Main\n')
+	writeFileSync(join(dir, 'issues', '01-first.md'), '---\nstatus: ready-for-agent\n---\n# First\n')
+	writeFileSync(join(dir, 'solver-result.json'), '{"summary":"result of an earlier Main attempt"}')
+	writeFileSync(join(dir, '.planning-prompt.txt'), 'planning prompt')
+	return dir
+}
+
 for (const kind of ['solve', 'loop'] as const) {
-	test(`a retained Main path cannot enter ${kind} Worktree execution`, async () => {
+	test(`a ${kind} planned in Main runs in Worktree in its own worktree with the plan copied`, async () => {
 		const f = await setup()
 		const oldCwd = process.cwd()
 		try {
@@ -126,38 +142,246 @@ for (const kind of ['solve', 'loop'] as const) {
 					? f.commands.createSolveItem({ title: 'Fixture', projectSlug: 'fixture' })
 					: f.commands.createLoopItem({ title: 'Fixture', projectSlug: 'fixture', prdPath: 'prd.md' })
 			f.commands.beginPlanning(item.id)
+			// A legacy Main plan that also kept the checkout's branch (here the base branch).
 			f.commands.recordPlanPrepared(item.id, {
 				worktreePath: f.repo,
 				branchName: 'main',
 				planDirName: 'fixture',
 				spawner: 'default',
 			})
-			const before = readFileSync(join(f.repo, 'tracked'), 'utf8')
+			f.commands.setItemStatus(item.id, 'ready')
+			const planDir = writeMainPlan(f.repo, 'fixture')
+			const statusBefore = await gitStatus(f.repo)
+			const headBefore = (await exec('git', ['rev-parse', 'HEAD'], { cwd: f.repo })).stdout
+			let ranIn: string | null = null
+			let ranOn: string | null = null
 			if (kind === 'solve') {
 				const solver: Solver = {
-					async solve() {
-						assert.fail('An isolated solve must not consume the Main checkout')
+					async solve(params) {
+						assert.equal(params.existingWorktreePath, undefined)
+						assert.equal(params.workspaceMode, 'worktree')
+						const worktree = await createWorktree(f.repo, 'main', params.branchName, join(f.root, 'worktrees'))
+						params.onWorktreeReady(worktree)
+						ranIn = worktree
+						ranOn = params.branchName
+						assert.equal(readFileSync(join(worktree, 'docs/plans/fixture/prd.md'), 'utf8'), '# Plan written in Main\n')
+						assert.ok(existsSync(join(worktree, 'docs/plans/fixture/issues/01-first.md')))
+						assert.equal(existsSync(join(worktree, 'docs/plans/fixture/solver-result.json')), false)
+						assert.equal(existsSync(join(worktree, 'docs/plans/fixture/.planning-prompt.txt')), false)
+						writeFileSync(join(worktree, 'docs/plans/fixture/solver-result.json'), JSON.stringify({ summary: 'done' }))
+						return { worktreePath: worktree, branchName: params.branchName, outcome: { exitCode: 0, events: [] } }
 					},
 				}
 				await processSolveItem(item.id, f.config, f.db, provider, solver)
 			} else {
 				const runner: LoopRunner = {
-					async runLoop() {
-						assert.fail('An isolated loop must not consume the Main checkout')
+					async runLoop(params) {
+						ranIn = params.worktreePath
+						ranOn = params.branchName
+						assert.equal(
+							readFileSync(join(params.worktreePath, 'docs/plans/fixture/prd.md'), 'utf8'),
+							'# Plan written in Main\n',
+						)
+						assert.ok(existsSync(join(params.worktreePath, 'docs/plans/fixture/issues/01-first.md')))
+						assert.equal(existsSync(join(params.worktreePath, 'docs/plans/fixture/solver-result.json')), false)
+						return { runId: 'fixture-run' }
 					},
 				}
 				await processLoopItem(item.id, f.config, f.db, runner)
 			}
-			assert.equal(f.commands.getItem(item.id)?.status, 'failed')
-			assert.equal(f.commands.getItem(item.id)?.errorPhase, 'worktree')
-			assert.match(f.commands.getItem(item.id)?.errorMessage ?? '', /canonical project checkout/)
-			assert.equal(readFileSync(join(f.repo, 'tracked'), 'utf8'), before)
+			const after = f.commands.getItem(item.id)
+			assert.equal(after?.errorMessage, null)
+			assert.equal(after?.status, kind === 'solve' ? 'review' : 'done')
+			assert.ok(ranIn)
+			assert.equal(sameRealPath(ranIn, f.repo), false)
+			assert.notEqual(ranOn, 'main')
+			assert.equal(after?.branchName, ranOn)
+			assert.equal(sameRealPath(after?.worktreePath ?? '', ranIn), true)
+			assert.equal((await exec('git', ['branch', '--show-current'], { cwd: ranIn })).stdout.trim(), ranOn)
+			// The canonical checkout is read, never changed.
+			assert.equal(await gitStatus(f.repo), statusBefore)
+			assert.equal((await exec('git', ['rev-parse', 'HEAD'], { cwd: f.repo })).stdout, headBefore)
+			assert.equal(
+				readFileSync(join(planDir, 'solver-result.json'), 'utf8'),
+				'{"summary":"result of an earlier Main attempt"}',
+			)
 		} finally {
 			process.chdir(oldCwd)
 			f.cleanup()
 		}
 	})
 }
+
+test('an Item run in Main and recovered gets its own worktree when retried in Worktree', async () => {
+	const f = await setup()
+	const oldCwd = process.cwd()
+	try {
+		process.chdir(f.root)
+		const item = f.commands.createSolveItem({ title: 'Fixture', projectSlug: 'fixture' })
+		// The stranded production state: a Main run recorded the checkout as its
+		// workspace (branchless), then a daemon restart recovered it to Queue.
+		f.commands.setSolveItemWorkspace(item.id, 'main')
+		f.commands.startItem(item.id)
+		f.commands.recordExecutionWorkspaceIdentity(item.id, {
+			worktreePath: f.repo,
+			planDirName: 'fixture',
+			branchName: null,
+		})
+		f.commands.recoverStaleProcessingItems()
+		f.commands.setSolveItemWorkspace(item.id, 'worktree')
+		const stray = join(f.repo, 'docs', 'plans', 'fixture')
+		mkdirSync(stray, { recursive: true })
+		writeFileSync(join(stray, 'notes.md'), 'left by the Main agent')
+		const statusBefore = await gitStatus(f.repo)
+		let ranIn: string | null = null
+		const solver: Solver = {
+			async solve(params) {
+				assert.equal(params.existingWorktreePath, undefined)
+				const worktree = await createWorktree(f.repo, 'main', params.branchName, join(f.root, 'worktrees'))
+				params.onWorktreeReady(worktree)
+				ranIn = worktree
+				// Not a plan: nothing from the checkout's plan dir comes along.
+				assert.equal(existsSync(join(worktree, 'docs/plans/fixture/notes.md')), false)
+				mkdirSync(join(worktree, 'docs/plans/fixture'), { recursive: true })
+				writeFileSync(join(worktree, 'docs/plans/fixture/solver-result.json'), JSON.stringify({ summary: 'done' }))
+				return { worktreePath: worktree, branchName: params.branchName, outcome: { exitCode: 0, events: [] } }
+			},
+		}
+		await processSolveItem(item.id, f.config, f.db, provider, solver)
+		const after = f.commands.getItem(item.id)
+		assert.equal(after?.errorMessage, null)
+		assert.equal(after?.status, 'review')
+		assert.ok(ranIn)
+		assert.equal(sameRealPath(after?.worktreePath ?? '', ranIn), true)
+		assert.match(after?.branchName ?? '', /^helm\/item\//)
+		assert.equal(await gitStatus(f.repo), statusBefore)
+	} finally {
+		process.chdir(oldCwd)
+		f.cleanup()
+	}
+})
+
+test('a Main plan survives a failed Worktree attempt: the retry reuses its branch and still gets the plan', async () => {
+	const f = await setup()
+	const oldCwd = process.cwd()
+	try {
+		process.chdir(f.root)
+		const config = configSchema.parse({ ...f.config, solver: { ...f.config.solver, branchNaming: { enabled: true } } })
+		const commands = new ItemCommands(f.db.items, config)
+		const item = commands.createSolveItem({ title: 'Fixture', projectSlug: 'fixture' })
+		commands.beginPlanning(item.id)
+		commands.recordPlanPrepared(item.id, {
+			worktreePath: f.repo,
+			branchName: null,
+			planDirName: 'fixture',
+			spawner: 'default',
+		})
+		commands.setItemStatus(item.id, 'ready')
+		writeMainPlan(f.repo, 'fixture')
+		let names = 0
+		const deps = {
+			workspaceName: {
+				// A model that answers differently each time, as real ones may.
+				runOneShot: async () => `feat/email-terms-${++names}`,
+				branchExists: async () => false,
+			},
+		}
+		const created: string[] = []
+		const failing: Solver = {
+			async solve(params) {
+				created.push(await createWorktree(f.repo, 'main', params.branchName, join(f.root, 'worktrees')))
+				throw phaseError('worktree', 'Okena did not show the worktree in time')
+			},
+		}
+		await processSolveItem(item.id, config, f.db, provider, failing, undefined, deps)
+		const failed = commands.getItem(item.id)
+		assert.equal(failed?.status, 'failed')
+		assert.equal(failed?.planDirName, 'fixture')
+		assert.equal(failed?.branchName, 'feat/email-terms-1')
+
+		commands.retryItem(item.id)
+		let ranIn: string | null = null
+		const solver: Solver = {
+			async solve(params) {
+				assert.equal(params.branchName, 'feat/email-terms-1')
+				assert.equal(params.planDirName, 'fixture')
+				const worktree = await createWorktree(f.repo, 'main', params.branchName, join(f.root, 'worktrees'))
+				params.onWorktreeReady(worktree)
+				ranIn = worktree
+				assert.equal(readFileSync(join(worktree, 'docs/plans/fixture/prd.md'), 'utf8'), '# Plan written in Main\n')
+				writeFileSync(join(worktree, 'docs/plans/fixture/solver-result.json'), JSON.stringify({ summary: 'done' }))
+				return { worktreePath: worktree, branchName: params.branchName, outcome: { exitCode: 0, events: [] } }
+			},
+		}
+		await processSolveItem(item.id, config, f.db, provider, solver, undefined, deps)
+		assert.equal(commands.getItem(item.id)?.status, 'review')
+		assert.ok(ranIn)
+		assert.equal(sameRealPath(ranIn, created[0] ?? ''), true)
+	} finally {
+		process.chdir(oldCwd)
+		f.cleanup()
+	}
+})
+
+test('a Worktree run failing before its worktree exists is not reconciled against the checkout', async () => {
+	const f = await setup()
+	const oldCwd = process.cwd()
+	try {
+		process.chdir(f.root)
+		const item = f.commands.createSolveItem({ title: 'Fixture', projectSlug: 'fixture' })
+		f.commands.setSolveItemWorkspace(item.id, 'main')
+		f.commands.startItem(item.id)
+		f.commands.recordExecutionWorkspaceIdentity(item.id, {
+			worktreePath: f.repo,
+			planDirName: 'fixture',
+			branchName: null,
+		})
+		f.commands.recoverStaleProcessingItems()
+		f.commands.setSolveItemWorkspace(item.id, 'worktree')
+		// The checkout sits on the Main agent's branch, ahead of base.
+		await exec('git', ['checkout', '-b', 'agent/main-run'], { cwd: f.repo })
+		writeFileSync(join(f.repo, 'tracked'), 'main run work')
+		await exec('git', ['commit', '-am', 'main run work'], { cwd: f.repo })
+		const solver: Solver = {
+			async solve() {
+				throw new Error('Okena state failed (401)')
+			},
+		}
+		await processSolveItem(item.id, f.config, f.db, provider, solver)
+		const after = f.commands.getItem(item.id)
+		assert.equal(after?.status, 'failed')
+		assert.equal(after?.runOutcome, 'errored')
+	} finally {
+		process.chdir(oldCwd)
+		f.cleanup()
+	}
+})
+
+test('a Main run keeps the canonical checkout when Workspace stays Main', async () => {
+	const f = await setup()
+	const oldCwd = process.cwd()
+	try {
+		process.chdir(f.root)
+		const item = f.commands.createSolveItem({ title: 'Fixture', projectSlug: 'fixture' })
+		f.commands.setSolveItemWorkspace(item.id, 'main')
+		let ranIn: string | null = null
+		const solver: Solver = {
+			async solve(params) {
+				assert.equal(params.workspaceMode, 'main')
+				params.onWorktreeReady(f.repo)
+				ranIn = f.repo
+				return { worktreePath: f.repo, branchName: params.branchName, outcome: { exitCode: 1, events: [] } }
+			},
+		}
+		await processSolveItem(item.id, f.config, f.db, provider, solver)
+		assert.equal(ranIn, f.repo)
+		assert.equal(sameRealPath(f.commands.getItem(item.id)?.worktreePath ?? '', f.repo), true)
+		assert.equal(f.commands.getItem(item.id)?.branchName, null)
+	} finally {
+		process.chdir(oldCwd)
+		f.cleanup()
+	}
+})
 
 for (const evidence of ['own-literal', 'inherited', 'getter'] as const) {
 	test(`cancelled pre-readiness planning accepts only own literal session evidence: ${evidence}`, async () => {

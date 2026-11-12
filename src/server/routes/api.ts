@@ -535,6 +535,21 @@ export function apiRoutes({
 		return selected ?? stored ?? config.solver.workspace ?? 'worktree'
 	}
 
+	/**
+	 * The workspace Open in Okena acts on. An Item whose only workspace so far is
+	 * the canonical checkout (an earlier Main run or plan) opens that checkout
+	 * even when its next run is a Worktree run: the run creates the worktree and
+	 * carries a Main plan into it, so opening must not create one first.
+	 */
+	function okenaOpenWorkspace(
+		item: ItemRecord,
+		repoPath: string,
+		existingWorktreePath: string | undefined,
+	): SolverWorkspace {
+		const workspace = item.payload.kind === 'solve' ? effectiveSolverWorkspace(item, undefined) : 'worktree'
+		return existingWorktreePath && sameFilesystemPath(existingWorktreePath, repoPath) ? 'main' : workspace
+	}
+
 	function spawnerInstalled(name: string): boolean {
 		return listSpawnerAdapters().some(adapter => adapter.available && adapter.name === name)
 	}
@@ -1396,7 +1411,7 @@ export function apiRoutes({
 			const projectConfig = config.projects.find(project => project.slug === item.projectSlug)
 			if (projectConfig) {
 				const identity = resolveItemWorkspace(item)
-				const workspaceMode = item.payload.kind === 'solve' ? effectiveSolverWorkspace(item, undefined) : 'worktree'
+				const workspaceMode = okenaOpenWorkspace(item, projectConfig.repoPath, identity.existingWorktreePath)
 				const previewKey = [
 					item.profileId,
 					item.id,
@@ -1985,7 +2000,11 @@ export function apiRoutes({
 		if (!projectConfig) return c.json({ error: `Unknown project slug: ${item.projectSlug}` }, 400)
 
 		const identity = resolveItemWorkspace(item)
-		const workspaceMode = item.payload.kind === 'solve' ? effectiveSolverWorkspace(item, undefined) : 'worktree'
+		const nextWorkspace = item.payload.kind === 'solve' ? effectiveSolverWorkspace(item, undefined) : 'worktree'
+		const workspaceMode = okenaOpenWorkspace(item, projectConfig.repoPath, identity.existingWorktreePath)
+		if (item.status === 'running' && nextWorkspace !== 'main' && workspaceMode === 'main') {
+			return c.json({ error: 'The running Item has not prepared its worktree yet. Try again shortly.' }, 409)
+		}
 		if (item.status === 'running' && workspaceMode !== 'main' && !identity.existingWorktreePath) {
 			return c.json({ error: 'The running Item has not prepared its worktree yet. Try again shortly.' }, 409)
 		}

@@ -3660,6 +3660,67 @@ test('server opens every Item in Okena and persists a newly-created workspace wi
 	})
 })
 
+test('Open in Okena opens the main checkout for an Item whose only workspace is still the checkout', async () => {
+	await withTempDb(async db => {
+		const repo = mkdtempSync(join(tmpdir(), 'helm-open-okena-main-pointer-'))
+		const pointerConfig = configSchema.parse({
+			...config,
+			projects: [{ slug: 'helm', repoPath: repo, baseBranch: 'main' }],
+		})
+		const commands = new ItemCommands(db.items, pointerConfig)
+		const item = commands.createSolveItem({ title: 'Ran in Main', projectSlug: 'helm', prompt: 'Inspect.' })
+		// An earlier Main run recorded the checkout, then a restart recovered it;
+		// its next run is a Worktree run.
+		commands.setSolveItemWorkspace(item.id, 'main')
+		commands.startItem(item.id)
+		commands.recordExecutionWorkspaceIdentity(item.id, { worktreePath: repo, branchName: null, planDirName: 'p' })
+		commands.recoverStaleProcessingItems()
+		commands.setSolveItemWorkspace(item.id, 'worktree')
+		const openerCalls: Record<string, unknown>[] = []
+		const inspected: Record<string, unknown>[] = []
+		const api = apiRoutes({
+			config: pointerConfig,
+			configPath: 'helm.config.json',
+			db,
+			queue: queue as never,
+			poller: poller as never,
+			provider: provider as never,
+			spawner: spawner as never,
+			enricher: fakeEnricher as never,
+			createPlanningSpawner: createSpawner,
+			openItemInOkena: async params => {
+				openerCalls.push(params)
+				return {
+					worktreePath: repo,
+					projectId: 'okena-main',
+					terminalId: 'okena-terminal-1',
+					createdWorkspace: false,
+					focused: true,
+					notified: false,
+					activated: true,
+				}
+			},
+			inspectItemOkenaWorkspace: async params => {
+				inspected.push(params)
+				return { state: 'main', label: 'Focus main', detail: repo, branchName: null }
+			},
+		})
+		try {
+			assert.equal((await api.request(`/items/${item.id}`)).status, 200)
+			assert.equal(inspected[0]?.workspaceMode, 'main')
+			const response = await api.request(`/items/${item.id}/open-okena`, { method: 'POST' })
+			assert.equal(response.status, 200)
+			assert.equal(openerCalls[0]?.workspaceMode, 'main')
+			assert.equal(openerCalls[0]?.existingWorktreePath, undefined)
+			const stored = commands.getItem(item.id)
+			assert.equal(stored?.worktreePath, repo)
+			assert.equal(stored?.status, 'ready')
+		} finally {
+			rmSync(repo, { recursive: true, force: true })
+		}
+	})
+})
+
 test('Okena detail preview uses the configured main workspace default', async () => {
 	await withTempDb(async db => {
 		const mainConfig = configSchema.parse({

@@ -26,7 +26,12 @@ import type { SolveResult, Solver } from '../solver/solver.js'
 import { type ErrorPhase, errorPhase, isCancellation, phaseError } from '../util/errors.js'
 import { log } from '../util/logger.js'
 import { sameFilesystemPath } from '../util/path-identity.js'
-import { assertWorkspaceReuse, createWorktree, excludeHelmFiles } from '../worktree/manager.js'
+import {
+	assertWorkspaceReuse,
+	createWorktree,
+	excludeHelmFiles,
+	worktreeRegistrationForBranch,
+} from '../worktree/manager.js'
 import { AlmanacLoopRunner } from './loop-runner.js'
 import type { LoopRunner } from './loop-runner.js'
 
@@ -79,6 +84,74 @@ async function ensureItemWorktree(
 		return worktreePath
 	} catch (err) {
 		throw phaseError('worktree', `Worktree creation failed: ${err instanceof Error ? err.message : err}`)
+	}
+}
+
+/**
+ * The worktree an execution may reuse. A Worktree run never reuses the canonical
+ * checkout: an Item still pointing there was run or planned in Main earlier, and
+ * that pointer only says where the old attempt happened. Drop it so the run gets
+ * its own linked worktree (`carryMainPlan` brings a Main plan's documents along).
+ */
+function reusableWorktreePath(
+	recorded: string | undefined,
+	repoPath: string,
+	mainMode: boolean,
+	itemId: string,
+): string | undefined {
+	if (mainMode || !recorded || !sameFilesystemPath(recorded, repoPath)) return recorded
+	log.info('worker', `Item ${itemId} last ran or planned in the main checkout; creating its own worktree`)
+	return undefined
+}
+
+/**
+ * Whether the branch an Item records beside a canonical pointer is its own: an
+ * earlier Worktree attempt that failed before readiness reserved it and created
+ * its linked worktree. Anything else (a branch a legacy Main plan kept, i.e.
+ * whatever the checkout was on, possibly the base) is not this run's branch.
+ */
+async function ownsLinkedBranch(repoPath: string, branchName: string | null, baseRef: string): Promise<boolean> {
+	if (!branchName || branchName === baseRef) return false
+	const registration = await worktreeRegistrationForBranch(repoPath, branchName)
+	return registration?.exists === true && !sameFilesystemPath(registration.path, repoPath)
+}
+
+function pointsAtCheckout(item: ItemRecord, repoPath: string): boolean {
+	return item.worktreePath !== null && sameFilesystemPath(item.worktreePath, repoPath)
+}
+
+/** A Main plan to carry into this Worktree run's new worktree, if the Item has one. */
+function mainPlanSource(item: ItemRecord, repoPath: string, mainMode: boolean): PlanWorkspace | null {
+	if (mainMode || !item.plannedAt || !item.planDirName || !pointsAtCheckout(item, repoPath)) return null
+	return new PlanWorkspace(repoPath, item.planDirName)
+}
+
+/**
+ * Copy a Main plan's documents into the run's new worktree. Reads the canonical
+ * checkout only; writes only into the new worktree and never replaces a file there.
+ */
+function carryMainPlan(source: PlanWorkspace, target: PlanWorkspace, repoPath: string, worktreePath: string): void {
+	if (sameFilesystemPath(worktreePath, repoPath)) {
+		throw phaseError('worktree', 'Worktree execution cannot run in the canonical project checkout.')
+	}
+	if (!existsSync(source.dir)) {
+		log.warn('worker', `The plan prepared in the main checkout is gone (${source.dir}); running without it`)
+		return
+	}
+	let carried: ReturnType<PlanWorkspace['carryPlanFrom']>
+	try {
+		carried = target.carryPlanFrom(source)
+	} catch (error) {
+		// Deterministic (plan too large, unreadable): retrying cannot help, so this is
+		// not a transient worktree failure.
+		throw phaseError(
+			'solve',
+			`Could not copy the plan from the main checkout (${source.dir}) into the new worktree: ${error instanceof Error ? error.message : error}. Fix the plan files there, then retry.`,
+		)
+	}
+	log.info('worker', `Copied the main-checkout plan into ${worktreePath}`, { ...carried })
+	if (carried.kept.length > 0) {
+		log.warn('worker', `Kept the worktree's own copy of plan files: ${carried.kept.join(', ')}`)
 	}
 }
 
@@ -145,13 +218,20 @@ async function failOrReconcileSolve(
 	item: ItemRecord,
 	error: Error,
 	phase: ErrorPhase,
+	workspace: { repoPath: string; mainMode: boolean },
 	signal?: AbortSignal,
 ): Promise<void> {
 	if (phase === 'solve') {
 		const current = commands.getItem(itemId)
+		// A Worktree run that failed before its worktree was recorded still points
+		// at the canonical checkout; whatever that checkout holds is not this run's work.
+		const leftInCheckout =
+			!workspace.mainMode &&
+			current?.worktreePath != null &&
+			sameFilesystemPath(current.worktreePath, workspace.repoPath)
 		// branchName may be null (main-workspace run) — commits-ahead detection
 		// still applies; only the by-branch PR lookup degrades away.
-		if (current?.worktreePath && isItemAssigned(current)) {
+		if (current?.worktreePath && isItemAssigned(current) && !leftInCheckout) {
 			const { baseRef } = resolveItemWorkspace(current)
 			const work = await detectShippableWork(current.worktreePath, baseRef, current.branchName)
 			// A cancel can land while detection awaits (the Item is still `running`
@@ -266,7 +346,18 @@ export async function processSolveItem(
 		const taskContext = await buildSolveItemTaskContext(displayNamed, provider)
 		const workspaceMode = selectedWorkspace ?? config.solver.workspace ?? 'worktree'
 		const mainMode = workspaceMode === 'main'
-		const freshest = commands.getItem(itemId) ?? displayNamed
+		let freshest = commands.getItem(itemId) ?? displayNamed
+		// Left over from a Main run or plan. Captured before naming, which may give a
+		// Main plan a new dir name.
+		const leftMain = !mainMode && pointsAtCheckout(freshest, projectConfig.repoPath)
+		const mainPlan = mainPlanSource(freshest, projectConfig.repoPath, mainMode)
+		if (
+			leftMain &&
+			freshest.branchName !== null &&
+			!(await ownsLinkedBranch(projectConfig.repoPath, freshest.branchName, item.baseRef))
+		) {
+			freshest = commands.recordExecutionWorkspaceIdentity(itemId, { branchName: null })
+		}
 
 		// The background Enricher prewarms source and Queue Items, but an immediate
 		// Start can race that pass. Wait for one bounded, best-effort naming attempt
@@ -284,10 +375,20 @@ export async function processSolveItem(
 					agent: selectedAgent ?? config.solver.agent,
 					signal,
 					deps: deps.workspaceName,
+					// A Main run or plan left no branch; this run names its own.
+					transitionFromMain: leftMain && freshest.branchName === null,
+					keepPlanDirName: mainPlan !== null,
 				})
 
 		requireItemAssignment(named)
-		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(named)
+		const resolvedWorkspace = resolveItemWorkspace(named)
+		const { baseRef, planDirName, branchName } = resolvedWorkspace
+		const existingWorktreePath = reusableWorktreePath(
+			resolvedWorkspace.existingWorktreePath,
+			projectConfig.repoPath,
+			mainMode,
+			itemId,
+		)
 		let executionContext = taskContext
 		let knowledgeSnapshot: KnowledgeSnapshot | null = null
 		let knowledgeBinding: ResolvedKnowledgeBinding | null = null
@@ -339,6 +440,9 @@ export async function processSolveItem(
 			if (++readinessCalls !== 1)
 				throw phaseError('worktree', 'Solver violated the required workspace readiness contract')
 			readinessPath = worktreePath
+			if (mainPlan && !existingWorktreePath) {
+				carryMainPlan(mainPlan, new PlanWorkspace(worktreePath, planDirName), projectConfig.repoPath, worktreePath)
+			}
 			const adapterContext = preparedContext.onWorktreeReady(worktreePath)
 			commands.recordExecutionWorkspaceIdentity(
 				itemId,
@@ -449,7 +553,19 @@ export async function processSolveItem(
 			commands.cancelProcessingItem(itemId, 'Item cancelled by user', phase)
 			log.warn('worker', `Solve Item cancelled: ${item.title}`)
 		} else {
-			await failOrReconcileSolve(commands, itemId, item, error, phase, signal)
+			const mainRun =
+				((item.payload.kind === 'solve' ? item.payload.solverWorkspace : undefined) ??
+					config.solver.workspace ??
+					'worktree') === 'main'
+			await failOrReconcileSolve(
+				commands,
+				itemId,
+				item,
+				error,
+				phase,
+				{ repoPath: projectConfig.repoPath, mainMode: mainRun },
+				signal,
+			)
 		}
 	}
 }
@@ -544,7 +660,20 @@ export async function processLoopItem(
 		// Loop Items keep the deterministic helm/item name: their title is a PRD
 		// path, not a single conventional change, so
 		// AI naming is scoped to solve Items only.
-		const { baseRef, planDirName, branchName, existingWorktreePath } = resolveItemWorkspace(item)
+		// A branch kept on a legacy Main plan is never this run's branch (see ownsLinkedBranch).
+		const dropBranch =
+			!mainMode &&
+			pointsAtCheckout(item, projectConfig.repoPath) &&
+			!(await ownsLinkedBranch(projectConfig.repoPath, item.branchName, item.baseRef))
+		const resolvedWorkspace = resolveItemWorkspace(dropBranch ? { ...item, branchName: null } : item)
+		const { baseRef, planDirName, branchName } = resolvedWorkspace
+		const mainPlan = mainPlanSource(item, projectConfig.repoPath, mainMode)
+		const existingWorktreePath = reusableWorktreePath(
+			resolvedWorkspace.existingWorktreePath,
+			projectConfig.repoPath,
+			mainMode,
+			itemId,
+		)
 		commands.recordExecutionWorkspaceIdentity(
 			itemId,
 			mainMode ? { planDirName, branchName: null } : { planDirName, branchName },
@@ -556,13 +685,16 @@ export async function processLoopItem(
 					'This plan was prepared in a Worktree. Re-plan with Workspace set to Main before starting a loop in Main.',
 				)
 			}
-			if (!mainMode && !existingWorktreePath) {
+			if (!mainMode && !existingWorktreePath && !mainPlan) {
 				throw phaseError('solve', 'Planned worktree is missing. Re-plan the Item before starting a loop.')
 			}
 		}
 		const worktreePath = mainMode
 			? projectConfig.repoPath
 			: await ensureItemWorktree(projectConfig, baseRef, branchName, existingWorktreePath)
+		if (mainPlan && !existingWorktreePath) {
+			carryMainPlan(mainPlan, new PlanWorkspace(worktreePath, planDirName), projectConfig.repoPath, worktreePath)
+		}
 		if (mainMode) {
 			await assertWorkspaceReuse(projectConfig.repoPath, branchName, worktreePath, workspaceMode)
 			await excludeHelmFiles(worktreePath)
