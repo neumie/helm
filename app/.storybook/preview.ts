@@ -14,7 +14,15 @@ const preview: Preview = {
 			// Full review surfaces are the first thing a designer sees; lower-level
 			// inventories follow from composition down to primitive.
 			storySort: {
-				order: ['Views', ['Sidebar', 'Terminal workspace', 'Run context editor'], 'Compositions', 'Primitives', '*'],
+				// Proposals/ (design variants waiting for Jakub's pick) come first so a link lands next to its siblings.
+				order: [
+					'Proposals',
+					'Views',
+					['Sidebar', 'Terminal workspace', 'Run context editor'],
+					'Compositions',
+					'Primitives',
+					'*',
+				],
 			},
 		},
 		// Canvas backgrounds mirror the app's background ladder (§2.1); the

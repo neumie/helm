@@ -6,3 +6,43 @@ body {
 	height: auto;
 	overflow: auto;
 }
+
+/* Proposals/ caption strip (app/src/renderer/proposals/proposal.tsx). Storybook-only; tokens only. */
+.proposal {
+	display: flex;
+	flex-direction: column;
+	min-height: 100%;
+}
+.proposal-caption {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 4px 12px;
+	padding: 8px 16px;
+	border-bottom: 1px solid var(--hairline);
+	background: var(--chrome);
+	color: var(--text-1);
+	font: 12px / 18px var(--font-ui);
+}
+.proposal-id {
+	color: var(--accent);
+	font-weight: 600;
+}
+.proposal-variant {
+	color: var(--text-0);
+	font-weight: 600;
+}
+.proposal-facts {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0 12px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	font-family: var(--font-mono);
+	font-size: 11px;
+}
+.proposal-stage {
+	flex: 1;
+	min-height: 0;
+}
