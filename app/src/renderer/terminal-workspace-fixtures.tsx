@@ -32,6 +32,7 @@ import {
 } from './agent-dock/agent-dock-fixtures'
 import type { AgentDockPosition, AgentsLayout } from './agent-dock/presentation'
 import { TERM_FONT_DEFAULT, type appearance as productionAppearance, termThemeFromTokens } from './appearance'
+import { ICONS, iconNode } from './icons/icons'
 import { mountSidebarLayout } from './sidebar-layout'
 import { type MountedTerminalWorkspace, type TerminalWorkspaceHelm, mountTerminalWorkspace } from './terminal-workspace'
 
@@ -174,21 +175,7 @@ export function backgroundRootNode(): HTMLDivElement {
 	toggle.setAttribute('aria-label', 'Background terminals')
 	toggle.setAttribute('aria-haspopup', 'dialog')
 	toggle.setAttribute('aria-expanded', 'false')
-	const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-	svg.setAttribute('class', 'background-icon')
-	svg.setAttribute('width', '16')
-	svg.setAttribute('height', '16')
-	svg.setAttribute('viewBox', '0 0 16 16')
-	svg.setAttribute('fill', 'currentColor')
-	svg.setAttribute('aria-hidden', 'true')
-	for (const d of [
-		'M7 1a.75.75 0 0 1 .75.75V6h-1.5V1.75A.75.75 0 0 1 7 1ZM6.25 6v2.94L5.03 7.72a.75.75 0 0 0-1.06 1.06l2.5 2.5a.75.75 0 0 0 1.06 0l2.5-2.5a.75.75 0 1 0-1.06-1.06L7.75 8.94V6H10a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2.25Z',
-		'M4.268 14A2 2 0 0 0 6 15h6a2 2 0 0 0 2-2v-3a2 2 0 0 0-1-1.732V11a3 3 0 0 1-3 3H4.268Z',
-	]) {
-		const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-		path.setAttribute('d', d)
-		svg.append(path)
-	}
+	const svg = iconNode(ICONS.backgroundStack)
 	const current = shellNode('span', 'bg-current', 'bg-current')
 	current.hidden = true
 	const count = shellNode('span', 'bg-count', 'bg-count')

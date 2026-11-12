@@ -8,6 +8,7 @@ import type { CSSProperties, ReactNode, Ref } from 'react'
 import type { DashboardTone } from '../../shared-helm'
 import { Btn } from '../button'
 import { IconBtn } from '../icon-button'
+import { GLYPH } from '../icons/Icon'
 import { CHIP_CLASS } from './model'
 import type { StatusTone } from './model'
 
@@ -16,63 +17,8 @@ import type { StatusTone } from './model'
 
 export { Btn, IconBtn }
 
-// Inline SVG glyphs — stroke follows currentColor so button tones apply.
-const glyph = (d: string, size = 14) => (
-	<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-		<path d={d} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-	</svg>
-)
-
-export const GLYPH = {
-	plus: glyph('M8 3v10M3 8h10'),
-	menu: (
-		<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-			<path
-				fillRule="evenodd"
-				d="M2 4.75A.75.75 0 0 1 2.75 4h10.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 4.75Zm0 6.5a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1-.75-.75Z"
-				clipRule="evenodd"
-			/>
-		</svg>
-	),
-	back: glyph('M9.5 3.5 5 8l4.5 4.5'),
-	chevronRight: glyph('M6 3.5 10.5 8 6 12.5', 12),
-	chevronDown: glyph('M3.5 6 8 10.5 12.5 6', 12),
-	ellipsis: (
-		<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-			<circle cx="3" cy="8" r="1.3" />
-			<circle cx="8" cy="8" r="1.3" />
-			<circle cx="13" cy="8" r="1.3" />
-		</svg>
-	),
-	external: glyph('M6.5 4H4v8h8V9.5M9 3h4v4M13 3 7.5 8.5', 12),
-	copy: glyph('M6 6h7v7H6zM10 6V3H3v7h3', 12),
-	check: glyph('M3.5 8.5 6.5 11.5 12.5 4.5'),
-	agent: glyph('M4 5h8v7H4zM8 2.5V5M6 8h.1M9.9 8h.1M6 10h4'),
-	manual: glyph('M8 7a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5M3.5 13a4.5 4 0 0 1 9 0'),
-	play: glyph('M5 3.5 12 8 5 12.5z'),
-	queue: glyph('M8 2.5v7M5.5 7 8 9.5 10.5 7M3.5 12.5h9'),
-	retry: glyph('M12.5 5.5V2.8l-2.2 1.4A5 5 0 1 0 13 8'),
-	stop: glyph('M4.5 4.5h7v7h-7z'),
-	pause: glyph('M5.5 4v8M10.5 4v8'),
-	return: glyph('M6.5 4 3 7.5 6.5 11M3.5 7.5H9a4 4 0 0 1 4 4'),
-	plan: glyph('M4 2.5h6l2 2V13.5H4zM10 2.5v2h2M6 7h4M6 9.5h4', 13),
-	archive: glyph('M3 5h10v8H3zM2.5 3h11v2h-11M6.5 8h3'),
-	calendar: (
-		<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-			<path d="M5.75 7.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM5 10.25a.75.75 0 1 1 1.5 0 .75.75 0 0 1-1.5 0ZM10.25 7.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM7.25 8.25a.75.75 0 1 1 1.5 0 .75.75 0 0 1-1.5 0ZM8 9.5A.75.75 0 1 0 8 11a.75.75 0 0 0 0-1.5Z" />
-			<path
-				fillRule="evenodd"
-				d="M4.75 1a.75.75 0 0 0-.75.75V3a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2V1.75a.75.75 0 0 0-1.5 0V3h-5V1.75A.75.75 0 0 0 4.75 1ZM3.5 7a1 1 0 0 1 1-1h7a1 1 0 0 1 1 1v4.5a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1V7Z"
-				clipRule="evenodd"
-			/>
-		</svg>
-	),
-	group: glyph('M3 3.5h10v3H3zM3 9.5h7v3H3z'),
-	settings: glyph(
-		'M8 5.5A2.5 2.5 0 1 0 8 10.5 2.5 2.5 0 0 0 8 5.5M8 2.5v1M8 12.5v1M2.5 8h1M12.5 8h1M4.1 4.1l.7.7M11.2 11.2l.7.7M11.9 4.1l-.7.7M4.8 11.2l-.7.7',
-	),
-	close: glyph('M4 4l8 8M12 4l-8 8'),
-}
+// Icon glyphs live in the icon module (app/src/renderer/icons/); re-exported for the sidebar's consumers.
+export { GLYPH }
 
 // ---------------------------------------------------------------------------
 // Chips & dots

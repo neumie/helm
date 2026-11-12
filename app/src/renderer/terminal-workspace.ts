@@ -21,6 +21,7 @@ import { type ActivityIndicatorVariant, createActivityIndicator, setActivityIndi
 import { appearance as productionAppearance } from './appearance'
 import { createButton } from './button'
 import { createIconButton } from './icon-button'
+import { ICONS, iconNode } from './icons/icons'
 import { type SynchronizedOutputGuard, createSynchronizedOutputGuard } from './synchronized-output'
 import {
 	dragThresholdExceeded,
@@ -426,20 +427,9 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		if (color !== null) element.style.setProperty('--group-color', tabGroupColorCssVar(color))
 	}
 
-	// Heroicons “Folder”, 16px solid (MIT). See THIRD_PARTY_NOTICES.md.
-	const GROUP_ICON_PATH =
-		'M2 3.5A1.5 1.5 0 0 1 3.5 2h2.879a1.5 1.5 0 0 1 1.06.44l1.122 1.12A1.5 1.5 0 0 0 9.62 4H12.5A1.5 1.5 0 0 1 14 5.5v1.401a2.986 2.986 0 0 0-1.5-.401h-9c-.546 0-1.059.146-1.5.401V3.5ZM2 9.5v3A1.5 1.5 0 0 0 3.5 14h9a1.5 1.5 0 0 0 1.5-1.5v-3A1.5 1.5 0 0 0 12.5 8h-9A1.5 1.5 0 0 0 2 9.5Z'
-
+	// Heroicons “Folder”, 16px solid (MIT); geometry and source in the icon module.
 	function createGroupIcon(): SVGSVGElement {
-		const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-		svg.classList.add('group-icon')
-		svg.setAttribute('viewBox', '0 0 16 16')
-		svg.setAttribute('fill', 'currentColor')
-		svg.setAttribute('aria-hidden', 'true')
-		const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-		path.setAttribute('d', GROUP_ICON_PATH)
-		svg.append(path)
-		return svg
+		return iconNode(ICONS.folder)
 	}
 
 	function collapsedGroupAgentDisplay(

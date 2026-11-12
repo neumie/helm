@@ -51,17 +51,16 @@ Helm does not ship pdf.js's scripting sandbox (QuickJS) or the no-wasm JavaScrip
 
 ## Heroicons (16px solid)
 
-Helm vendors native-size Heroicons for distinct concepts:
+Helm vendors native-size Heroicons for distinct concepts. Their exact geometry and source live in the icon module, `app/src/renderer/icons/icons.ts` (entry name in parentheses):
 
-- Terminal groups — **Folder**: <https://github.com/tailwindlabs/heroicons/blob/616b7a4dbbf3d011760af8066262cd5c6b3868f3/optimized/16/solid/folder.svg>
-- Background terminals — **Arrow Down on Square Stack**: <https://github.com/tailwindlabs/heroicons/blob/616b7a4dbbf3d011760af8066262cd5c6b3868f3/optimized/16/solid/arrow-down-on-square-stack.svg>
-- Scheduled runs — **Calendar Days**: <https://github.com/tailwindlabs/heroicons/blob/616b7a4dbbf3d011760af8066262cd5c6b3868f3/optimized/16/solid/calendar-days.svg>
-- Remote composer send — **Arrow Up**, v2.2.0, exact geometry in `app/src/renderer/remote/RemoteArrow.tsx`: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/arrow-up.svg>
-- Remote navigation drawer — **Bars 2**, v2.2.0, exact geometry in `app/src/renderer/sidebar/ui.tsx`: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/bars-2.svg>
-- Remote latest-message navigation — **Arrow Down**, v2.2.0, same module: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/arrow-down.svg>
+- Terminal groups — **Folder** (`folder`): <https://github.com/tailwindlabs/heroicons/blob/616b7a4dbbf3d011760af8066262cd5c6b3868f3/optimized/16/solid/folder.svg>
+- Background terminals — **Arrow Down on Square Stack** (`backgroundStack`; `app/src/renderer/index.html` keeps a static first-paint copy, held equal by `tests/design-icons.test.ts`): <https://github.com/tailwindlabs/heroicons/blob/616b7a4dbbf3d011760af8066262cd5c6b3868f3/optimized/16/solid/arrow-down-on-square-stack.svg>
+- Scheduled runs — **Calendar Days** (`calendar`): <https://github.com/tailwindlabs/heroicons/blob/616b7a4dbbf3d011760af8066262cd5c6b3868f3/optimized/16/solid/calendar-days.svg>
+- Remote composer send — **Arrow Up** (`arrowUp`), v2.2.0: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/arrow-up.svg>
+- Remote navigation drawer — **Bars 2** (`menu`), v2.2.0: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/bars-2.svg>
+- Remote latest-message navigation — **Arrow Down** (`arrowDown`), v2.2.0: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/arrow-down.svg>
+- Document Review passage conversation — **Chat Bubble Left Ellipsis** (`chatBubbleLeftEllipsis`), v2.2.0: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/chat-bubble-left-ellipsis.svg>
 - Remote PWA launcher — **Command Line**, v2.2.0, exact source `app/assets/remote/command-line.svg`; generated PNGs use Helm colors and mask-safe padding: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/command-line.svg>
-- Remote session favorites — **Star**, v2.2.0, exact geometry in `app/src/renderer/remote/RemoteFavoriteStar.tsx`: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/star.svg>
-- Document Review passage conversation — **Chat Bubble Left Ellipsis**, v2.2.0, exact geometry in `app/src/renderer/document-review/PassageComments.tsx`: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/chat-bubble-left-ellipsis.svg>
 - Project: <https://heroicons.com>
 - Copyright © Tailwind Labs, Inc.
 - License: MIT

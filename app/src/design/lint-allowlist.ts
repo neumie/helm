@@ -582,26 +582,13 @@ h1 | font-size | 14px | D9 extension popup (moves onto Helm tokens)
 .vg-model__trigger | font-weight | 650 | D8 off-scale values (weights 650/700)
 
 ## inline-svg
-### app/src/renderer/document-review/PassageComments.tsx
-in PassageCommentBubble | jsx | <svg viewBox="0 0 16 16"> | D6 hand-drawn icons (S7 moves them to the icon module)
 ### app/src/renderer/index.html
-html | markup | <svg viewBox="0 0 16 16"> | D6 hand-drawn icons (S7 moves them to the icon module)
-### app/src/renderer/remote/RemoteArrow.tsx
-in RemoteArrow | jsx | <svg viewBox="0 0 16 16"> | D6 hand-drawn icons (S7 moves them to the icon module)
-### app/src/renderer/sidebar-layout.ts
-in svg | createElementNS | 'svg' | D6 hand-drawn icons (S7 moves them to the icon module)
+html | markup | <svg viewBox="0 0 16 16"> | §9 ruling 54: static first-paint copy of the icon module's backgroundStack, held equal by tests/design-icons.test.ts
 ### app/src/renderer/sidebar/sidebar.css
-.select | background-image | url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' … #b8a367f3 | D6 hand-drawn icons (S7 moves them to the icon module)
-### app/src/renderer/sidebar/ui.tsx
-in calendar | jsx | <svg viewBox="0 0 16 16"> | D6 hand-drawn icons (S7 moves them to the icon module)
-in ellipsis | jsx | <svg viewBox="0 0 16 16"> | D6 hand-drawn icons (S7 moves them to the icon module)
-in glyph | jsx | <svg viewBox="0 0 16 16"> | D6 hand-drawn icons (S7 moves them to the icon module)
-in menu | jsx | <svg viewBox="0 0 16 16"> | D6 hand-drawn icons (S7 moves them to the icon module)
-### app/src/renderer/terminal-workspace.ts
-in svg | createElementNS | 'svg' | D6 hand-drawn icons (S7 moves them to the icon module)
+.select | background-image | url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' … #b8a367f3 | D6 hand-drawn icons (a CSS data URI, listed in ICONS_OUTSIDE_MODULE)
 ### extension/src/Widget.tsx
-in ModelSelect | jsx | <svg viewBox="0 0 10 6"> | D6 hand-drawn icons (S7 moves them to the icon module)
-in ModelSelect | jsx | <svg viewBox="0 0 10 8"> | D6 hand-drawn icons (S7 moves them to the icon module)
+in ModelSelect | jsx | <svg viewBox="0 0 10 6"> | D6 hand-drawn icons (D1: the SolidJS extension keeps its own icons)
+in ModelSelect | jsx | <svg viewBox="0 0 10 8"> | D6 hand-drawn icons (D1: the SolidJS extension keeps its own icons)
 `
 
 export const DESIGN_LINT_ALLOWLIST: readonly AllowlistEntry[] = parseBaseline(DESIGN_LINT_BASELINE)

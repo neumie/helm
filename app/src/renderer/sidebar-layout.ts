@@ -1,4 +1,5 @@
 import { createIconButton } from './icon-button'
+import { ICONS, iconNode } from './icons/icons'
 import type { LeftColumnMode } from './left-column'
 
 /**
@@ -59,24 +60,7 @@ export function mountSidebarLayout({
 	const toggle = createIconButton({ label: 'Hide task sidebar', glyph: '', className: 'sidebar-toggle' })
 	toggle.id = 'sidebar-toggle'
 	toggle.setAttribute('aria-controls', 'left')
-	const svg = ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'svg')
-	svg.setAttribute('width', '16')
-	svg.setAttribute('height', '16')
-	svg.setAttribute('viewBox', '0 0 20 20')
-	svg.setAttribute('fill', 'none')
-	svg.setAttribute('stroke', 'currentColor')
-	svg.setAttribute('stroke-width', '1.5')
-	svg.setAttribute('aria-hidden', 'true')
-	const frame = ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'rect')
-	frame.setAttribute('x', '3')
-	frame.setAttribute('y', '4')
-	frame.setAttribute('width', '14')
-	frame.setAttribute('height', '12')
-	frame.setAttribute('rx', '2')
-	const edge = ownerDocument.createElementNS('http://www.w3.org/2000/svg', 'path')
-	edge.setAttribute('d', 'M8 4v12')
-	svg.append(frame, edge)
-	toggle.replaceChildren(svg)
+	toggle.replaceChildren(iconNode(ICONS.sidebarToggle, ownerDocument))
 	const dragSpace = ownerDocument.createElement('div')
 	dragSpace.className = 'topbar-left-drag-space'
 	dragSpace.setAttribute('aria-hidden', 'true')
