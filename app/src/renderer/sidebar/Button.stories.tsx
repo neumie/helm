@@ -1,6 +1,7 @@
 // Button primitive (§3.1): four tones, two sizes, disabled/busy, block; icon buttons.
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useRef, useState } from 'react'
+import { StateGrid } from '../storybook/StateGrid'
 import { Btn, GLYPH, IconBtn } from './ui'
 
 const meta: Meta = {
@@ -164,5 +165,86 @@ export const CurrentDestination: Story = {
 			</Btn>
 			<Btn tone="ghost">History</Btn>
 		</nav>
+	),
+}
+
+/** Forced interaction states (§7 StateGrid). Buttons have no pressed style, so
+ *  there is no active column; busy is the real prop (label + ellipsis,
+ *  disabled). */
+export const States: Story = {
+	render: () => (
+		<div style={{ display: 'grid', gap: 24 }}>
+			<StateGrid
+				states={['rest', 'hover', 'focus-visible', 'disabled', 'busy']}
+				rows={[
+					{
+						label: 'primary',
+						element: <Btn tone="primary">Approve</Btn>,
+						variants: {
+							busy: (
+								<Btn tone="primary" busy>
+									Saving
+								</Btn>
+							),
+						},
+					},
+					{
+						label: 'quiet',
+						element: <Btn tone="quiet">Retry</Btn>,
+						variants: {
+							busy: (
+								<Btn tone="quiet" busy>
+									Retry
+								</Btn>
+							),
+						},
+					},
+					{
+						label: 'danger',
+						element: <Btn tone="danger">Reject</Btn>,
+						variants: {
+							busy: (
+								<Btn tone="danger" busy>
+									Reject
+								</Btn>
+							),
+						},
+					},
+					{
+						label: 'ghost',
+						element: <Btn tone="ghost">Cancel</Btn>,
+						variants: {
+							busy: (
+								<Btn tone="ghost" busy>
+									Cancel
+								</Btn>
+							),
+						},
+					},
+					{
+						label: 'quiet, small',
+						element: (
+							<Btn tone="quiet" sm>
+								Retry
+							</Btn>
+						),
+						variants: {
+							busy: (
+								<Btn tone="quiet" sm busy>
+									Retry
+								</Btn>
+							),
+						},
+					},
+				]}
+			/>
+			<StateGrid
+				states={['rest', 'hover', 'focus-visible', 'disabled']}
+				rows={[
+					{ label: 'icon button', element: <IconBtn label="More">{GLYPH.ellipsis}</IconBtn> },
+					{ label: 'icon button, agent', element: <IconBtn label="Start agent">{GLYPH.agent}</IconBtn> },
+				]}
+			/>
+		</div>
 	),
 }

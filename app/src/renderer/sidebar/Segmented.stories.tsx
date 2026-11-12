@@ -3,12 +3,13 @@
 // text hover plus 2px accent-underline active state.
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useState } from 'react'
+import { StateGrid } from '../storybook/StateGrid'
 import type { BucketKey } from './model'
 import { Segmented } from './ui'
 
 const meta: Meta = {
 	title: 'Primitives/Segmented control',
-	decorators: [story => <div style={{ width: 340 }}>{story()}</div>],
+	decorators: [(story, { name }) => (name === 'States' ? story() : <div style={{ width: 340 }}>{story()}</div>)],
 }
 
 export default meta
@@ -104,5 +105,74 @@ export const LifecycleIndexStates: Story = {
 				</div>
 			))}
 		</div>
+	),
+}
+
+const noop = () => {}
+const WORKSPACE_OPTIONS = [
+	{ value: 'worktree', label: 'Worktree' },
+	{ value: 'main', label: 'Main' },
+]
+const AGENT_OPTIONS = [
+	{ value: 'claude', label: 'Claude Code' },
+	{ value: 'codex', label: 'Codex' },
+]
+const LIFECYCLE_OPTIONS = [
+	{ value: 'inbox', label: 'Inbox', count: 3 },
+	{ value: 'queue', label: 'Queue', count: 5 },
+	{ value: 'review', label: 'Review' },
+]
+
+/** Forced states on the unselected option (§7 StateGrid). The boxed and commit
+ *  tracks have no hover style of their own (the option is a plain button), so
+ *  their hover cell says "no style" and only focus-visible differs; the
+ *  lifecycle index raises text on hover and focus. The last row forces the
+ *  selected option, which has no hover style either. */
+export const States: Story = {
+	render: () => (
+		<StateGrid
+			states={['rest', 'hover', 'focus-visible']}
+			rows={[
+				{
+					label: 'boxed',
+					target: '.segment:not(.segment-active)',
+					unstyled: ['hover'],
+					element: (
+						<div style={{ width: 180 }}>
+							<Segmented label="Workspace" value="worktree" onChange={noop} options={WORKSPACE_OPTIONS} />
+						</div>
+					),
+				},
+				{
+					label: 'commit',
+					target: '.segment:not(.segment-active)',
+					unstyled: ['hover'],
+					element: (
+						<div style={{ width: 200 }}>
+							<Segmented label="Agent" commit value="claude" onChange={noop} options={AGENT_OPTIONS} />
+						</div>
+					),
+				},
+				{
+					label: 'index',
+					target: '.segment:not(.segment-active)',
+					element: (
+						<div style={{ width: 240 }}>
+							<Segmented variant="index" label="Lifecycle" value="inbox" onChange={noop} options={LIFECYCLE_OPTIONS} />
+						</div>
+					),
+				},
+				{
+					label: 'index, selected',
+					target: '.segment-active',
+					unstyled: ['hover'],
+					element: (
+						<div style={{ width: 240 }}>
+							<Segmented variant="index" label="Lifecycle" value="inbox" onChange={noop} options={LIFECYCLE_OPTIONS} />
+						</div>
+					),
+				},
+			]}
+		/>
 	),
 }

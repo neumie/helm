@@ -169,7 +169,8 @@
 	transition: background-color 140ms ease-out, color 140ms ease-out;
 }
 @media (hover: hover) {
-	.icon-btn:hover {
+	.icon-btn:hover,
+	.icon-btn[data-force-state="hover"] {
 		background: var(--fill-subtle);
 		color: var(--text-0);
 	}
@@ -242,7 +243,8 @@
 	transition: background-color 140ms ease-out, color 140ms ease-out;
 }
 @media (hover: hover) {
-	.project-trigger:hover {
+	.project-trigger:hover,
+	.project-trigger[data-force-state="hover"] {
 		background: var(--fill-subtle);
 		color: var(--text-0);
 	}
@@ -365,7 +367,9 @@
 }
 @media (hover: hover) {
 	.segmented-index .segment:hover:not(.segment-active),
-	.segmented-index .segment:focus-visible:not(.segment-active) {
+	.segmented-index .segment[data-force-state="hover"]:not(.segment-active),
+	.segmented-index .segment:focus-visible:not(.segment-active),
+	.segmented-index .segment[data-force-state="focus-visible"]:not(.segment-active) {
 		color: var(--text-0);
 	}
 }
@@ -398,7 +402,9 @@
 }
 @media (hover: hover) {
 	.segmented-index .segment:hover:not(.segment-active) .segment-count,
+	.segmented-index .segment[data-force-state="hover"]:not(.segment-active) .segment-count,
 	.segmented-index .segment:focus-visible:not(.segment-active) .segment-count,
+	.segmented-index .segment[data-force-state="focus-visible"]:not(.segment-active) .segment-count,
 	.segmented-index .segment-active .segment-count {
 		color: var(--text-1);
 	}
@@ -431,7 +437,9 @@
 }
 @media (hover: hover) {
 	.item-row-actions .icon-btn:hover,
-	.item-row-actions .icon-btn:focus-visible {
+	.item-row-actions .icon-btn[data-force-state="hover"],
+	.item-row-actions .icon-btn:focus-visible,
+	.item-row-actions .icon-btn[data-force-state="focus-visible"] {
 		color: var(--text-0);
 	}
 }
@@ -458,11 +466,13 @@
 	transition: background-color 140ms ease-out;
 }
 @media (hover: hover) {
-	.item-row:hover {
+	.item-row:hover,
+	.item-row[data-force-state="hover"] {
 		background: var(--fill-subtle);
 	}
 }
-.item-row:active {
+.item-row:active,
+.item-row[data-force-state="active"] {
 	background: var(--fill-raised);
 }
 
@@ -724,6 +734,7 @@
 }
 @media (hover: hover) {
 	.menu-item:hover,
+	.menu-item[data-force-state="hover"],
 	.menu-item-active {
 		background: var(--fill-subtle);
 	}
@@ -738,6 +749,7 @@
 }
 @media (hover: hover) {
 	.menu-item-danger:hover,
+	.menu-item-danger[data-force-state="hover"],
 	.menu-item-danger.menu-item-active {
 		background: var(--danger-soft);
 	}
@@ -962,7 +974,8 @@
 	transition: opacity 140ms ease-out;
 }
 @media (hover: hover) {
-	.action-row:hover:not(:disabled)::after {
+	.action-row:hover:not(:disabled)::after,
+	.action-row[data-force-state="hover"]:not(:disabled)::after {
 		background: var(--fill-subtle);
 		opacity: 1;
 	}
@@ -1251,7 +1264,8 @@ button.banner {
 	transition: color 140ms ease-out;
 }
 @media (hover: hover) {
-	.field-reset:hover {
+	.field-reset:hover,
+	.field-reset[data-force-state="hover"] {
 		color: var(--text-1);
 	}
 }
@@ -1543,11 +1557,13 @@ button.banner {
 	color: var(--text-2);
 }
 @media (hover: hover) {
-	.input:hover {
+	.input:hover,
+	.input[data-force-state="hover"] {
 		border-color: var(--hairline-strong);
 	}
 }
-.input:focus {
+.input:focus,
+.input[data-force-state="focus-visible"] {
 	border-color: var(--accent);
 }
 .input:disabled {
@@ -1599,11 +1615,13 @@ button.banner {
 	font-weight: 600;
 }
 @media (hover: hover) {
-	.input.new-item-title-input:hover {
+	.input.new-item-title-input:hover,
+	.input.new-item-title-input[data-force-state="hover"] {
 		border-color: var(--hairline-strong);
 	}
 }
-.input.new-item-title-input:focus {
+.input.new-item-title-input:focus,
+.input.new-item-title-input[data-force-state="focus-visible"] {
 	border-color: var(--accent);
 }
 .new-item-prompt-field {

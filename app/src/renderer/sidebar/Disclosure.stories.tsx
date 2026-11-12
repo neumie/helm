@@ -2,16 +2,20 @@
 // section-header action. Content SNAPS open, never height-animates, and renders
 // only while open.
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { StateGrid } from '../storybook/StateGrid'
 import { Disclosure } from './ui'
 
 const meta: Meta = {
 	title: 'Compositions/Disclosure group',
 	decorators: [
-		story => (
-			<div className="page-scroll" style={{ width: 340, height: 240 }}>
-				{story()}
-			</div>
-		),
+		(story, { name }) =>
+			name === 'States' ? (
+				story()
+			) : (
+				<div className="page-scroll" style={{ width: 340, height: 240 }}>
+					{story()}
+				</div>
+			),
 	],
 }
 
@@ -54,5 +58,37 @@ export const WithSummaryAtRest: Story = {
 		>
 			<p className="section-description">The four run-selection fields render here when open.</p>
 		</Disclosure>
+	),
+}
+
+/** Forced states (§7 StateGrid) on the section-header action (a small quiet
+ *  Btn); `open` is the real expanded state with its content mounted. */
+export const States: Story = {
+	render: () => (
+		<StateGrid
+			states={['rest', 'hover', 'focus-visible', 'open']}
+			rows={[
+				{
+					label: 'header action',
+					target: '.card-head button',
+					element: (
+						<div className="page-scroll" style={{ width: 240 }}>
+							<Disclosure heading="Solve input" label="Show" hideLabel="Hide">
+								<section className="log-well">{INPUT}</section>
+							</Disclosure>
+						</div>
+					),
+					variants: {
+						open: (
+							<div className="page-scroll" style={{ width: 240 }}>
+								<Disclosure heading="Solve input" label="Show" hideLabel="Hide" defaultOpen>
+									<section className="log-well">{INPUT}</section>
+								</Disclosure>
+							</div>
+						),
+					},
+				},
+			]}
+		/>
 	),
 }

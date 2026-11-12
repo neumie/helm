@@ -31,8 +31,9 @@ test('tappable rows use a square full-bleed hover band on the page grid', () => 
 
 test('row hover fill leaves breathing room around separators', () => {
 	assert.match(css, /\.action-row::after\s*\{[^}]*inset:\s*4px 0/s)
-	assert.match(css, /\.action-row:hover:not\(:disabled\)::after\s*\{[^}]*background:\s*var\(--fill-subtle\)/s)
-	assert.doesNotMatch(css, /\.action-row:hover:not\(:disabled\)\s*\{[^}]*background:/s)
+	// The hover rule may also list its StateGrid forced copy (design-system §7) before the brace.
+	assert.match(css, /\.action-row:hover:not\(:disabled\)::after(?:,\s*[^{,]+)*\s*\{[^}]*background:\s*var\(--fill-subtle\)/s)
+	assert.doesNotMatch(css, /\.action-row:hover:not\(:disabled\)(?:,\s*[^{,]+)*\s*\{[^}]*background:/s)
 })
 
 test('lifecycle index owns the full-width hairline and visible inactive hover', () => {

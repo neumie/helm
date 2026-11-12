@@ -39,7 +39,8 @@
 	color: var(--on-accent);
 }
 
-.btn-primary:hover:not(:disabled) {
+.btn-primary:hover:not(:disabled),
+.btn-primary[data-force-state="hover"]:not(:disabled) {
 	background: var(--accent-fill-hover);
 }
 
@@ -49,7 +50,8 @@
 	color: var(--text-0);
 }
 
-.btn-quiet:hover:not(:disabled) {
+.btn-quiet:hover:not(:disabled),
+.btn-quiet[data-force-state="hover"]:not(:disabled) {
 	background: var(--fill-strong);
 }
 
@@ -58,7 +60,8 @@
 	color: var(--danger);
 }
 
-.btn-danger:hover:not(:disabled) {
+.btn-danger:hover:not(:disabled),
+.btn-danger[data-force-state="hover"]:not(:disabled) {
 	background: color-mix(in srgb, var(--danger) 22%, transparent);
 }
 
@@ -66,7 +69,8 @@
 	color: var(--text-2);
 }
 
-.btn-ghost:hover:not(:disabled) {
+.btn-ghost:hover:not(:disabled),
+.btn-ghost[data-force-state="hover"]:not(:disabled) {
 	background: var(--fill-subtle);
 	color: var(--text-0);
 }

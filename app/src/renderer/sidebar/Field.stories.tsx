@@ -2,11 +2,19 @@
 // 12/500 sentence-case Label style (FieldLabel).
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useState } from 'react'
+import { StateGrid } from '../storybook/StateGrid'
 import { FieldLabel, SelectInput, TextArea, TextInput, Toggle } from './ui'
 
 const meta: Meta = {
 	title: 'Primitives/Field',
-	decorators: [story => <div style={{ width: 340, display: 'flex', flexDirection: 'column', gap: 12 }}>{story()}</div>],
+	decorators: [
+		(story, { name }) =>
+			name === 'States' ? (
+				story()
+			) : (
+				<div style={{ width: 340, display: 'flex', flexDirection: 'column', gap: 12 }}>{story()}</div>
+			),
+	],
 }
 
 export default meta
@@ -110,4 +118,85 @@ export const Toggles: Story = {
 			</>
 		)
 	},
+}
+
+const noop = () => {}
+const field = { width: 160 } as const
+
+/** Forced states (§7 StateGrid). Inputs answer hover with a stronger hairline
+ *  and focus with the accent border (forced focus-visible stands in for
+ *  `:focus`). The toggle has no hover style; checked is the real value. */
+export const States: Story = {
+	render: () => (
+		<div style={{ display: 'grid', gap: 24 }}>
+			<StateGrid
+				states={['rest', 'hover', 'focus-visible', 'disabled']}
+				rows={[
+					{
+						label: 'text input',
+						target: 'input',
+						element: (
+							<div style={field}>
+								<TextInput value="" placeholder="Project slug" onChange={noop} />
+							</div>
+						),
+					},
+					{
+						label: 'with value',
+						target: 'input',
+						element: (
+							<div style={field}>
+								<TextInput value="clientcare" onChange={noop} />
+							</div>
+						),
+					},
+					{
+						label: 'invalid',
+						target: 'input',
+						element: (
+							<div style={field}>
+								<TextInput value="Client Care" invalid onChange={noop} />
+							</div>
+						),
+					},
+					{
+						label: 'select',
+						target: 'select',
+						element: (
+							<div style={field}>
+								<SelectInput
+									value="claude"
+									onChange={noop}
+									ariaLabel="Agent"
+									options={[
+										{ value: 'claude', label: 'Claude Code' },
+										{ value: 'codex', label: 'Codex' },
+									]}
+								/>
+							</div>
+						),
+					},
+					{
+						label: 'textarea',
+						target: 'textarea',
+						element: (
+							<div style={field}>
+								<TextArea value="" placeholder="What should change?" rows={2} onChange={noop} />
+							</div>
+						),
+					},
+				]}
+			/>
+			<StateGrid
+				states={['rest', 'focus-visible', 'disabled', 'checked']}
+				rows={[
+					{
+						label: 'toggle',
+						element: <Toggle label="Track deployments" value={false} onChange={noop} />,
+						variants: { checked: <Toggle label="Track deployments" value onChange={noop} /> },
+					},
+				]}
+			/>
+		</div>
+	),
 }

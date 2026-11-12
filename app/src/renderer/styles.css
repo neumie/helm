@@ -111,6 +111,7 @@ body {
 }
 
 button:focus-visible,
+button[data-force-state="focus-visible"],
 .tab:focus-visible,
 #bg-toggle[data-bg-preview~="focus"] {
 	outline: 2px solid var(--accent);

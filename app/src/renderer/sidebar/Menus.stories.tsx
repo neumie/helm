@@ -1,5 +1,7 @@
 // Menus (§3.8), push-nav header (§3.10), and the pane-scoped sheet (§3.9).
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { useEffect, useRef } from 'react'
+import { StateGrid } from '../storybook/StateGrid'
 import { AssignItemSheet } from './AssignItemSheet'
 import { item } from './SidebarViews.stories'
 import { GLYPH, IconBtn, MenuButton, PushHeader } from './ui'
@@ -119,6 +121,112 @@ export const FinishItemSetupSheet: Story = {
 				projects={[{ slug: 'helm' }, { slug: 'client-care' }]}
 				onClose={noop}
 				onAssigned={noop}
+			/>
+		</div>
+	),
+}
+
+/** A real MenuButton opened on mount (no pointer, no focus) so its first
+ *  entry can take a forced state. */
+function OpenMenu({
+	danger,
+	disabled,
+	checked,
+}: {
+	danger?: boolean
+	disabled?: boolean
+	checked?: boolean
+}) {
+	const triggerRef = useRef<HTMLButtonElement>(null)
+	useEffect(() => {
+		const trigger = triggerRef.current
+		if (trigger && trigger.getAttribute('aria-expanded') !== 'true') trigger.click()
+	}, [])
+	return (
+		<MenuButton
+			triggerRef={triggerRef}
+			triggerLabel="More actions"
+			trigger={GLYPH.ellipsis}
+			align="start"
+			entries={[
+				checked !== undefined
+					? { label: 'Group by project', checked, checkedRole: 'checkbox', onSelect: noop, disabled }
+					: danger
+						? { label: 'Reject', icon: GLYPH.close, danger: true, onSelect: noop, disabled }
+						: { label: 'Queue retry', icon: GLYPH.retry, onSelect: noop, disabled },
+				{ label: 'Plan', icon: GLYPH.plan, onSelect: noop },
+			]}
+		/>
+	)
+}
+
+const MENU_CELL = 112
+const MENU_WIDTH = 188
+
+/** Forced states (§7 StateGrid): the trigger (an icon button, or the project
+ *  filter's text trigger) and the first entry of an open menu. `open` and
+ *  `checked` are real states. Menus have no pressed style. States run down so
+ *  the open-menu cells fit a narrow canvas. */
+export const States: Story = {
+	render: () => (
+		<div style={{ display: 'grid', gap: 24 }}>
+			<StateGrid
+				transpose
+				states={['rest', 'hover', 'focus-visible', 'disabled', 'open']}
+				rows={[
+					{
+						label: 'icon trigger',
+						height: MENU_CELL,
+						width: MENU_WIDTH,
+						element: (
+							<MenuButton
+								triggerLabel="More actions"
+								trigger={GLYPH.ellipsis}
+								align="start"
+								entries={[{ label: 'Queue retry', icon: GLYPH.retry, onSelect: noop }]}
+							/>
+						),
+						variants: { open: <OpenMenu /> },
+					},
+					{
+						label: 'project trigger',
+						element: (
+							<MenuButton
+								triggerLabel="Project filter"
+								triggerClass="project-trigger"
+								trigger={
+									<>
+										<span className="project-trigger-label">All projects</span>
+										{GLYPH.chevronDown}
+									</>
+								}
+								align="start"
+								entries={[{ label: 'All projects', checked: true, onSelect: noop }]}
+							/>
+						),
+					},
+				]}
+			/>
+			<StateGrid
+				transpose
+				states={['rest', 'hover', 'focus-visible', 'disabled', 'checked']}
+				rows={[
+					{
+						label: 'entry',
+						target: '.menu-item',
+						height: MENU_CELL,
+						width: MENU_WIDTH,
+						element: <OpenMenu />,
+						variants: { checked: <OpenMenu checked /> },
+					},
+					{
+						label: 'danger entry',
+						target: '.menu-item',
+						height: MENU_CELL,
+						width: MENU_WIDTH,
+						element: <OpenMenu danger />,
+					},
+				]}
 			/>
 		</div>
 	),

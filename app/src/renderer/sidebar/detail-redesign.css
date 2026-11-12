@@ -40,10 +40,12 @@
 	cursor: pointer;
 }
 .status-menu-trigger:hover,
+.status-menu-trigger[data-force-state="hover"],
 .status-menu-trigger[aria-expanded="true"] {
 	background: var(--fill-subtle);
 }
-.status-menu-trigger:focus-visible {
+.status-menu-trigger:focus-visible,
+.status-menu-trigger[data-force-state="focus-visible"] {
 	outline: 2px solid var(--accent);
 	outline-offset: 2px;
 }

@@ -2,16 +2,21 @@
 // or shadow. Fact rows (28px), copy/external rows (28px), push/nav rows (36px
 // with soft inset separators). The first group on a page omits its rule.
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import type { ReactNode } from 'react'
+import { StateGrid, type StateGridRow } from '../storybook/StateGrid'
 import { ActionRow, Btn, Card, Disclosure, GLYPH, InfoRow } from './ui'
 
 const meta: Meta = {
 	title: 'Compositions/Flat group',
 	decorators: [
-		story => (
-			<div className="page-scroll" style={{ width: 340, height: 240 }}>
-				{story()}
-			</div>
-		),
+		(story, { name }) =>
+			name === 'States' ? (
+				story()
+			) : (
+				<div className="page-scroll" style={{ width: 340, height: 240 }}>
+					{story()}
+				</div>
+			),
 	],
 }
 
@@ -135,5 +140,66 @@ export const EvidenceGroups: Story = {
 				<p className="section-description">Agent, model, effort, and workspace pickers render here.</p>
 			</Disclosure>
 		</>
+	),
+}
+
+function StateRow({ children }: { children: ReactNode }) {
+	return (
+		<div className="page-scroll" style={{ width: 260 }}>
+			<Card flush>{children}</Card>
+		</div>
+	)
+}
+
+const FLAT_STATE_ROWS: StateGridRow[] = [
+	{
+		label: 'copy',
+		target: '.action-row',
+		element: (
+			<StateRow>
+				<ActionRow label="Branch" value="fix/flaky-login" glyphKind="copy" mono onClick={noop} />
+			</StateRow>
+		),
+	},
+	{
+		label: 'external',
+		target: '.action-row',
+		element: (
+			<StateRow>
+				<ActionRow label="PR" value="neumie/helm#42" glyphKind="external" onClick={noop} />
+			</StateRow>
+		),
+	},
+	{
+		label: 'push',
+		target: '.action-row',
+		element: (
+			<StateRow>
+				<ActionRow label="Run context" value="Edited" onClick={noop} />
+			</StateRow>
+		),
+	},
+	{
+		label: 'nav',
+		target: '.action-row',
+		element: (
+			<StateRow>
+				<ActionRow nav label="Projects" value="3 configured" onClick={noop} />
+			</StateRow>
+		),
+	},
+]
+
+/** Forced states (§7 StateGrid) on the four action-row kinds: the
+ *  full-width hover stripe, the focus ring, disabled. Rows have no pressed
+ *  style. States run down, two kinds per grid, so the 260px rows fit a narrow
+ *  canvas. */
+export const States: Story = {
+	render: () => (
+		<div style={{ display: 'grid', gap: 24 }}>
+			{[FLAT_STATE_ROWS.slice(0, 2), FLAT_STATE_ROWS.slice(2)].map(rows => (
+				<StateGrid key={rows[0]?.label} transpose states={['rest', 'hover', 'focus-visible', 'disabled']} rows={rows} />
+			))}
+		</div>
 	),
 }

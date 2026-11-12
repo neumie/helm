@@ -3,6 +3,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import type { AssessmentVerdict, DashboardTone, ItemStatus } from '../../shared-helm'
 import { ITEM_STATUSES } from '../../shared-helm'
+import { StateGrid } from '../storybook/StateGrid'
 import type { StatusTone } from './model'
 import { VERDICT_META, statusTone } from './model'
 import { Chip, GLYPH, StatusDot } from './ui'
@@ -96,5 +97,33 @@ export const StatusToneMapping: Story = {
 				</span>
 			))}
 		</div>
+	),
+}
+
+/** Forced states (§7 StateGrid). Chips and dots are not interactive; the
+ *  status-menu trigger that wraps a chip is, and `open` is its real
+ *  aria-expanded state. */
+export const States: Story = {
+	render: () => (
+		<StateGrid
+			states={['rest', 'hover', 'focus-visible', 'disabled', 'open']}
+			rows={[
+				{
+					label: 'status menu trigger',
+					element: (
+						<button type="button" className="status-menu-trigger" aria-haspopup="menu">
+							<Chip tone="amber">Review {GLYPH.chevronDown}</Chip>
+						</button>
+					),
+					variants: {
+						open: (
+							<button type="button" className="status-menu-trigger" aria-haspopup="menu" aria-expanded="true">
+								<Chip tone="amber">Review {GLYPH.chevronDown}</Chip>
+							</button>
+						),
+					},
+				},
+			]}
+		/>
 	),
 }

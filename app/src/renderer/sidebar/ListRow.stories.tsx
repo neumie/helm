@@ -6,17 +6,21 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import type { AssessmentVerdict, ItemStatus, WorkMode } from '../../shared-helm'
 import { ActivityIndicator } from '../activity-indicator'
+import { StateGrid } from '../storybook/StateGrid'
 import { VERDICT_META, projectLabel, statusWord } from './model'
 import { Chip, GLYPH, IconBtn, ProjectColorText } from './ui'
 
 const meta: Meta = {
 	title: 'Compositions/List row',
 	decorators: [
-		story => (
-			<div className="list-scroll" style={{ width: 340, height: 256 }}>
-				{story()}
-			</div>
-		),
+		(story, { name }) =>
+			name === 'States' ? (
+				story()
+			) : (
+				<div className="list-scroll" style={{ width: 340, height: 256 }}>
+					{story()}
+				</div>
+			),
 	],
 }
 
@@ -298,5 +302,55 @@ export const ProjectGroups: Story = {
 				/>
 			</section>
 		</>
+	),
+}
+
+const ROW_CELL = { width: 300 } as const
+
+/** Forced states (§7 StateGrid): the square full-width stripe on hover and
+ *  press, the focus ring, and a quick-action icon button inside a row (no
+ *  pressed style of its own). States run down so the 300px rows fit a narrow
+ *  canvas. */
+export const States: Story = {
+	render: () => (
+		<StateGrid
+			transpose
+			states={['rest', 'hover', 'active', 'focus-visible']}
+			rows={[
+				{
+					label: 'row',
+					target: '.item-row',
+					element: (
+						<div style={ROW_CELL}>
+							<StoryItemRow
+								title="Fix the flaky login test"
+								time="4m"
+								status="inbox"
+								projectSlug="clientcare"
+								projectColor={CLIENTCARE_GREEN}
+								verdict="clear"
+							/>
+						</div>
+					),
+				},
+				{
+					label: 'quick action',
+					target: '.item-row-actions .icon-btn',
+					unstyled: ['active'],
+					element: (
+						<div style={ROW_CELL}>
+							<StoryItemRow
+								title="Add retry backoff"
+								time="30m"
+								status="ready"
+								projectSlug="helm"
+								projectColor={HELM_BLUE}
+								quickActions
+							/>
+						</div>
+					),
+				},
+			]}
+		/>
 	),
 }
