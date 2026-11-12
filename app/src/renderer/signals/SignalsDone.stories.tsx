@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { SignalsWorkspace } from './SignalsWorkspace'
+import { SignalsColumnFrames, SignalsWorkspace } from './SignalsWorkspace'
 
 /**
  * Done threads (§3.25): after the snoozed rows, one `Done today 8` line with the filtered mail
@@ -23,3 +23,20 @@ export const Line: Story = {}
 
 /** `D`: the Done today list, each row with how it got done after its ref. */
 export const List: Story = { args: { flow: 'done' } }
+
+/**
+ * The done line on the column's bottom edge (8px under its button): at rest, and in a busy column
+ * that does not hold the keys, whose hidden key hints take no room (Jakub's pick 2026-11-12). Click
+ * the busy frame to give it the keys: the selected row's hints come back under the done line.
+ */
+export const AtTheBottom: Story = {
+	render: () => (
+		<SignalsColumnFrames
+			height={640}
+			frames={[
+				{ width: 340, scenario: 'empty', label: 'At rest' },
+				{ width: 340, scenario: 'done', label: 'Busy, no keys (click to give it the keys)' },
+			]}
+		/>
+	),
+}

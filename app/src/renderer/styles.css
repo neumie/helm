@@ -3369,8 +3369,10 @@ body.dragging {
 	flex-direction: column;
 }
 
+/* 28px above each band after the first: the space reads as a deliberate break (Jakub's pick
+ * 2026-11-12 over none, 12 and 20px). */
 .signals-section + .signals-section {
-	margin-top: 12px;
+	margin-top: 28px;
 }
 
 /* The section title on a full-width --chrome band (the topbar's material), sticky at the top of
@@ -3409,11 +3411,13 @@ body.dragging {
 
 /* `Done today 8 · 5 filtered` at the bottom of the list: two buttons on one line. It wraps between
  * them on a narrow column instead of cutting the filtered count off. A hidden key hint (`· D`)
- * takes no room, so an unfocused column shows no gap between the two. */
+ * takes no room, so an unfocused column shows no gap between the two. Its 4px plus the scroll
+ * owner's 4px put the 24px button 8px over the column's bottom edge when the footer is empty: the
+ * header's 40px band mirrored (the text centred 20px from the edge). */
 .signals-done-line {
 	flex: none;
 	margin-top: auto;
-	padding: 16px 16px 2px;
+	padding: 16px 16px 4px;
 	color: var(--dock-dim);
 }
 
@@ -3663,6 +3667,16 @@ body.dragging {
 	color: var(--dock-dim);
 }
 
+/* A footer with nothing to show (no selected thread's keys, or keys hidden while Signals does not
+ * hold them; no note, no source line, no action) takes no room, so the done line sits on the
+ * column's bottom edge instead of over an empty band. Focusing the column brings the keys back
+ * under it (Jakub's pick 2026-11-12, variant B). The status line stays mounted (a live region). */
+.signals-foot:not(:has(.signals-hint, .signals-note:not(:empty), .signals-health, .signals-foot-actions)),
+.signals:not(:focus-within) .signals-foot:not(:has(.signals-note:not(:empty), .signals-health, .signals-foot-actions)) {
+	min-height: 0;
+	padding: 0;
+}
+
 .signals-foot-hints {
 	flex: 1 1 100%;
 	display: flex;
@@ -3736,7 +3750,12 @@ body.dragging {
 	color: var(--text-1);
 }
 
-/* Key hints and choice numbers show only while Signals holds the keys (§3.24). */
+/* Key hints and choice numbers show only while Signals holds the keys (§3.24). Hidden footer hints
+ * take no room (below). */
+.signals:not(:focus-within) .signals-foot-hints {
+	display: none;
+}
+
 .signals:not(:focus-within) :is(.signals-foot-hints, .signals-choice-n, .signals-list-key),
 .signals:has(:is(textarea, input):focus) .signals-foot-hints [data-hint="pick"] {
 	visibility: hidden;
