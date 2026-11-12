@@ -206,11 +206,8 @@ export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, wi
 }
 
 export interface SignalsColumnFramesProps {
-	/**
-	 * Each frame: a width and a scenario, the production column alone at that size. `variant` sets
-	 * `data-signals-variant` on the frame, for a story-only style that shows a look not yet picked.
-	 */
-	frames: readonly { width: number; scenario: SignalsScenario; label: string; variant?: string }[]
+	/** Each frame: a width and a scenario, the production column alone at that size. */
+	frames: readonly { width: number; scenario: SignalsScenario; label: string }[]
 	height?: number
 }
 
@@ -254,7 +251,6 @@ export function SignalsColumnFrames({ frames, height = 640 }: SignalsColumnFrame
 						ref={element => {
 							hosts.current[index] = element
 						}}
-						data-signals-variant={frame.variant}
 						style={{
 							position: 'relative',
 							width: frame.width,

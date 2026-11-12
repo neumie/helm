@@ -3369,8 +3369,10 @@ body.dragging {
 	flex-direction: column;
 }
 
+/* 28px above each band after the first: the space reads as a deliberate break (Jakub's pick
+ * 2026-11-12 over none, 12 and 20px). */
 .signals-section + .signals-section {
-	margin-top: 12px;
+	margin-top: 28px;
 }
 
 /* The section title on a full-width --chrome band (the topbar's material), sticky at the top of

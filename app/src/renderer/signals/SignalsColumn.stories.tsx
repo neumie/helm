@@ -53,30 +53,3 @@ export const Widths: Story = {
 		/>
 	),
 }
-
-/**
- * Story only, not picked yet: the space between one section's last row and the next section's band
- * (production today 12px). Each frame overrides it through its `data-signals-variant`.
- */
-const SECTION_GAPS = [0, 12, 20, 28] as const
-const SECTION_GAP_STYLE = SECTION_GAPS.map(
-	gap => `[data-signals-variant='gap-${gap}'] .signals-section + .signals-section { margin-top: ${gap}px; }`,
-).join('\n')
-
-/** The gap above a section band, side by side: none, 12px (now), 20px and 28px. */
-export const SectionGap: Story = {
-	render: () => (
-		<>
-			<style>{SECTION_GAP_STYLE}</style>
-			<SignalsColumnFrames
-				height={560}
-				frames={SECTION_GAPS.map(gap => ({
-					width: 340,
-					scenario: 'column' as const,
-					label: gap === 12 ? '12px (now)' : gap === 0 ? 'None: the band alone' : `${gap}px`,
-					variant: `gap-${gap}`,
-				}))}
-			/>
-		</>
-	),
-}
