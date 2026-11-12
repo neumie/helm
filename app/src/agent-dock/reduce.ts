@@ -78,17 +78,16 @@ export const REPLY_MATCH_MAX = 4_096
 /** A transcript entry shorter than the reply (clipped) still matches on at least this long a prefix. */
 export const REPLY_MATCH_PREFIX = 200
 
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what is removed
+const replyControlChars = /[\u0000-\u001f\u007f-\u009f]/g
+
 /**
  * Text as compared between a reply and transcript user entries: control characters (line breaks
  * too) become spaces, whitespace runs one space, trimmed. Both sources clean the typed text
  * (`sanitizePrompt`, Okena's own), so only what survives that is compared.
  */
 export function replyMatchText(text: string, max = Number.POSITIVE_INFINITY): string {
-	// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what is removed
-	const plain = text
-		.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
-		.replace(/\s+/g, ' ')
-		.trim()
+	const plain = text.replace(replyControlChars, ' ').replace(/\s+/g, ' ').trim()
 	return plain.length > max ? plain.slice(0, max) : plain
 }
 

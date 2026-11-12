@@ -805,8 +805,7 @@ export class TerminalPlacement {
 			})
 		}
 		const known = new Set(inventory)
-		const selectedId =
-			candidate.selectedId !== null && known.has(candidate.selectedId) ? candidate.selectedId : null
+		const selectedId = candidate.selectedId !== null && known.has(candidate.selectedId) ? candidate.selectedId : null
 		const merged = {
 			inventory,
 			strip,

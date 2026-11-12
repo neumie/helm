@@ -112,7 +112,7 @@ test('web-api: HELM_SLACK_API_URL env is ignored — the token can only go to sl
 		await client.call('auth.test')
 		assert.match(calls[0].url, /^https:\/\/slack\.com\/api\//)
 	} finally {
-		if (prev === undefined) delete process.env.HELM_SLACK_API_URL
+		if (prev === undefined) Reflect.deleteProperty(process.env, 'HELM_SLACK_API_URL')
 		else process.env.HELM_SLACK_API_URL = prev
 	}
 })

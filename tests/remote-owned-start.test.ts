@@ -4,11 +4,11 @@ import { chmodSync, lstatSync, mkdtempSync, realpathSync, rmSync, symlinkSync, w
 import { join } from 'node:path'
 import test from 'node:test'
 import {
+	type OwnedHostStatus,
+	type OwnedStartInspection,
 	holderPids,
 	recoverOwnedRuntime,
 	runtimePidsFromPs,
-	type OwnedHostStatus,
-	type OwnedStartInspection,
 } from '../src/remote/owned-start.js'
 
 function scratch(t: { after(fn: () => void): void }) {

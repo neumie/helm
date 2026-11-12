@@ -44,7 +44,8 @@
 			"profiles",
 			"storybook-static",
 			"app/test-results",
-			"app/remote-dist"
+			"app/remote-dist",
+			"app/src/renderer/document-review/canvas-runtime.generated.ts"
 		]
 	}
 }

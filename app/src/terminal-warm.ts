@@ -172,4 +172,3 @@ function appendBounded(buffer: string, data: string): string {
 }
 
 export default { TerminalWarmPool }
-

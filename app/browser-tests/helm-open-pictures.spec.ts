@@ -84,7 +84,9 @@ test('a live reload keeps the zoom and pan and swaps the picture only once the n
 	expect(await view(page).evaluate(element => [element.scrollLeft, element.scrollTop])).toEqual([300, 200])
 })
 
-test('a newer version that is refused leaves the last good picture, zoom and a banner; the next good one says Updated', async ({ page }) => {
+test('a newer version that is refused leaves the last good picture, zoom and a banner; the next good one says Updated', async ({
+	page,
+}) => {
 	await open(page, 'screenshot', 'company-create-error@2x.png')
 	await expect(picture(page)).toBeVisible()
 	await view(page).focus()

@@ -56,6 +56,7 @@ const CHAT_TAIL_SLACK_PX = 24
 function usePinnedChatTail<T extends HTMLElement>(identity: string) {
 	const ref = useRef<T>(null)
 	const following = useRef(true)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: a new conversation identity must re-pin and re-observe its scroll owner.
 	useLayoutEffect(() => {
 		following.current = true
 		const node = ref.current
@@ -2715,11 +2716,11 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 							owner={documentPane.current}
 							onClose={(restore, shown) => dismissPassage(visibleBubble, restore, shown)}
 						>
-							{/* biome-ignore lint/a11y/noNoninteractiveTabindex: Passage history owns bounded keyboard scrolling. */}
 							<section
 								ref={passageChat}
 								className="review-passage-bubble-messages"
 								aria-label="Passage messages"
+								// biome-ignore lint/a11y/noNoninteractiveTabindex: Passage history owns bounded keyboard scrolling.
 								tabIndex={0}
 							>
 								<div className="review-chat-log">

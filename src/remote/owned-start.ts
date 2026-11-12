@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { lstatSync, unlinkSync, type Stats } from 'node:fs'
+import { type Stats, lstatSync, unlinkSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { RUNTIME_ARTIFACTS, socketAnswered } from './reclaim.js'
 
@@ -140,10 +140,7 @@ async function ownedListener(root: string, inspect: OwnedStartInspection): Promi
 	return pid
 }
 
-async function abandonedProof(
-	root: string,
-	inspect: OwnedStartInspection,
-): Promise<'clear' | 'gone' | 'blocked'> {
+async function abandonedProof(root: string, inspect: OwnedStartInspection): Promise<'clear' | 'gone' | 'blocked'> {
 	const identities = new Map<string, { dev: number; ino: number }>()
 	for (const name of RUNTIME_ARTIFACTS) {
 		const path = join(root, name)
