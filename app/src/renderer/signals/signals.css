@@ -1,0 +1,789 @@
+/* ---------- signals (§3.25) ---------- */
+
+/* The task sidebar's column holds Signals (default) or Tasks; both stay mounted in their own host,
+ * the other one hidden + inert (left-column.ts). Signals takes the agent dock's register (§3.24):
+ * one typeface, 12/18 rows and meta, 13/20 what is read, bright/dim instead of weight (no bold),
+ * color on glyphs only, no cards, no box-drawing. */
+.left-column-host {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+}
+
+.left-column-host[hidden] {
+	display: none;
+}
+
+.signals {
+	--dock-mono: var(--font-mono);
+	--dock-sans: var(--font-ui);
+	--dock-fs: calc(12px * var(--ui-scale));
+	--dock-lh: calc(18px * var(--ui-scale));
+	--dock-prose-fs: calc(13px * var(--ui-scale));
+	--dock-prose-lh: calc(20px * var(--ui-scale));
+	--dock-dim: color-mix(in srgb, var(--text-1) 60%, var(--text-2));
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	height: 100%;
+	min-width: 0;
+	min-height: 0;
+	font-family: var(--dock-sans);
+	font-size: var(--dock-fs);
+	line-height: var(--dock-lh);
+	letter-spacing: -0.01em;
+	font-variant-numeric: tabular-nums;
+	color: var(--text-1);
+	background: var(--pane);
+	outline: none;
+	user-select: none;
+}
+
+:where(.signals) button {
+	font: inherit;
+	letter-spacing: inherit;
+	color: inherit;
+}
+
+/* A routing flow holds the keys while open; it lays out like the list it replaces. */
+.signals-flow-keys {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	outline: none;
+}
+
+/* ---------- header ---------- */
+
+.signals-title {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	height: 40px;
+	min-width: 0;
+	padding: 0 8px 0 16px;
+	white-space: nowrap;
+	color: var(--text-1);
+}
+
+.signals-title-text {
+	flex: 1 1 auto;
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	overflow: hidden;
+}
+
+.signals-title-kind {
+	flex: none;
+	display: inline-flex;
+	align-items: baseline;
+	gap: 8px;
+	font-size: var(--dock-prose-fs);
+	color: var(--text-0);
+}
+
+.signals-title-context {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--dock-dim);
+}
+
+.signals-title-btn {
+	flex: none;
+	height: 28px;
+	padding: 0 8px;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: var(--dock-dim) !important;
+	cursor: pointer;
+}
+
+.signals-title-btn:hover {
+	background: var(--fill-subtle);
+	color: var(--text-0) !important;
+}
+
+/* ---------- the list: one grid, two lines a thread (ref + age, then what + agent) ---------- */
+
+.signals-scroll {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow: auto;
+	padding-bottom: 4px;
+}
+
+.signals-placeholder {
+	margin: 12px 16px;
+	color: var(--dock-dim);
+	user-select: text;
+}
+
+/* Edge tracks (8px) + the 8px gap put every glyph and the last text on the 16px column, while a
+ * selected row's fill runs edge to edge (no inset, no rounding), like the dock's queue entries. */
+.signals-table {
+	display: grid;
+	grid-template-columns: 8px 12px minmax(0, 1fr) fit-content(14ch) 8px;
+	column-gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.signals-empty {
+	grid-column: 3 / -2;
+	min-height: 28px;
+	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	line-height: 28px;
+	color: var(--dock-dim);
+}
+
+/* The list (SignalsList.tsx, Jakub's pick 2026-11-11): only sections with threads, each under a
+ * sticky band; at rest the Braille dot field; the done line at the bottom. It fills the scroll
+ * owner so the done line rests low when the list is short. */
+.signals-scroll:has(> .signals-list) {
+	display: flex;
+	flex-direction: column;
+}
+
+.signals-list {
+	flex: 1 0 auto;
+	display: flex;
+	flex-direction: column;
+}
+
+.signals-section {
+	flex: none;
+	display: flex;
+	flex-direction: column;
+}
+
+/* 28px above each band after the first: the space reads as a deliberate break (Jakub's pick
+ * 2026-11-12 over none, 12 and 20px). */
+.signals-section + .signals-section {
+	margin-top: 28px;
+}
+
+/* The section title on a full-width --chrome band (the topbar's material), sticky at the top of
+ * the scroll owner while its rows pass under it. Mark and label on the 16px glyph/text columns,
+ * the count on the age column. */
+.signals-band {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+	display: grid;
+	grid-template-columns: 12px minmax(0, 1fr) auto;
+	align-items: center;
+	column-gap: 8px;
+	height: 28px;
+	padding: 0 16px;
+	background: var(--chrome);
+	color: var(--text-1);
+	white-space: nowrap;
+}
+
+.signals-band-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.signals-band-count {
+	color: var(--dock-dim);
+	font-variant-numeric: tabular-nums;
+}
+
+/* A row selected by keyboard scrolls clear of its band. */
+.signals-section .signals-tr {
+	scroll-margin-top: 28px;
+}
+
+/* `Done today 8 · 5 filtered` at the bottom of the list: two buttons on one line. It wraps between
+ * them on a narrow column instead of cutting the filtered count off. A hidden key hint (`· D`)
+ * takes no room, so an unfocused column shows no gap between the two. Its 4px plus the scroll
+ * owner's 4px put the 24px button 8px over the column's bottom edge when the footer is empty: the
+ * header's 40px band mirrored (the text centred 20px from the edge). */
+.signals-done-line {
+	flex: none;
+	margin-top: auto;
+	padding: 16px 16px 4px;
+	color: var(--dock-dim);
+}
+
+.signals-done-line .signals-list-btn {
+	white-space: nowrap;
+}
+
+.signals:not(:focus-within) .signals-done-line .signals-list-key {
+	display: none;
+}
+
+/* At rest: a slow gray Braille dot field over what Signals listens to (the ActivityIndicator's
+ * dot language). Hollow and still while a source is not answering: no calm is claimed then. */
+.signals-resting {
+	flex: 1 0 auto;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	padding: 24px 16px 14vh;
+	text-align: center;
+}
+
+.signals-resting-title {
+	font-size: var(--dock-prose-fs);
+	line-height: var(--dock-prose-lh);
+	color: var(--text-1);
+}
+
+.signals-resting-detail {
+	max-width: 30ch;
+	color: var(--dock-dim);
+	text-wrap: balance;
+}
+
+.signals-braille {
+	display: inline-flex;
+	gap: 12px;
+	margin-bottom: 14px;
+}
+
+.signals-braille-cell {
+	display: grid;
+	grid-template-columns: repeat(2, 5px);
+	grid-auto-rows: 5px;
+	gap: 5px;
+}
+
+.signals-braille-dot {
+	border-radius: 50%;
+	background: var(--text-2);
+	opacity: 0.5;
+}
+
+.signals-braille[data-unknown="true"] .signals-braille-dot {
+	background: transparent;
+	box-shadow: inset 0 0 0 1px var(--text-2);
+	animation: none !important;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.signals-resting .signals-braille-dot {
+		animation: signals-calm-wave 4.8s ease-in-out infinite;
+	}
+}
+
+@keyframes signals-calm-wave {
+	0%,
+	100% {
+		opacity: 0.32;
+	}
+	50% {
+		opacity: 0.8;
+	}
+}
+
+/* The band's count mark: the indicator's own 2px dots, one lit per thread, clockwise. */
+.signals-braille-mark {
+	justify-content: center;
+	width: 12px;
+	margin: 0;
+}
+
+.signals-braille-mark .signals-braille-cell {
+	grid-template-columns: repeat(2, 2px);
+	grid-auto-rows: 2px;
+	gap: 2px;
+}
+
+.signals-braille-mark .signals-braille-dot {
+	opacity: 0.35;
+}
+
+.signals-braille-mark .signals-braille-dot[data-lit="true"] {
+	background: var(--text-0);
+	opacity: 1;
+}
+
+.signals-braille-mark[data-tone="new"] .signals-braille-dot[data-lit="true"] {
+	background: var(--warn);
+}
+
+.signals-tr {
+	grid-column: 1 / -1;
+	display: grid;
+	grid-template-columns: subgrid;
+	grid-template-rows: auto auto;
+	align-items: baseline;
+	align-content: center;
+	min-height: 44px;
+	padding: 4px 0;
+	white-space: nowrap;
+	cursor: default;
+	transition: background-color 140ms ease-out;
+}
+
+.signals-tr > * {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.signals-tr > .signals-edge:first-child {
+	grid-area: 1 / 1 / 3 / 2;
+}
+
+.signals-tr > .signals-glyph {
+	grid-area: 1 / 2;
+}
+
+.signals-tr > .signals-td-ref {
+	grid-area: 1 / 3;
+}
+
+.signals-tr > .signals-td-age {
+	grid-area: 1 / 4;
+}
+
+.signals-tr > .signals-td-what {
+	grid-area: 2 / 3;
+}
+
+.signals-tr > .signals-td-agent {
+	grid-area: 2 / 4;
+	text-align: right;
+}
+
+.signals-tr > .signals-edge:last-child {
+	grid-area: 1 / 5 / 3 / 6;
+}
+
+/* An agent ask's dim third line (its body's first line · N links). */
+.signals-tr > .signals-td-detail {
+	grid-area: 3 / 3 / 4 / 5;
+	color: var(--dock-dim);
+}
+
+.signals-tr:hover {
+	background: var(--fill-subtle);
+}
+
+.signals-tr[data-selected="true"] {
+	background: var(--fill-raised);
+}
+
+.signals-td-ref,
+.signals-td-what {
+	color: var(--text-1);
+}
+
+.signals-tr[data-selected="true"] .signals-td-ref {
+	color: var(--text-0);
+}
+
+.signals-td-age,
+.signals-td-agent {
+	color: var(--dock-dim);
+	text-align: right;
+}
+
+/* Snoozed and done read quieter: their glyph keeps the kind but loses its tone. */
+.signals-tr:is([data-section="snoozed"], [data-section="done"]) .signals-td-ref,
+.signals-tr:is([data-section="snoozed"], [data-section="done"]) .signals-td-what {
+	color: var(--dock-dim);
+}
+
+.signals-tr:is([data-section="snoozed"], [data-section="done"])[data-selected="true"] .signals-td-ref {
+	color: var(--text-1);
+}
+
+/* ---------- glyphs: the only color (new threads only; seen ones read dim) ---------- */
+
+.signals-glyph {
+	display: inline-block;
+	width: 12px;
+	text-align: center;
+	color: var(--dock-dim);
+}
+
+.signals-glyph[data-kind="review"],
+.signals-glyph[data-kind="mail"],
+.signals-glyph[data-kind="ask"],
+.signals-glyph[data-kind="dm"] {
+	color: var(--warn);
+}
+
+.signals-glyph:is([data-kind="comments"], [data-kind="mention"], [data-kind="thread"], [data-kind="flow"]) {
+	color: var(--accent);
+}
+
+.signals-glyph:is([data-kind="sentry"], [data-kind="ci"]) {
+	color: var(--danger);
+}
+
+.signals-owner[data-status="working"] {
+	color: var(--text-0);
+}
+
+.signals-owner[data-status="waiting"] {
+	color: var(--warn);
+}
+
+.signals-receipt {
+	color: var(--text-1);
+}
+
+.signals-receipt-mark {
+	color: var(--success);
+}
+
+/* An answer saved on the thread but not typed into the agent: no mark, dim. */
+.signals-receipt[data-how="saved"] {
+	color: var(--dock-dim);
+}
+
+/* ---------- footer: the selected row's keys, the last note, sources that did not answer ---------- */
+
+.signals-foot {
+	flex: none;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 16px;
+	min-height: 40px;
+	padding: 8px 16px 10px;
+	color: var(--dock-dim);
+}
+
+/* A footer with nothing to show (no selected thread's keys, or keys hidden while Signals does not
+ * hold them; no note, no source line, no action) takes no room, so the done line sits on the
+ * column's bottom edge instead of over an empty band. Focusing the column brings the keys back
+ * under it (Jakub's pick 2026-11-12, variant B). The status line stays mounted (a live region). */
+.signals-foot:not(:has(.signals-hint, .signals-note:not(:empty), .signals-health, .signals-foot-actions)),
+.signals:not(:focus-within) .signals-foot:not(:has(.signals-note:not(:empty), .signals-health, .signals-foot-actions)) {
+	min-height: 0;
+	padding: 0;
+}
+
+.signals-foot-hints {
+	flex: 1 1 100%;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 2px 14px;
+	min-width: 0;
+}
+
+.signals-hint {
+	white-space: nowrap;
+}
+
+.signals-hint kbd {
+	font: inherit;
+	color: var(--text-1);
+}
+
+.signals-note {
+	flex: 1 1 auto;
+	min-width: 0;
+	color: var(--text-1);
+	overflow-wrap: anywhere;
+	user-select: text;
+}
+
+.signals-note:empty {
+	display: none;
+}
+
+.signals-health {
+	flex: 1 1 100%;
+	min-width: 0;
+	color: var(--dock-dim);
+	overflow-wrap: anywhere;
+	user-select: text;
+}
+
+.signals-foot-actions {
+	flex: none;
+	margin-left: auto;
+}
+
+.signals-key.btn {
+	font-family: var(--dock-sans);
+	font-size: var(--dock-fs);
+	font-weight: 400;
+	letter-spacing: -0.01em;
+}
+
+/* `Done today 8` and `5 filtered` after it: each opens its list (Done today, Filtered mail) in
+ * place of the column's. Plain text buttons (no fill at rest); `D` / `f` read as key hints while
+ * Signals holds the keys. */
+.signals-list-btn {
+	min-height: 24px;
+	padding: 0;
+	border: none;
+	background: transparent;
+	font: inherit;
+	color: var(--dock-dim);
+	text-align: left;
+	cursor: pointer;
+	transition: color 140ms ease-out;
+}
+
+.signals-list-btn:hover {
+	color: var(--text-1);
+}
+
+.signals-list-key {
+	font: inherit;
+	color: var(--text-1);
+}
+
+/* Key hints and choice numbers show only while Signals holds the keys (§3.24). Hidden footer hints
+ * take no room (below). */
+.signals:not(:focus-within) .signals-foot-hints {
+	display: none;
+}
+
+.signals:not(:focus-within) :is(.signals-foot-hints, .signals-choice-n, .signals-list-key),
+.signals:has(:is(textarea, input):focus) .signals-foot-hints [data-hint="pick"] {
+	visibility: hidden;
+}
+
+/* ---------- routing flows: send to agent (p), new agent in Okena (n) ---------- */
+
+.signals-flow {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 0 16px 8px;
+}
+
+.signals-field-label {
+	display: block;
+	margin-top: 8px;
+	color: var(--dock-dim);
+}
+
+.signals-dim {
+	color: var(--dock-dim);
+}
+
+.signals-choices {
+	display: grid;
+	grid-template-columns: 8px 18px max-content minmax(0, 1fr) max-content 8px;
+	margin: 0 -8px;
+}
+
+.signals-choice {
+	grid-column: 1 / -1;
+	display: grid;
+	grid-template-columns: subgrid;
+	align-items: baseline;
+	align-content: center;
+	min-height: 28px;
+	padding: 0;
+	border: none;
+	border-radius: 6px;
+	background: transparent;
+	text-align: left;
+	cursor: pointer;
+}
+
+.signals-choice > * {
+	grid-row: 1;
+}
+
+.signals-choice:hover {
+	background: var(--fill-subtle);
+}
+
+.signals-choice-mark {
+	grid-column: 2;
+	align-self: center;
+	display: inline-block;
+	width: 6px;
+	height: 6px;
+	margin-left: 1px;
+	border-radius: 999px;
+}
+
+.signals-choice-mark[data-on="true"] {
+	background: var(--accent);
+}
+
+.signals-choice-label {
+	grid-column: 3;
+	padding-right: 12px;
+	font-size: var(--dock-prose-fs);
+	line-height: var(--dock-prose-lh);
+	color: var(--text-0);
+	white-space: nowrap;
+}
+
+.signals-choice-label .signals-glyph {
+	margin-right: 6px;
+	font-size: var(--dock-fs);
+}
+
+.signals-choice-description {
+	grid-column: 4;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--dock-dim);
+}
+
+.signals-choice[aria-checked="true"] .signals-choice-description {
+	color: var(--text-1);
+}
+
+/* A busy agent is listed (Jakub sees it) but cannot take a prompt. */
+.signals-choice[data-busy="true"] .signals-choice-label {
+	color: var(--dock-dim);
+}
+
+.signals-choice-n {
+	grid-column: 5;
+	padding-left: 12px;
+	color: var(--dock-dim);
+}
+
+.signals-fields {
+	display: grid;
+	grid-template-columns: max-content minmax(0, 1fr);
+	align-items: baseline;
+	gap: 0 16px;
+	margin: 8px 0 0;
+}
+
+.signals-fields dt {
+	line-height: 28px;
+	color: var(--dock-dim);
+}
+
+.signals-fields dd {
+	min-width: 0;
+	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: var(--dock-prose-fs);
+	line-height: 28px;
+	color: var(--text-0);
+}
+
+/* The branch is a literal git ref: mono, in a quiet well, like the prompt. */
+.signals-branch-input {
+	box-sizing: border-box;
+	width: 100%;
+	height: 28px;
+	padding: 0 8px;
+	border: none;
+	border-radius: 6px;
+	outline: none;
+	font-family: var(--dock-mono);
+	font-size: var(--dock-fs);
+	letter-spacing: 0;
+	color: var(--text-0);
+	background: var(--fill-subtle);
+	user-select: text;
+}
+
+.signals-prompt {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+/* The prompt is literal text sent verbatim (fences included), so it is mono, in a well. */
+.signals-prompt-input {
+	box-sizing: border-box;
+	width: 100%;
+	min-height: calc(var(--dock-lh) * 4 + 16px);
+	margin-top: 4px;
+	padding: 8px 12px;
+	border: none;
+	border-radius: 6px;
+	outline: none;
+	resize: none;
+	field-sizing: content;
+	font-family: var(--dock-mono);
+	font-size: var(--dock-fs);
+	line-height: var(--dock-lh);
+	letter-spacing: 0;
+	color: var(--text-0);
+	background: var(--fill-subtle);
+	user-select: text;
+}
+
+/* An agent ask in the reply flow: its own words, read (13/20), plain untrusted text. */
+.signals-ask-title {
+	margin: 4px 0 0;
+	font-size: var(--dock-prose-fs);
+	line-height: var(--dock-prose-lh);
+	color: var(--text-0);
+	overflow-wrap: anywhere;
+	user-select: text;
+}
+
+.signals-ask-body {
+	margin: 4px 0 0;
+	font-size: var(--dock-prose-fs);
+	line-height: var(--dock-prose-lh);
+	color: var(--text-1);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	user-select: text;
+}
+
+/* Links are shown as text, never as anchors; o (or the links flow) opens them. */
+.signals-ask-links {
+	margin: 4px 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.signals-ask-link {
+	min-width: 0;
+	color: var(--dock-dim);
+	overflow-wrap: anywhere;
+	user-select: text;
+}
+
+/* The links flow: a link is the whole choice (it wraps rather than hiding its end). */
+.signals-choice-label.signals-ask-link {
+	grid-column: 3 / 5;
+	white-space: normal;
+	font-size: var(--dock-fs);
+	line-height: var(--dock-lh);
+	color: var(--text-1);
+	padding-block: 5px;
+}
+
+/* Jakub's answer is his own prose, not a literal prompt: the UI face at reading size. */
+.signals-answer-input {
+	min-height: calc(var(--dock-prose-lh) * 3 + 16px);
+	font-family: var(--dock-sans);
+	font-size: var(--dock-prose-fs);
+	line-height: var(--dock-prose-lh);
+	letter-spacing: -0.01em;
+}
+
+.signals-prompt-input:focus,
+.signals-branch-input:focus {
+	box-shadow: inset 0 0 0 1px var(--accent);
+}

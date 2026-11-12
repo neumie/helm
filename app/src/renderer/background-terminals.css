@@ -1,0 +1,257 @@
+/* ---------- background terminals (strip-right control + popover, §3.18) ---------- */
+
+/* Anchors the popover (menu-end needs a positioned ancestor) and pins the
+ * control to the strip's right edge, clear of the scrolling tab strip. */
+#bg-root {
+	position: relative;
+	display: inline-flex;
+	flex: none;
+	-webkit-app-region: no-drag;
+}
+
+#bg-toggle {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	padding: 0 8px;
+	border: none;
+	border-radius: 6px;
+	background: none;
+	color: var(--text-2);
+	font-family: inherit; /* a <button> otherwise takes the UA control font, not the app face */
+	cursor: pointer;
+	transition: transform 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out;
+}
+
+/* data-bg-preview pins hover/focus for the Storybook states grid only; the app never sets it. */
+#bg-toggle:hover,
+#bg-toggle[data-bg-preview~="hover"],
+#bg-toggle[aria-expanded="true"],
+#bg-toggle.drag-over {
+	background: var(--fill-subtle);
+	color: var(--text-0);
+}
+
+#bg-toggle.drag-over {
+	transform: scale(1.06);
+	background: var(--fill-raised);
+	box-shadow: inset 0 0 0 1px var(--hairline-strong), var(--shadow-1);
+}
+
+#bg-toggle.drag-ready:not(.drag-over) {
+	transform: scale(0.94);
+	background: var(--fill-subtle);
+	color: var(--text-1);
+}
+
+#bg-toggle[hidden] {
+	display: none; /* visible ONLY when the background count > 0 */
+}
+
+#bg-toggle .background-icon {
+	color: currentColor;
+}
+
+/* Names the parked terminal currently shown in the pane (visible only then) in the
+ * tab label's type, truncating at the tab's width so it never crowds the draggable titlebar. */
+.bg-current {
+	max-width: 180px;
+	overflow: hidden;
+	color: var(--text-0);
+	font-size: 13px;
+	font-weight: 400;
+	line-height: normal; /* the tab label's line box, so the name shares the strip's baseline */
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.bg-current[hidden] {
+	display: none;
+}
+
+/* Count badge: chip spec (§3.4), neutral tone — a state readout, not a button. */
+.bg-count {
+	padding: 2px 7px;
+	border-radius: 999px;
+	background: var(--neutral-soft);
+	color: var(--neutral);
+	font-size: 10px;
+	font-weight: 700;
+	line-height: 1.4;
+	font-variant-numeric: tabular-nums;
+}
+
+/* Viewing: a parked terminal is shown in the pane (#bg-current is unhidden). The strip has no
+ * active tab then, so the control takes the active tab's look and stands in as that terminal's
+ * tab: tab padding, --fill-raised, the name in tab type, the count as a dim tab-number. Drag
+ * affordances (.drag-ready/.drag-over) keep precedence. */
+#bg-toggle:has(> .bg-current:not([hidden])):not(.drag-ready, .drag-over) {
+	padding: 0 8px 0 10px;
+	background: var(--fill-raised);
+	color: var(--text-1);
+}
+
+#bg-toggle:has(> .bg-current:not([hidden])):not(.drag-ready, .drag-over):is(
+		:hover,
+		[data-bg-preview~="hover"],
+		[aria-expanded="true"]
+	) {
+	color: var(--text-0);
+}
+
+#bg-toggle:has(> .bg-current:not([hidden])) .bg-count {
+	padding: 0;
+	background: none;
+	color: var(--text-2);
+	font-family: var(--font-mono);
+	font-size: calc(11px * var(--ui-scale));
+	font-weight: 400;
+	font-variant-numeric: tabular-nums;
+	/* .tab-number's nudge: 11px mono centered beside 13px text sits high; drop it onto the name baseline. */
+	line-height: 1;
+	position: relative;
+	top: 1px;
+}
+
+#bg-popover {
+	top: calc(100% + 5px);
+	display: flex;
+	flex-direction: column;
+	width: 320px;
+	max-width: calc(100vw - 16px);
+	max-height: min(480px, calc(100vh - 48px));
+	padding: 0;
+	overflow: hidden;
+}
+
+#bg-popover[hidden] {
+	display: none;
+}
+
+/* The strip control owns the count; the popover header names the resource once. */
+.bg-header {
+	display: flex;
+	align-items: center;
+	padding: 8px 12px;
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--text-1);
+	user-select: none;
+}
+
+#bg-rows {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-height: 0;
+	overflow-x: hidden;
+	overflow-y: auto;
+}
+
+.bg-group-section,
+.bg-group-members {
+	display: flex;
+	flex-direction: column;
+}
+
+.bg-group-section {
+	box-shadow: inset 2px 0 color-mix(in srgb, var(--group-color) 55%, transparent);
+}
+
+.bg-group-members {
+	gap: 4px;
+}
+
+.bg-group-header-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 28px 28px;
+	align-items: center;
+	gap: 4px;
+	width: 100%;
+	height: 44px;
+	padding: 0 12px;
+	transition: background-color 140ms ease-out;
+}
+
+.bg-group-restore {
+	color: color-mix(in srgb, var(--group-color) 55%, var(--text-2));
+}
+
+.bg-group-close-slot {
+	width: 28px;
+	height: 28px;
+	pointer-events: none;
+}
+
+/* Editorial rows keep Open as the large target; ⇥ restores to the strip and ×
+ * closes through the grace path. A live idle terminal is one compact title
+ * line; the OSC indicator appears only when an agent reports state. */
+.bg-row {
+	position: relative;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto auto;
+	align-items: center;
+	gap: 4px;
+	min-height: 44px;
+	width: 100%;
+	padding: 4px 12px;
+	border-radius: 0;
+	user-select: none;
+	transition: background-color 140ms ease-out;
+}
+
+.bg-row:hover,
+.bg-row.active {
+	background: var(--fill-subtle);
+}
+
+.bg-open {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	height: 36px;
+	padding: 0;
+	border: none;
+	border-radius: 0;
+	background: none;
+	font-family: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.bg-open-copy {
+	display: grid;
+	min-width: 0;
+}
+
+.bg-title {
+	min-width: 0;
+	overflow: hidden;
+	color: var(--text-0);
+	font-size: 13px;
+	font-weight: 500;
+	line-height: 1.3;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.bg-title.exited {
+	color: var(--text-1);
+}
+
+.bg-state {
+	font-size: 11px;
+	line-height: 1.3;
+	color: var(--text-2);
+	font-variant-numeric: tabular-nums;
+}
+
+.bg-action-glyph {
+	font-size: 16px;
+}
+
+.bg-kill-glyph {
+	font-size: 14px;
+}

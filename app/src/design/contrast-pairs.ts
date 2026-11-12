@@ -21,7 +21,7 @@ function presetTokens(id: string): Record<string, string> {
 	return preset.tokens
 }
 
-/** `app/src/renderer/styles.css` `:root`: colours derived from the tones (§2.8): soft fills, and the Run Context banner's border. */
+/** `app/src/renderer/tokens.css` `:root`: colours derived from the tones (§2.8): soft fills, and the Run Context banner's border. */
 const ROOT_DERIVED = {
 	'--accent-soft': 'color-mix(in srgb, var(--accent) 15%, transparent)',
 	'--success-soft': 'color-mix(in srgb, var(--success) 15%, transparent)',
@@ -31,7 +31,7 @@ const ROOT_DERIVED = {
 	'--danger-strong': 'color-mix(in srgb, var(--danger) 50%, transparent)',
 }
 
-/** `styles.css` `.agent-dock` and `.signals` (each declares it): the dim text of the dock and Signals (§3.24). */
+/** `agent-dock/agent-dock.css` `.agent-dock` and `signals/signals.css` `.signals` (each declares it): the dim text of the dock and Signals (§3.24). */
 const DOCK = {
 	'--dock-dim': 'color-mix(in srgb, var(--text-1) 60%, var(--text-2))',
 }
@@ -111,7 +111,7 @@ const POPUP = {
 }
 
 /**
- * `styles.css` terminal groups (§3.18): the group's colour comes from `--group-color`, set inline to
+ * `terminal-tabs.css` and `background-terminals.css` terminal groups (§3.18): the group's colour comes from `--group-color`, set inline to
  * `var(--group-<colour>)` on the section. Keys name the declaration (property and selector in `SOURCES`).
  */
 const TAB_GROUP = {
@@ -207,7 +207,11 @@ function declarations(palette: PaletteId, file: string, block: string, values: R
 	return Object.keys(values).map(property => ({ palette, file, block, property }))
 }
 
-const STYLES = 'app/src/renderer/styles.css'
+const TOKENS_CSS = 'app/src/renderer/tokens.css'
+const TABS_CSS = 'app/src/renderer/terminal-tabs.css'
+const BACKGROUND_CSS = 'app/src/renderer/background-terminals.css'
+const DOCK_CSS = 'app/src/renderer/agent-dock/agent-dock.css'
+const SIGNALS_CSS = 'app/src/renderer/signals/signals.css'
 const REMOTE_CSS = 'app/src/renderer/remote/remote.css'
 const REVIEW_CSS = 'app/src/renderer/document-review/document-review.css'
 const VIEWER_CSS = 'app/src/renderer/viewer/viewer.css'
@@ -248,13 +252,17 @@ const WIDGET_SOFT: Record<string, string> = {
 	'--vg-gray-soft': '--vg-gray',
 }
 
-const groupSource = (block: string, property: string, key: keyof typeof TAB_GROUP): SourceCheck[] =>
-	GROUP_PALETTES.map(palette => ({ palette, file: STYLES, block, property, key }))
+const groupSource = (
+	block: string,
+	property: string,
+	key: keyof typeof TAB_GROUP,
+	file: string = TABS_CSS,
+): SourceCheck[] => GROUP_PALETTES.map(palette => ({ palette, file, block, property, key }))
 
 export const SOURCES: readonly SourceCheck[] = [
-	...declarations('helm', STYLES, ':root {', ROOT_DERIVED),
-	...declarations('helm', STYLES, '.agent-dock {', DOCK),
-	...declarations('helm', STYLES, '.signals {', DOCK),
+	...declarations('helm', TOKENS_CSS, ':root {', ROOT_DERIVED),
+	...declarations('helm', DOCK_CSS, '.agent-dock {', DOCK),
+	...declarations('helm', SIGNALS_CSS, '.signals {', DOCK),
 	...declarations('remote', REMOTE_CSS, ':root.remote-page {', REMOTE_PAGE),
 	...declarations('remote', REMOTE_CSS, '.remote-workspace, .remote-login, .remote-empty {', REMOTE),
 	...declarations('review-light', REVIEW_CSS, '.document-review[data-review-theme="light"] {', REVIEW_LIGHT),
@@ -286,7 +294,7 @@ export const SOURCES: readonly SourceCheck[] = [
 	...groupSource('.tab-group-toggle:hover {', 'color', 'group label hover'),
 	...groupSource('.tab-group-toggle .group-icon {', 'color', 'group label hover'),
 	...groupSource('.tab-group-count {', 'color', 'group count'),
-	...groupSource('.bg-group-restore {', 'color', 'group restore'),
+	...groupSource('.bg-group-restore {', 'color', 'group restore', BACKGROUND_CSS),
 	...Object.entries(WIDGET_SOFT).map(([property, tone]) => ({
 		palette: 'widget' as const,
 		file: WIDGET,

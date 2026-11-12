@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { readRendererCss } from './helpers/renderer-css'
 
 const html = readFileSync(new URL('../app/src/renderer/index.html', import.meta.url), 'utf8').replace(/\s+/g, ' ')
-const css = readFileSync(new URL('../app/src/renderer/styles.css', import.meta.url), 'utf8')
+const css = readRendererCss()
 const notices = readFileSync(new URL('../THIRD_PARTY_NOTICES.md', import.meta.url), 'utf8')
 
 // User interactions (open/restore, drag projection/cancel, group restore, exit/focus)

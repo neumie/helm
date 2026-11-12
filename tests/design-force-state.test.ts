@@ -6,15 +6,16 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { rendererCssFiles } from './helpers/renderer-css'
 
 const RENDERER = join(import.meta.dirname, '..', 'app', 'src', 'renderer')
 
 /** CSS files that hold primitive rules. Every file is checked against every
  *  primitive class, so a primitive state rule added to another of these files
- *  is caught too. styles.css holds only the global button focus ring among
- *  primitives; its agent dock, Signals and terminal rules use none of these
- *  classes. */
-const PRIMITIVE_CSS_FILES = ['button.css', 'sidebar/sidebar.css', 'sidebar/detail-redesign.css', 'styles.css']
+ *  is caught too. The styles.css manifest's files (tokens, base, terminal,
+ *  agent dock, Signals) hold only the global button focus ring (base.css)
+ *  among primitives; their other rules use none of these classes. */
+const PRIMITIVE_CSS_FILES = ['button.css', 'sidebar/sidebar.css', 'sidebar/detail-redesign.css', ...rendererCssFiles()]
 
 /** Primitive classes with state rules of their own. A class matches itself and
  *  its `-modifier` variants (`.btn` covers `.btn-primary`). Toggle is not
@@ -230,7 +231,7 @@ for (const { file, rules } of ALL_RULES) {
 					other =>
 						!other.includes('data-force-state') && hasStatePseudo(other) && forcedAlternative(other) === selector,
 				)
-				const isGlobalRing = file === 'styles.css' && selector === 'button[data-force-state="focus-visible"]'
+				const isGlobalRing = file === 'base.css' && selector === 'button[data-force-state="focus-visible"]'
 				if (!hasReal && !isGlobalRing) stray.push(`${selector}  (no matching real-state selector in its rule)`)
 			}
 		}
@@ -250,8 +251,8 @@ test('every listed primitive class has state selectors (the class list is not st
 	)
 })
 
-test('styles.css: the global button focus ring answers forced focus-visible', () => {
-	const ring = styleRules(read('styles.css')).find(rule => rule.selectors.includes('button:focus-visible'))
+test('base.css: the global button focus ring answers forced focus-visible', () => {
+	const ring = styleRules(read('base.css')).find(rule => rule.selectors.includes('button:focus-visible'))
 	assert.ok(ring, 'global button:focus-visible rule not found')
 	assert.ok(ring.selectors.includes('button[data-force-state="focus-visible"]'))
 })

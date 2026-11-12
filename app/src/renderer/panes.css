@@ -1,0 +1,46 @@
+/* ---------- panes ---------- */
+
+#content {
+	display: grid;
+	grid-template-columns: var(--sidebar-column-width, var(--left-width)) var(--sidebar-divider-width, 1px) minmax(0, 1fr);
+	min-height: 0;
+}
+
+#left {
+	grid-column: 1;
+	position: relative;
+	min-width: 0;
+	background: var(--pane);
+}
+
+/* Native sidebar styles live in sidebar/sidebar.css (bundled together). */
+
+/* ---------- divider ---------- */
+
+#divider {
+	grid-column: 2;
+	position: relative;
+	background: var(--hairline);
+	transition: background-color 120ms ease-out;
+}
+
+/* 8px hit-area straddling the 1px hairline */
+#divider::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: -4px;
+	width: 9px;
+	cursor: col-resize;
+}
+
+#divider:hover,
+body.dragging #divider {
+	background: var(--hairline-strong);
+}
+
+body.dragging {
+	cursor: col-resize;
+	user-select: none;
+}

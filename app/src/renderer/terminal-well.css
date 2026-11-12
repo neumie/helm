@@ -1,0 +1,185 @@
+/* ---------- terminal well ---------- */
+
+#right {
+	grid-column: 3;
+	position: relative;
+	min-width: 0;
+	min-height: 0;
+	/* Row grid: #terms takes the remaining height and the agent dock (§3.24)
+	 * takes its own auto row, so the #terms ResizeObserver refits xterm when the
+	 * dock opens. Without a mounted dock the auto row is empty. */
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	grid-template-rows: minmax(0, 1fr) auto;
+	/* Terminal surface token, not --well: the pane must match the themed xterm
+	 * background exactly (a theme may split them). */
+	background: var(--term-bg);
+}
+
+#terms {
+	grid-row: 1;
+	grid-column: 1;
+	position: relative;
+	min-height: 0;
+}
+
+#right[data-agent-dock-position="top"] {
+	grid-template-rows: auto minmax(0, 1fr);
+}
+
+#right[data-agent-dock-position="top"] #terms,
+#right[data-agent-dock-position="top"] #no-terms {
+	grid-row: 2;
+}
+
+/* Terminal well padding rule (§3.14): breathing room top/bottom/left only —
+ * right padding MUST stay 0 so the overlay scrollbar (.term-scrollbar,
+ * absolutely positioned against this holder) hugs the pane edge (any right
+ * padding pushes it into the well, Terminal.app never does that). Right-side
+ * breathing room comes from FitAddon's integer-column remainder plus its
+ * fixed scrollbar reserve.
+ *
+ * overflow:hidden is load-bearing: a transient fit desync (mid-drag, mid-
+ * reattach) must clip at the pane edge, never paint over the divider/window. */
+.term-holder {
+	position: absolute;
+	inset: 0;
+	padding: 14px 0 14px 16px;
+	display: none;
+	overflow: hidden;
+}
+
+.term-holder.active {
+	display: block;
+}
+
+/* "Show terminal" from the agent dock (design §3.24): the revealed terminal's frame takes one accent
+ * pulse in the dock's arrival language — a 2px --accent ring inside the frame and a 6% tint over the
+ * text hold ~170ms, then ease out over the rest of 1.4s (REVEAL_PULSE_MS). Color only: nothing moves or
+ * resizes, pointer events pass through, the terminal keeps the keys. Reduced motion: no animation; the
+ * ring holds, static, while data-reveal is set. */
+.term-holder[data-reveal]::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	z-index: 9;
+	pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.term-holder[data-reveal]::after {
+		animation: term-reveal-pulse 1.4s ease-out 1 forwards;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.term-holder[data-reveal]::after {
+		box-shadow: inset 0 0 0 2px var(--accent);
+	}
+}
+
+@keyframes term-reveal-pulse {
+	0%,
+	12% {
+		box-shadow: inset 0 0 0 2px var(--accent);
+		background-color: color-mix(in srgb, var(--accent) 6%, transparent);
+	}
+
+	100% {
+		box-shadow: inset 0 0 0 2px transparent;
+		background-color: transparent;
+	}
+}
+
+/* xterm mounts HERE, not in .term-holder: FitAddon measures the computed width
+ * of xterm's parent element, which under border-box includes that element's
+ * own padding — mounting into the padded holder overcounts columns by 16px and
+ * the last cells paint past the pane edge. The mount is padding-free and spans
+ * exactly the holder's content box, so fit measures the true usable area. */
+.term-mount {
+	height: 100%;
+	/* Neutralize body's letter-spacing (-0.01em, §2.2 type scale): it leaks into
+	 * xterm's DOM width cache (span-based, inherits CSS) but not its cell metric
+	 * (canvas measureText), so xterm "compensates" with +0.13px/char span
+	 * letter-spacing — ~18px of cumulative drift over 130 columns, clipping the
+	 * last ~2 columns at the .xterm-screen edge. The terminal grid must measure
+	 * and paint with the font's natural advance. */
+	letter-spacing: normal;
+}
+
+.term-mount .xterm {
+	height: 100%;
+}
+
+/* xterm stops honoring DEC synchronized output after one second. A long TUI
+ * history redraw can exceed that guard, so renderer.ts holds this clone of the
+ * last complete viewport above xterm until the replacement frame has parsed. */
+.term-mount .term-frame-freeze {
+	position: absolute;
+	top: 0;
+	left: 0;
+	z-index: 8;
+	background: var(--term-bg);
+	pointer-events: none;
+}
+
+/* xterm.css hardcodes .xterm-viewport background #000; with a correct fit the
+ * sub-cell remainder gap below/right of the grid would show it as a black seam
+ * against --term-bg. Transparent lets the themed well paint the remainder.
+ * overflow:hidden kills its NATIVE scrollbar: xterm 6 keeps the element only
+ * as an overview-ruler container (the monaco widget scrolls instead), but
+ * xterm.css still sets overflow-y:scroll on it — left unstyled, the default
+ * webkit track/corner renders as a gray sliver at the pane's bottom-right. */
+.term-holder .xterm-viewport {
+	background-color: transparent !important;
+	overflow: hidden !important;
+}
+
+/* xterm 6 scrolls through a monaco SmoothScrollableElement (VS Code widget),
+ * NOT a native-scrolling .xterm-viewport — ::-webkit-scrollbar styling never
+ * reaches it. Its track is inline-sized to rows*cellHeight from the screen's
+ * top (inside the padded holder it can never reach the pane edges) and its
+ * square slider reads as a generic web scrollbar, so helm hides it and
+ * renders its own overlay (.term-scrollbar, §3.14). Wheel input is unaffected:
+ * the widget listens on the screen element, not the scrollbar node. */
+.term-holder .xterm-scrollable-element > .scrollbar {
+	display: none !important;
+}
+
+/* Overlay scrollbar (§3.14): absolutely positioned in .term-holder, so the
+ * track spans the holder's FULL padding box — pane top to pane bottom —
+ * decoupled from the 14px text inset that used to shorten the old track. It
+ * floats inside FitAddon's fixed 14px scrollbar reserve: pure overlay, never
+ * reserves layout space, never shifts terminal columns. */
+.term-scrollbar {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	width: 12px;
+	z-index: 2;
+}
+
+.term-scrollbar[hidden] {
+	display: none;
+}
+
+/* macOS-style pill: 7px wide, fully rounded, 2px in from the pane edge; no
+ * track fill, no buttons, no corner. Hover/drag widens it to 9px (Apple's
+ * overlay expands under the pointer) and brightens the fill. Height/translateY
+ * set from buffer state by renderer.ts (syncScrollbar). */
+.term-scrollbar-thumb {
+	position: absolute;
+	top: 0;
+	right: 2px;
+	width: 7px;
+	border-radius: 999px;
+	background: var(--term-scroll-thumb);
+	transition: background-color 140ms ease-out, width 140ms ease-out;
+}
+
+.term-scrollbar:hover .term-scrollbar-thumb,
+.term-scrollbar-thumb.active {
+	width: 9px;
+	background: var(--term-scroll-thumb-hover);
+}

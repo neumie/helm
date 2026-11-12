@@ -4,7 +4,10 @@ import { type Page, expect, test } from '@playwright/test'
 import { openRemoteDestination } from './remote-navigation.js'
 
 const STORY = '/iframe.html?id=views-helm-remote--usage&viewMode=story'
-const GLOBAL_CSS = readFileSync(resolve('src/renderer/styles.css'), 'utf8')
+// styles.css is an ordered @import manifest; a <style> element cannot resolve those relative imports.
+const GLOBAL_CSS = [...readFileSync(resolve('src/renderer/styles.css'), 'utf8').matchAll(/^@import "\.\/([^"]+)";$/gm)]
+	.map(([, file]) => readFileSync(resolve('src/renderer', file as string), 'utf8'))
+	.join('\n')
 const REMOTE_CSS = readFileSync(resolve('src/renderer/remote/remote.css'), 'utf8')
 const SIZES = [
 	{ name: 'phone', width: 390, height: 844 },

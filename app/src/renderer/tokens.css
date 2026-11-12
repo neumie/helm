@@ -1,0 +1,88 @@
+/* Helm design tokens — one machined instrument panel, macOS dark.
+ *
+ * Theming (docs/design-system.md §2.8): every color below is a CSS custom
+ * property; components consume vars, never literals. The values here mirror
+ * helm/src/theme-presets.ts HELM_TOKENS (the canonical source) and exist only
+ * for the pre-JS first paint — appearance.ts re-applies the active theme over
+ * them at startup and on every change. Keep both files in sync. */
+:root {
+	color-scheme: dark;
+	/* Background ladder */
+	--chrome: #1a1c1f;
+	--pane: #141517;
+	--well: #0f1113;
+	/* Lines & fills */
+	--hairline: rgba(255, 255, 255, 0.07);
+	--hairline-strong: rgba(255, 255, 255, 0.16);
+	--fill-subtle: rgba(255, 255, 255, 0.05);
+	--fill-raised: rgba(255, 255, 255, 0.09);
+	--fill-strong: rgba(255, 255, 255, 0.13);
+	/* Text ladder */
+	--text-0: #ececee;
+	--text-1: #9a9ea6;
+	--text-2: #62666e;
+	/* Accent & semantic tones */
+	--accent: #4c9aff;
+	--accent-fill: #3b82f6;
+	--accent-fill-hover: #5a9dff;
+	--on-accent: #ffffff;
+	--success: #4ec98a;
+	--warn: #e0b341;
+	--danger: #f2585b;
+	--neutral: #8a8f98;
+	/* User-selectable terminal group palette (§3.18). */
+	--group-blue: #4c9aff;
+	--group-purple: #c08ae0;
+	--group-pink: #e477b5;
+	--group-red: #f2585b;
+	--group-orange: #e08a41;
+	--group-green: #4ec98a;
+	--group-cyan: #54c6d6;
+	/* Derived soft fills — exactly 15% of the tone (§2.1); themes override the
+	 * tone and the soft fill follows automatically. Never hand-mix per component. */
+	--accent-soft: color-mix(in srgb, var(--accent) 15%, transparent);
+	--success-soft: color-mix(in srgb, var(--success) 15%, transparent);
+	--warn-soft: color-mix(in srgb, var(--warn) 15%, transparent);
+	--danger-soft: color-mix(in srgb, var(--danger) 15%, transparent);
+	--neutral-soft: color-mix(in srgb, var(--neutral) 15%, transparent);
+	--danger-strong: color-mix(in srgb, var(--danger) 50%, transparent);
+	/* Scroll thumbs + toast countdown share one alpha pair (§3.17) */
+	--thumb: rgba(255, 255, 255, 0.14);
+	--thumb-hover: rgba(255, 255, 255, 0.24);
+	/* Terminal overlay scrollbar (§3.14) — brighter than pane thumbs; it floats
+	 * over the darkest surface (--well) with no track fill behind it. */
+	--term-scroll-thumb: rgba(255, 255, 255, 0.22);
+	--term-scroll-thumb-hover: rgba(255, 255, 255, 0.35);
+	--scrim: rgba(0, 0, 0, 0.4);
+	--shadow-1: 0 8px 24px rgba(0, 0, 0, 0.35);
+	--shadow-2: 0 10px 30px -8px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.35);
+	/* Terminal surface + ANSI 16 (§3.14) — consumed by appearance.ts to build
+	 * the xterm theme object; CSS itself only uses --term-bg for the well. */
+	--term-bg: #0f1113;
+	--term-fg: #ececee;
+	--term-cursor: #4c9aff;
+	--term-cursor-accent: #0f1113;
+	--term-selection: rgba(76, 154, 255, 0.25);
+	--ansi-black: #2a2e33;
+	--ansi-red: #f2585b;
+	--ansi-green: #4ec98a;
+	--ansi-yellow: #e0b341;
+	--ansi-blue: #4c9aff;
+	--ansi-magenta: #c08ae0;
+	--ansi-cyan: #54c6d6;
+	--ansi-white: #c9ccd1;
+	--ansi-bright-black: #5b6068;
+	--ansi-bright-red: #ff7477;
+	--ansi-bright-green: #6fe0a8;
+	--ansi-bright-yellow: #f2cd6d;
+	--ansi-bright-blue: #78b5ff;
+	--ansi-bright-magenta: #d5a9f0;
+	--ansi-bright-cyan: #74dcea;
+	--ansi-bright-white: #f5f6f7;
+	/* Type families (not theme tokens; docs/design-system.md §2.2) */
+	--font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+	--font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+	/* Layout + type scale knobs (not theme tokens) */
+	--left-width: 340px;
+	--ui-scale: 1;
+}

@@ -4,11 +4,12 @@ import test from 'node:test'
 import tabGroupModule from '../app/src/renderer/tab-groups.ts'
 import type { TabGroupRendererTab } from '../app/src/renderer/tab-groups.ts'
 import type { TabGroup } from '../app/src/shared.ts'
+import { readRendererCss } from './helpers/renderer-css'
 
 type TabGroupModule = typeof import('../app/src/renderer/tab-groups.ts')
 const { composeTabGroups, shouldReloadCollapsedGroup, tabGroupActionTargets, tabGroupHeading, tabGroupMembersId } =
 	tabGroupModule as TabGroupModule
-const styles = readFileSync(new URL('../app/src/renderer/styles.css', import.meta.url), 'utf8')
+const styles = readRendererCss()
 
 const groups: TabGroup[] = [
 	{ id: 'build', name: 'Build', color: 'blue', collapsedStrip: true, collapsedBackground: false },

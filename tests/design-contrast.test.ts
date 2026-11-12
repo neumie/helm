@@ -194,8 +194,8 @@ test('a pinned block declares no colour token the palette does not copy, and ope
 	for (const { file, block, palette, copied } of pinned.values()) {
 		const blocks = allBlockDeclarations(file, block).filter(decls => [...decls.keys()].some(p => p.startsWith('--')))
 		if (blocks.length !== 1) problems.push(`${file} ${block}: ${blocks.length} blocks declare tokens; keep one`)
-		// styles.css :root mirrors the preset (checked by the next test) besides the derived soft fills.
-		const allowed = new Set([...copied, ...(file.endsWith('styles.css') && block === ':root {' ? helmRoot : [])])
+		// tokens.css :root mirrors the preset (checked by the next test) besides the derived soft fills.
+		const allowed = new Set([...copied, ...(file.endsWith('/tokens.css') && block === ':root {' ? helmRoot : [])])
 		const scopes = palette === 'widget' ? PALETTES.helm.scopes : PALETTES[palette as keyof typeof PALETTES].scopes
 		for (const decls of blocks) {
 			for (const [property, value] of decls) {
@@ -209,11 +209,11 @@ test('a pinned block declares no colour token the palette does not copy, and ope
 })
 
 test('the stylesheet :root the Remote and Review palettes inherit still equals the Helm preset', () => {
-	const root = blockDeclarations('app/src/renderer/styles.css', ':root {')
+	const root = blockDeclarations('app/src/renderer/tokens.css', ':root {')
 	const helm = THEME_PRESETS.helm?.tokens ?? {}
 	const drift = Object.entries(helm)
 		.filter(([token, value]) => root.has(token) && root.get(token) !== normalize(value))
-		.map(([token, value]) => `${token}: styles.css ${root.get(token)}, preset ${value}`)
+		.map(([token, value]) => `${token}: tokens.css ${root.get(token)}, preset ${value}`)
 	assert.deepEqual(drift, [])
 })
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import progressModule from '../app/src/renderer/terminal-progress.ts'
+import { readRendererCss } from './helpers/renderer-css'
 
 const { createTerminalProgressTracker, shouldMarkTerminalCompletion } = progressModule
 const ACTIVE = '\x1b]9;4;3\x07'
@@ -80,7 +81,7 @@ test('renderer wires explicit progress into visible, accessible tab state', () =
 		new URL('../app/src/renderer/sidebar/ActivityIndicator.stories.tsx', import.meta.url),
 		'utf8',
 	)
-	const css = readFileSync(new URL('../app/src/renderer/styles.css', import.meta.url), 'utf8')
+	const css = readRendererCss()
 	assert.ok(renderer.indexOf('tab.progressTracker.feed(data)') < renderer.indexOf('tab.outputGuard.write(output'))
 	assert.match(renderer, /createActivityIndicator\('Running'\)/)
 	assert.match(renderer, /tabButton\.append\(running, label, close\)/)

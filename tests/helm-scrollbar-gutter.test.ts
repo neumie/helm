@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { readRendererCss } from './helpers/renderer-css'
 
 const sidebar = readFileSync(new URL('../app/src/renderer/sidebar/sidebar.css', import.meta.url), 'utf8')
-const cockpit = readFileSync(new URL('../app/src/renderer/styles.css', import.meta.url), 'utf8')
+const cockpit = readRendererCss()
 const runContext = readFileSync(
 	new URL('../app/src/renderer/run-context/run-context-editor.css', import.meta.url),
 	'utf8',

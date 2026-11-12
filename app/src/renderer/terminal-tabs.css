@@ -1,0 +1,511 @@
+/* ---------- terminal tabs ---------- */
+
+#tabs {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	/* Pull hit box through topbar's 6px inset, then give it back as padding:
+	   first tab stays aligned while slot 0 gets a real, unclipped drop gutter. */
+	margin-left: -6px;
+	padding-left: 6px;
+	overflow-x: auto;
+	scrollbar-width: none;
+	-webkit-app-region: no-drag;
+}
+
+#tabs::-webkit-scrollbar {
+	display: none;
+}
+
+/* Group headers project persisted membership without changing tab operations.
+ * They stay compact in the strip; background sections expand vertically below. */
+.tab-group-section,
+.tab-group-members {
+	display: flex;
+	align-items: center;
+	flex: none;
+	-webkit-app-region: no-drag;
+}
+
+.tab-group-section {
+	gap: 0;
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--group-color) 15%, transparent);
+	overflow: hidden;
+	-webkit-app-region: no-drag;
+}
+
+.tab-group-members {
+	gap: 0;
+}
+
+.ungrouped-tab-members {
+	gap: 4px;
+}
+
+.tab-group-section + .tab-group-section {
+	margin-left: 4px;
+}
+
+.tab-group-header {
+	flex: none;
+	height: 28px;
+	padding: 0 8px;
+	color: var(--text-2);
+	font-size: calc(11px * var(--ui-scale));
+	font-weight: 600;
+	line-height: 28px;
+	white-space: nowrap;
+	user-select: none;
+}
+
+.tab-group-toggle {
+	display: flex;
+	align-items: center;
+	gap: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	color: color-mix(in srgb, var(--group-color) 55%, var(--text-1));
+	font-family: inherit;
+	cursor: pointer;
+	transition: background-color 140ms ease-out, color 140ms ease-out;
+	-webkit-app-region: no-drag;
+}
+
+.group-icon,
+.background-icon {
+	display: block;
+	flex: none;
+	width: 16px;
+	height: 16px;
+}
+
+.tab-group-toggle .group-icon {
+	color: var(--group-color);
+}
+
+.tab-group-summary {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	height: 28px;
+	padding: 0 8px;
+}
+
+.tab-group-section:not(.collapsed) > .tab-group-toggle {
+	border-right: 1px solid color-mix(in srgb, var(--group-color) 20%, transparent);
+}
+
+.tab-group-count {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	min-width: 28px;
+	height: 28px;
+	padding: 0 8px;
+	color: color-mix(in srgb, var(--group-color) 55%, var(--text-2));
+	font-family: var(--font-mono);
+	font-size: calc(10px * var(--ui-scale));
+	font-weight: 500;
+}
+
+.tab-group-section.collapsed > .tab-group-toggle .tab-group-count {
+	border-left: 1px solid color-mix(in srgb, var(--group-color) 20%, transparent);
+}
+
+.tab-group-toggle:hover {
+	color: var(--group-color);
+}
+
+.tab-group-section.collapsed > .tab-group-toggle:hover {
+	background: color-mix(in srgb, var(--group-color) 22%, transparent);
+}
+
+.bg-group-header-row > .tab-group-toggle {
+	min-width: 0;
+	width: 100%;
+	height: 44px;
+	padding: 0;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+.bg-group-header-row:hover {
+	background: color-mix(in srgb, var(--group-color) 12%, transparent);
+}
+
+.bg-group-header-row > .tab-group-toggle .tab-group-summary {
+	min-width: 0;
+	height: 44px;
+	padding: 0;
+}
+
+.bg-group-header-row > .tab-group-toggle .tab-group-summary > span:last-child {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.bg-group-header-row > .tab-group-toggle .tab-group-count {
+	min-width: 0;
+	height: 44px;
+	margin-left: auto;
+	padding: 0;
+	border-left: 0;
+}
+
+.tab {
+	position: relative;
+	display: flex;
+	-webkit-app-region: no-drag;
+	align-items: center;
+	gap: 4px;
+	flex: none;
+	height: 28px;
+	max-width: 180px;
+	padding: 0 6px 0 10px;
+	border-radius: 6px;
+	color: var(--text-2);
+	white-space: nowrap;
+	cursor: default;
+	user-select: none;
+	transition: opacity 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out;
+}
+
+/* Author display rules override the HTML hidden state unless this explicit
+ * rule wins. Collapse keeps terminal DOM mounted while hiding every member. */
+.tab-group-members[hidden],
+.bg-group-members[hidden],
+.tab[hidden] {
+	display: none;
+}
+
+body.tab-dragging,
+body.tab-dragging .tab,
+body.group-dragging,
+body.group-dragging .tab-group-toggle {
+	cursor: grabbing;
+}
+
+.tab.drag-placeholder,
+.tab-group-section.group-drag-placeholder,
+.bg-group-section.group-drag-placeholder {
+	opacity: 0;
+}
+
+.tab-group-drag-preview {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: 60;
+	display: flex;
+	flex: none;
+	height: 28px;
+	border-radius: 6px;
+	box-shadow: inset 0 0 0 1px var(--hairline-strong), var(--shadow-1);
+	opacity: 0.98;
+	pointer-events: none;
+	will-change: transform;
+}
+
+.tab-group-drag-preview.over-background {
+	background: var(--fill-subtle);
+}
+
+.tab-drag-preview {
+	position: fixed;
+	top: 0;
+	left: 0;
+	z-index: 60;
+	pointer-events: none;
+	background: var(--fill-raised);
+	box-shadow: inset 0 0 0 1px var(--hairline-strong), var(--shadow-1);
+	color: var(--text-0);
+	opacity: 0.98;
+	will-change: transform;
+}
+
+.tab-drag-preview .tab-close {
+	opacity: 0;
+}
+
+.background-tab-drop-placeholder,
+.tab-group-section.group-drop-placeholder {
+	flex: none;
+	opacity: 0.58;
+	pointer-events: none;
+}
+
+.tab-drag-preview.over-background {
+	background: var(--fill-subtle);
+	color: var(--text-1);
+}
+
+.tab:hover {
+	background: var(--fill-subtle);
+	color: var(--text-1);
+}
+
+.tab.active {
+	background: var(--fill-raised);
+	color: var(--text-0);
+}
+
+.tab-group-section .tab {
+	border-radius: 0;
+	background: transparent;
+}
+
+.tab-group-section > .tab-group-toggle:first-child {
+	border-radius: 6px 0 0 6px;
+}
+
+.tab-group-section > .tab-group-members:last-child .tab:last-child {
+	border-radius: 0 6px 6px 0;
+}
+
+.tab-group-section.collapsed > .tab-group-toggle {
+	border-radius: 6px;
+}
+
+.tab-group-section .tab:hover {
+	background: color-mix(in srgb, var(--group-color) 22%, transparent);
+	color: var(--text-1);
+}
+
+.tab-group-section .tab.active {
+	background: color-mix(in srgb, var(--group-color) 30%, transparent);
+	color: var(--text-0);
+}
+
+.tab-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* ⌘1–⌘9 digits (§3.18 "Tab numbers"): a dim leading digit on every tab visible
+ * in the strip. Meta-quiet (11/400, --text-2) — the topbar owns no bold element. */
+.tab-number {
+	flex: none;
+	color: var(--text-2);
+	font-family: var(--font-mono);
+	font-size: calc(11px * var(--ui-scale));
+	font-weight: 400;
+	font-variant-numeric: tabular-nums;
+	line-height: 1;
+	pointer-events: none;
+	/* 11px mono centered beside 13px text sits high; drop it onto the label baseline. */
+	position: relative;
+	top: 1px;
+}
+
+/* Reusable in-progress primitive (§3.21): a six-dot Braille cell whose
+ * grayscale head and soft clockwise tail stay neutral. Accent is reserved for
+ * the explicit needs-attention variant below. */
+.activity-indicator {
+	flex: none;
+	display: grid;
+	grid-template-columns: repeat(2, 2px);
+	grid-template-rows: repeat(3, 2px);
+	gap: 2px;
+}
+
+.activity-indicator[hidden] {
+	display: none;
+}
+
+.activity-indicator-dot {
+	width: 2px;
+	height: 2px;
+	border-radius: 999px;
+	background: var(--text-0);
+	opacity: 0.1;
+	animation: activity-indicator-clockwise 1s linear infinite;
+}
+
+/* Clockwise: top-left → top-right → middle-right → bottom-right →
+ * bottom-left → middle-left. Negative delays begin on a complete cycle. */
+.activity-indicator-dot:nth-child(2) {
+	animation-delay: -833ms;
+}
+.activity-indicator-dot:nth-child(3) {
+	animation-delay: -167ms;
+}
+.activity-indicator-dot:nth-child(4) {
+	animation-delay: -667ms;
+}
+.activity-indicator-dot:nth-child(5) {
+	animation-delay: -333ms;
+}
+.activity-indicator-dot:nth-child(6) {
+	animation-delay: -500ms;
+}
+
+@keyframes activity-indicator-clockwise {
+	0% {
+		opacity: 1;
+	}
+	16.66% {
+		opacity: 0.68;
+	}
+	33.33% {
+		opacity: 0.38;
+	}
+	50% {
+		opacity: 0.18;
+	}
+	66.66%,
+	100% {
+		opacity: 0.1;
+	}
+}
+
+/* Waiting for the operator is the highest-priority agent state: every dot
+ * pulses together in warning amber, distinct from completion's diagonal wave. */
+.activity-indicator[data-variant="waiting"] .activity-indicator-dot {
+	background: var(--warn);
+	animation: activity-indicator-waiting 0.9s ease-in-out infinite;
+}
+
+@keyframes activity-indicator-waiting {
+	0%,
+	100% {
+		opacity: 0.55;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+
+/* Completion becomes a slower diagonal color-wave: top-left leads, equal
+ * diagonals share a phase, and bottom-right closes the gray→accent gradient. */
+.activity-indicator[data-variant="attention"] .activity-indicator-dot {
+	animation: activity-indicator-attention-color 1.8s ease-in-out infinite;
+}
+.activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(1) {
+	animation-delay: -0.9s;
+}
+.activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(2),
+.activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(3) {
+	animation-delay: -0.6s;
+}
+.activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(4),
+.activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(5) {
+	animation-delay: -0.3s;
+}
+.activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(6) {
+	animation-delay: 0s;
+}
+
+@keyframes activity-indicator-attention-color {
+	0%,
+	100% {
+		background-color: var(--text-2);
+		opacity: 0.55;
+	}
+	50% {
+		background-color: var(--accent);
+		opacity: 1;
+	}
+}
+
+/* Optional visible copy breathes independently; the dots keep their own
+ * directional motion and never inherit this restrained text treatment. */
+.activity-indicator-label {
+	animation: activity-indicator-label-breathe 1.8s ease-in-out infinite;
+}
+
+@keyframes activity-indicator-label-breathe {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.76;
+	}
+}
+
+/* Terminal tabs add only placement; all indicator visuals stay reusable. */
+.tab-running {
+	margin-right: 2px;
+}
+
+/* Inline tab rename (double-click / context-menu "Rename…", §3.14): a §3.7
+ * field compacted into the 28px tab — accent border IS the focus signal
+ * (fields never get the outer ring). Enter/blur commit, Esc cancels; empty
+ * commit clears the pin. */
+.tab-rename {
+	width: 120px;
+	height: 20px;
+	padding: 0 6px;
+	border: 1px solid var(--accent);
+	border-radius: 4px;
+	background: var(--fill-subtle);
+	color: var(--text-0);
+	font: inherit;
+	font-size: 12px;
+	line-height: 1;
+	outline: none;
+	user-select: text;
+	-webkit-app-region: no-drag;
+}
+
+.tab-rename::placeholder {
+	color: var(--text-2);
+}
+
+.tab-close {
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	border: none;
+	border-radius: 4px;
+	background: none;
+	color: inherit;
+	font-size: 13px;
+	line-height: 1;
+	cursor: pointer;
+	opacity: 0;
+	transition: opacity 140ms ease-out, background-color 140ms ease-out;
+}
+
+.tab:hover .tab-close,
+.tab.active .tab-close {
+	opacity: 0.6;
+}
+
+.tab-close:hover {
+	opacity: 1;
+	background: var(--fill-raised);
+}
+
+#new-tab {
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	border: none;
+	border-radius: 6px;
+	background: none;
+	color: var(--text-2);
+	font-size: 16px;
+	line-height: 1;
+	cursor: pointer;
+	-webkit-app-region: no-drag;
+	transition: background-color 140ms ease-out, color 140ms ease-out;
+}
+
+#new-tab:hover {
+	background: var(--fill-subtle);
+	color: var(--text-0);
+}

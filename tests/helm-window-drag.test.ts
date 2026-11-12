@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { readRendererCss } from './helpers/renderer-css'
 
 const html = readFileSync(new URL('../app/src/renderer/index.html', import.meta.url), 'utf-8')
 const normalizedHtml = html.replace(/\s+/g, ' ')
-const css = readFileSync(new URL('../app/src/renderer/styles.css', import.meta.url), 'utf-8')
+const css = readRendererCss()
 const renderer = readFileSync(new URL('../app/src/renderer/terminal-workspace.ts', import.meta.url), 'utf-8')
 const main = readFileSync(new URL('../app/src/main.ts', import.meta.url), 'utf-8')
 

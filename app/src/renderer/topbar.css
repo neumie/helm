@@ -1,0 +1,80 @@
+/* ---------- top bar (window chrome) ---------- */
+
+/* Columns mirror #content so the tab strip sits exactly over the terminal pane. */
+#topbar {
+	display: grid;
+	grid-template-columns: var(--sidebar-header-width, var(--left-width)) var(--sidebar-divider-width, 1px) minmax(0, 1fr);
+	background: var(--chrome);
+	border-bottom: 1px solid var(--hairline);
+	/* Never make the whole titlebar native-draggable: overlapping drag/no-drag
+	 * descendants still leak double-click zoom on macOS. Only the two explicit
+	 * whitespace surfaces below opt back into drag. */
+	-webkit-app-region: no-drag;
+}
+
+/* Persistent task control stays beyond traffic lights, outside all drag zones. */
+.topbar-left {
+	grid-column: 1;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	padding-left: 84px;
+	-webkit-app-region: no-drag;
+}
+
+.topbar-left-drag-space {
+	align-self: stretch;
+	flex: 1;
+	min-width: 0;
+	-webkit-app-region: drag;
+}
+
+.sidebar-toggle {
+	-webkit-app-region: no-drag;
+}
+
+.topbar-right {
+	grid-column: 3;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	/* 6px strip inset + 10px pill padding = 16px, matching the terminal well text inset */
+	padding: 0 10px 0 6px;
+	/* Controls and their internal gaps are never native titlebar surface. The
+	 * dedicated trailing whitespace opts into drag separately below. */
+	-webkit-app-region: no-drag;
+}
+
+.tab-strip-controls {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	-webkit-app-region: no-drag;
+}
+
+/* Explicit flex child makes the visible trailing whitespace a reliable native
+ * drag target instead of inheriting the controls' no-drag hit region. */
+.topbar-drag-space {
+	flex: 1;
+	min-width: 12px;
+	align-self: stretch;
+	-webkit-app-region: drag;
+}
+/* Electron's native drag region swallows DOM pointer events. The open
+ * background popover temporarily turns only this whitespace into a click-away
+ * target; closing restores native window dragging. */
+.topbar-drag-space.popover-catcher,
+.topbar-right.background-restore-ready .topbar-drag-space {
+	-webkit-app-region: no-drag;
+}
+
+.topbar-right.background-restore-ready {
+	box-shadow: inset 0 -1px color-mix(in srgb, var(--text-2) 35%, transparent);
+}
+
+.topbar-right.background-restore-over {
+	background: color-mix(in srgb, var(--text-2) 6%, transparent);
+}

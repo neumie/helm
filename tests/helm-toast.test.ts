@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { readRendererCss } from './helpers/renderer-css'
 
-const css = readFileSync(new URL('../app/src/renderer/styles.css', import.meta.url), 'utf8')
+const css = readRendererCss()
 const buttonCss = readFileSync(new URL('../app/src/renderer/button.css', import.meta.url), 'utf8')
 const toast = readFileSync(new URL('../app/src/renderer/toast.ts', import.meta.url), 'utf8')
 const button = readFileSync(new URL('../app/src/renderer/button.tsx', import.meta.url), 'utf8')
