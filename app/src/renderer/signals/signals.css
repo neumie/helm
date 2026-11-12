@@ -520,13 +520,6 @@
 	margin-left: auto;
 }
 
-.signals-key.btn {
-	font-family: var(--dock-sans);
-	font-size: var(--dock-fs);
-	font-weight: 400;
-	letter-spacing: -0.01em;
-}
-
 /* `Done today 8` and `5 filtered` after it: each opens its list (Done today, Filtered mail) in
  * place of the column's. Plain text buttons (no fill at rest); `D` / `f` read as key hints while
  * Signals holds the keys. */
@@ -581,33 +574,14 @@
 	color: var(--dock-dim);
 }
 
+/* Choice rows: the dock's (agent-dock/agent-dock.css holds the rules both share: grid, row, hover,
+ * label, description). Only what differs is here. */
 .signals-choices {
-	display: grid;
-	grid-template-columns: 8px 18px max-content minmax(0, 1fr) max-content 8px;
 	margin: 0 -8px;
 }
 
 .signals-choice {
-	grid-column: 1 / -1;
-	display: grid;
-	grid-template-columns: subgrid;
-	align-items: baseline;
-	align-content: center;
-	min-height: 28px;
-	padding: 0;
-	border: none;
-	border-radius: 6px;
-	background: transparent;
 	text-align: left;
-	cursor: pointer;
-}
-
-.signals-choice > * {
-	grid-row: 1;
-}
-
-.signals-choice:hover {
-	background: var(--fill-subtle);
 }
 
 .signals-choice-mark {
@@ -624,31 +598,9 @@
 	background: var(--accent);
 }
 
-.signals-choice-label {
-	grid-column: 3;
-	padding-right: 12px;
-	font-size: var(--dock-prose-fs);
-	line-height: var(--dock-prose-lh);
-	color: var(--text-0);
-	white-space: nowrap;
-}
-
 .signals-choice-label .signals-glyph {
 	margin-right: 6px;
 	font-size: var(--dock-fs);
-}
-
-.signals-choice-description {
-	grid-column: 4;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	color: var(--dock-dim);
-}
-
-.signals-choice[aria-checked="true"] .signals-choice-description {
-	color: var(--text-1);
 }
 
 /* A busy agent is listed (Jakub sees it) but cannot take a prompt. */

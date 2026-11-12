@@ -1061,14 +1061,21 @@
 /* Choices: drawn mark | label | dim description on one line | number (a key hint, shown only while the
  * pane holds the keys); columns aligned across rows. 28px rows. The 8px edge tracks inset the hover band
  * and focus ring like a queue entry's (8px in, radius 6) while the text stays on the 16px column (a
- * subgrid's own padding would shift its first track). */
-.agent-dock-choices {
+ * subgrid's own padding would shift its first track).
+ * Signals' choice lists (§3.25) are the same rows: the rules both share name both classes here; what
+ * differs stays in each surface's own rule (signals/signals.css). */
+.agent-dock-choices,
+.signals-choices {
 	display: grid;
 	grid-template-columns: 8px 18px max-content minmax(0, 1fr) max-content 8px;
+}
+
+.agent-dock-choices {
 	margin: 4px -8px 0;
 }
 
-.agent-dock-choice {
+.agent-dock-choice,
+.signals-choice {
 	grid-column: 1 / -1;
 	display: grid;
 	grid-template-columns: subgrid;
@@ -1079,18 +1086,23 @@
 	border: none;
 	border-radius: 6px;
 	background: transparent;
-	color: var(--text-1);
 	cursor: pointer;
+}
+
+.agent-dock-choice {
+	color: var(--text-1);
 	transition: background-color 140ms ease-out;
 }
 
 /* The number sits after the description in the grid but first in the DOM: keep every cell on the row's one line. */
-.agent-dock-choice > * {
+.agent-dock-choice > *,
+.signals-choice > * {
 	grid-row: 1;
 }
 
 /* The row band means pointing: hover only (the preview target is named in the preview, not banded). */
-.agent-dock-choice:hover:not(:disabled) {
+.agent-dock-choice:hover:not(:disabled),
+.signals-choice:hover:not(:disabled) {
 	background: var(--fill-subtle);
 }
 
@@ -1132,7 +1144,8 @@
 	background: var(--accent);
 }
 
-.agent-dock-choice-label {
+.agent-dock-choice-label,
+.signals-choice-label {
 	grid-column: 3;
 	padding-right: 12px;
 	font-size: var(--dock-prose-fs);
@@ -1142,7 +1155,8 @@
 }
 
 /* One line, dim; the whole of it is the row's tooltip. */
-.agent-dock-choice-description {
+.agent-dock-choice-description,
+.signals-choice-description {
 	grid-column: 4;
 	min-width: 0;
 	overflow: hidden;
@@ -1151,7 +1165,8 @@
 	color: var(--dock-dim);
 }
 
-.agent-dock-choice[aria-checked="true"] .agent-dock-choice-description {
+.agent-dock-choice[aria-checked="true"] .agent-dock-choice-description,
+.signals-choice[aria-checked="true"] .signals-choice-description {
 	color: var(--text-1);
 }
 
@@ -1461,12 +1476,13 @@
 	color: var(--text-1);
 }
 
-.agent-dock-key.btn {
+/* The footer keys: a small Btn in the dock's type. Signals' keys (§3.25) are the same key. */
+.agent-dock-key.btn,
+.signals-key.btn {
 	font-family: var(--dock-sans);
 	font-size: var(--dock-fs);
 	font-weight: 400;
 	letter-spacing: -0.01em;
-	text-align: center;
 }
 
 /* Not armed (or already sending, with the busy ellipsis): a quiet key — no fill, dim label — in the same
