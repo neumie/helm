@@ -268,3 +268,55 @@ test('narrow column (300px): the line and the Done today list fit without spill'
 	await expect(view.list.getByRole('button', { name: 'Reopen' })).toBeInViewport()
 	await page.screenshot({ path: test.info().outputPath('signals-done-list-300.png') })
 })
+
+/** The done count's bottom edge to the column's, the footer's height, and whether the status line is still mounted. */
+async function bottom(signals: ReturnType<Page['locator']>) {
+	return signals.evaluate(root => {
+		const line = root.querySelector('[data-done-header]') as HTMLElement
+		const count = (line.querySelector('.signals-done') as HTMLElement | null) ?? line
+		const foot = root.querySelector('.signals-foot') as HTMLElement
+		const edge = root.getBoundingClientRect().bottom
+		return {
+			gap: Math.round(edge - count.getBoundingClientRect().bottom),
+			// The done line to the footer's top: nothing in between.
+			toFoot: Math.round(foot.getBoundingClientRect().top - line.getBoundingClientRect().bottom),
+			foot: Math.round(foot.getBoundingClientRect().height),
+			note: Boolean(foot.querySelector('output.signals-note')),
+		}
+	})
+}
+
+test('at rest the empty footer takes no room: the done line sits 8px over the bottom edge, focused or not', async ({
+	page,
+}) => {
+	const view = await open(page, 'views-signals-column--empty')
+	await expect(view.signals).toBeFocused()
+	// Nothing selected, no note, every source answered: the footer has nothing to show.
+	expect(await bottom(view.signals)).toEqual({ gap: 8, toFoot: 4, foot: 0, note: true })
+	await view.signals.evaluate(node => (node as HTMLElement).blur())
+	expect(await bottom(view.signals)).toEqual({ gap: 8, toFoot: 4, foot: 0, note: true })
+	await page.screenshot({ path: test.info().outputPath('signals-done-at-rest.png') })
+
+	// A source line is footer content: it takes its room under the done line, nothing else.
+	const down = await open(page, 'views-signals-column--empty-source-down')
+	const withHealth = await bottom(down.signals)
+	expect(withHealth.foot).toBeGreaterThanOrEqual(40)
+	expect(withHealth.toFoot).toBe(4)
+	expect(withHealth.gap).toBe(withHealth.foot + 8)
+
+	// The bare column at 260 and 420px, at rest: the same 8px.
+	await page.goto(story('views-signals-column--widths'))
+	const frames = page.locator('section.signals')
+	await expect(frames).toHaveCount(4)
+	for (const index of [0, 2]) expect((await bottom(frames.nth(index))).gap).toBe(8)
+})
+
+test('a busy column keeps the selected row keys under the done line', async ({ page }) => {
+	const view = await open(page, 'views-signals-done--line')
+	await expect(view.signals).toBeFocused()
+	await expect(view.signals.locator('.signals-foot-hints')).toBeVisible()
+	const busy = await bottom(view.signals)
+	expect(busy.toFoot).toBe(4)
+	expect(busy.foot).toBeGreaterThanOrEqual(40)
+	expect(busy.gap).toBe(busy.foot + 8)
+})

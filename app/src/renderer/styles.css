@@ -3409,11 +3409,13 @@ body.dragging {
 
 /* `Done today 8 · 5 filtered` at the bottom of the list: two buttons on one line. It wraps between
  * them on a narrow column instead of cutting the filtered count off. A hidden key hint (`· D`)
- * takes no room, so an unfocused column shows no gap between the two. */
+ * takes no room, so an unfocused column shows no gap between the two. Its 4px plus the scroll
+ * owner's 4px put the 24px button 8px over the column's bottom edge when the footer is empty: the
+ * header's 40px band mirrored (the text centred 20px from the edge). */
 .signals-done-line {
 	flex: none;
 	margin-top: auto;
-	padding: 16px 16px 2px;
+	padding: 16px 16px 4px;
 	color: var(--dock-dim);
 }
 
@@ -3661,6 +3663,14 @@ body.dragging {
 	min-height: 40px;
 	padding: 8px 16px 10px;
 	color: var(--dock-dim);
+}
+
+/* A footer with nothing to show (no selected thread's keys, no note, no source line, no action)
+ * takes no room, so at rest the done line sits on the column's bottom edge instead of over an
+ * empty 40px band. The status line stays mounted (a live region), only collapsed. */
+.signals-foot:not(:has(.signals-hint, .signals-note:not(:empty), .signals-health, .signals-foot-actions)) {
+	min-height: 0;
+	padding: 0;
 }
 
 .signals-foot-hints {
