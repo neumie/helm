@@ -1,9 +1,10 @@
 // Design lint baseline: every finding of app/src/design/lint.ts that is allowed to stay, with the decision
 // (docs/plans/design-system/spec.md D<n>), ruling (docs/design-system.md §9 ruling N) or plan stage (S<n>) that
-// keeps it. tests/design-lint.test.ts fails on a finding missing here and on an entry with no finding left
-// (the value was fixed: remove it). Regenerate with `node --import tsx app/scripts/design-lint.ts --write-baseline`,
-// which keeps the reasons below for entries that still match; edit reasons by hand. Never add an entry to let
-// new code through: use a token, or get a ruling first.
+// keeps it. tests/design-lint.test.ts fails on a finding missing here, on an entry with no finding left (the
+// value was fixed: remove it), on a `TODO:` reason and on a rule count above its cap. Regenerate with
+// `node --import tsx app/scripts/design-lint.ts --write-baseline`, which keeps the reasons below for entries
+// that still match and refuses new entries unless `--allow-new` is given; edit reasons by hand. Never add an
+// entry to let new code through: use a token, or get a ruling first.
 //
 // Format, under `## <rule>` and `### <file>` headers: <selector> | <property> | <value> | <reason>
 import { type AllowlistEntry, parseBaseline } from './lint'
@@ -19,7 +20,7 @@ export const DESIGN_LINT_BASELINE = String.raw`
 .remote-row-menu | box-shadow | 0 8px 24px rgb(0 0 0 / 35%) | D7 Remote palette
 .remote-sheet | box-shadow | 0 20px 60px rgb(0 0 0 / 55%) | D7 Remote palette
 .remote-sheet-dismiss | background | rgb(0 0 0 / 58%) | D7 Remote palette
-@media (hover: hover) .remote-composer-actions .remote-send.btn-primary:hover:not(:disabled) | background | rgb(255 255 255 / 88%) | D7 Remote palette
+@media (hover: hover) .remote-composer-actions .remote-send.btn-primary:hover:not(:disabled), .remote-composer-actions .remote-send.btn-primary[data-force-state="hover"]:not(:disabled) | background | rgb(255 255 255 / 88%) | D7 Remote palette
 body.remote-page, #remote-root | background | var(--remote-page, #0d0d0d) | D7 Remote palette
 ### app/src/renderer/viewer/viewer.css
 .viewer-pdf-paper | background | #fff | S2 gives the literal a token (§9 ruling 9)
@@ -40,6 +41,11 @@ statusEl.style in module | color | #f14c4c | D9 extension popup (moves onto Helm
 statusEl.style in module | color | #f14c4c | D9 extension popup (moves onto Helm tokens)
 
 ## token-definition
+### app/assets/remote/remote-sw.js
+:root | --accent | #4c9aff | D7 Remote offline page (served by remote-sw.js when the host is unreachable; its own copy of the palette and 16/24px type)
+:root | --pane | #141517 | D7 Remote offline page (served by remote-sw.js when the host is unreachable; its own copy of the palette and 16/24px type)
+:root | --text-0 | #ececee | D7 Remote offline page (served by remote-sw.js when the host is unreachable; its own copy of the palette and 16/24px type)
+:root | --text-1 | #9a9ea6 | D7 Remote offline page (served by remote-sw.js when the host is unreachable; its own copy of the palette and 16/24px type)
 ### app/src/renderer/document-review/document-review.css
 .document-review[data-review-theme="light"] | --accent | #176ac2 | §2.8 Review light scope (§9 ruling 10)
 .document-review[data-review-theme="light"] | --accent-fill | #176ac2 | §2.8 Review light scope (§9 ruling 10)
@@ -220,10 +226,19 @@ statusEl.style in module | color | #f14c4c | D9 extension popup (moves onto Helm
 ### app/src/renderer/terminal-well.css
 .term-scrollbar-thumb | transition | background-color 140ms ease-out, width 140ms ease-out | S2 adds z/motion tokens (pending D2)
 @media (prefers-reduced-motion: no-preference) .term-holder[data-reveal]::after | animation | term-reveal-pulse 1.4s ease-out 1 forwards | S2 adds z/motion tokens (pending D2)
+### app/src/renderer/terminal-workspace.ts
+element.animate() in animateStripReflow | animation-duration | 160ms | §9 ruling 50 tab drag FLIP 160ms on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
+preview.animate() in settleBackgroundTabPreview | animation-duration | 140ms | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
+preview.animate() in settleBackgroundTabPreview | animation-duration | 180ms | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
+preview.animate() in settleGroupPreview | animation-duration | 140ms | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
+preview.animate() in settleGroupPreview | animation-duration | 180ms | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
+preview.animate() in settleTabPreview | animation-duration | 140ms | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
+preview.animate() in settleTabPreview | animation-duration | 180ms | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
 ### app/src/renderer/toast.css
 .toast | transition | opacity 150ms ease-out, transform 150ms ease-out | S2 adds z/motion tokens (pending D2)
 .toast.leaving | transition-duration | 120ms | S2 adds z/motion tokens (pending D2)
 ### app/src/renderer/viewer/viewer.css
+.viewer-grid-letter, .viewer-grid-number | transition | color var(--motion-state, 140ms) ease-out | S2 adds z/motion tokens (pending D2): --motion-state is not defined yet, so the 140ms fallback renders
 .viewer-pdf-canvas | transition | opacity 150ms ease-out | S2 adds z/motion tokens (pending D2)
 ### extension/src/widget.styles.ts
 .vg-agent__option | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
@@ -301,6 +316,9 @@ statusEl.style in module | color | #f14c4c | D9 extension popup (moves onto Helm
 .task-metadata summary::after | transition | transform 140ms ease-out | S2 adds z/motion tokens (pending D2)
 .toggle | transition | background-color 140ms ease-out, border-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
 .toggle-knob | transition | transform 140ms ease-out | S2 adds z/motion tokens (pending D2)
+### app/src/renderer/sidebar/swipe.ts
+in SWIPE_COMMIT_EASING | string | cubic-bezier(0.16, 1, 0.3, 1) | §9 ruling 35 swipe-back settle curve (§3.10; a sanctioned §2.5 exception, S2 motion tokens pending D2)
+in SWIPE_SPRING_EASING | string | cubic-bezier(0.32, 0.72, 0, 1) | §9 ruling 35 swipe-back settle curve (§3.10; a sanctioned §2.5 exception, S2 motion tokens pending D2)
 ### app/src/renderer/signals/signals.css
 .signals-list-btn | transition | color 140ms ease-out | S2 adds z/motion tokens (pending D2)
 .signals-tr | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
@@ -317,6 +335,11 @@ statusEl.style in module | color | #f14c4c | D9 extension popup (moves onto Helm
 ### app/src/renderer/terminal-well.css
 .term-scrollbar-thumb | transition | background-color 140ms ease-out, width 140ms ease-out | S2 adds z/motion tokens (pending D2)
 @media (prefers-reduced-motion: no-preference) .term-holder[data-reveal]::after | animation | term-reveal-pulse 1.4s ease-out 1 forwards | S2 adds z/motion tokens (pending D2)
+### app/src/renderer/terminal-workspace.ts
+element.animate() in animateStripReflow | animation-timing-function | cubic-bezier(0.2, 0.8, 0.2, 1) | §9 ruling 50 tab drag FLIP 160ms on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
+preview.animate() in settleBackgroundTabPreview | animation-timing-function | cubic-bezier(0.2, 0.8, 0.2, 1) | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
+preview.animate() in settleGroupPreview | animation-timing-function | cubic-bezier(0.2, 0.8, 0.2, 1) | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
+preview.animate() in settleTabPreview | animation-timing-function | cubic-bezier(0.2, 0.8, 0.2, 1) | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
 ### app/src/renderer/toast.css
 .toast | transition | opacity 150ms ease-out, transform 150ms ease-out | S2 adds z/motion tokens (pending D2)
 ### app/src/renderer/toast.ts
@@ -361,6 +384,8 @@ countdownEl.style in showToast | transition | transform var(--expr)ms linear | S
 input | border-radius | 3px | D9 extension popup (moves onto Helm tokens)
 
 ## spacing-off-scale
+### app/assets/remote/remote-sw.js
+body | padding | 48px 24px | D7 Remote offline page (served by remote-sw.js when the host is unreachable; its own copy of the palette and 16/24px type)
 ### app/src/renderer/agent-dock/agent-dock.css
 .agent-dock-agent-age | padding-left | 6px | D8 off-scale values
 .agent-dock-agents-bar | gap | 2px | D8 off-scale values
@@ -518,6 +543,9 @@ input | padding | 6px 8px | D9 extension popup (moves onto Helm tokens)
 .vg-run-menu input | padding | 6px | D8 off-scale values
 
 ## font-size-off-scale
+### app/assets/remote/remote-sw.js
+body | font | 16px/1.6 -apple-system,BlinkMacSystemFont,sans-serif | D7 Remote offline page (served by remote-sw.js when the host is unreachable; its own copy of the palette and 16/24px type)
+h1 | font-size | 24px | D7 Remote offline page (served by remote-sw.js when the host is unreachable; its own copy of the palette and 16/24px type)
 ### app/src/renderer/agent-dock/agent-dock.css
 .agent-dock-message-mark | font-size | calc(9px * var(--ui-scale)) | D8 off-scale values
 ### app/src/renderer/background-terminals.css
@@ -589,6 +617,21 @@ html | markup | <svg viewBox="0 0 16 16"> | §9 ruling 54: static first-paint co
 ### extension/src/Widget.tsx
 in ModelSelect | jsx | <svg viewBox="0 0 10 6"> | D6 hand-drawn icons (D1: the SolidJS extension keeps its own icons)
 in ModelSelect | jsx | <svg viewBox="0 0 10 8"> | D6 hand-drawn icons (D1: the SolidJS extension keeps its own icons)
+
+## primitive-outside-owner
+### app/src/renderer/terminal-context-menu.css
+.menu-name-form | menu | .menu-name-form | S7 the terminal context menu rename field uses menu-named classes outside sidebar.css (move or rename them when the surface is next touched)
+.menu-name-input | menu | .menu-name-input | S7 the terminal context menu rename field uses menu-named classes outside sidebar.css (move or rename them when the surface is next touched)
+### extension/src/widget.styles.ts
+.chip-amber | chip | .chip-amber | D1 the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
+.chip-blue | chip | .chip-blue | D1 the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
+.chip-gray | chip | .chip-gray | D1 the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
+.chip-green | chip | .chip-green | D1 the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
+.chip-red | chip | .chip-red | D1 the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
+
+## button-border
+### app/src/renderer/sidebar/sidebar.css
+.shortcut-alias button + button | border-left | 1px solid var(--hairline) | §9 ruling 4 pending decision: the Terminal settings shortcut chips draw a divider between alias buttons (a pick or a separator element)
 `
 
 export const DESIGN_LINT_ALLOWLIST: readonly AllowlistEntry[] = parseBaseline(DESIGN_LINT_BASELINE)

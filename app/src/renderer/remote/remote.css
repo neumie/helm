@@ -590,7 +590,8 @@ body.remote-page {
 	font-weight: 500;
 }
 @media (hover: hover) {
-	.remote-evidence > .btn:hover {
+	.remote-evidence > .btn:hover,
+	.remote-evidence > .btn[data-force-state="hover"] {
 		background: transparent;
 		color: var(--text-0);
 	}
@@ -818,7 +819,8 @@ body.remote-page {
 	color: #0d0d0d;
 }
 @media (hover: hover) {
-	.remote-composer-actions .remote-send.btn-primary:hover:not(:disabled) {
+	.remote-composer-actions .remote-send.btn-primary:hover:not(:disabled),
+	.remote-composer-actions .remote-send.btn-primary[data-force-state="hover"]:not(:disabled) {
 		background: rgb(255 255 255 / 88%);
 	}
 }

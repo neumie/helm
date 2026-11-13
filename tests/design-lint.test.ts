@@ -2,7 +2,8 @@
 // app/src/design/lint.ts must be in the baseline app/src/design/lint-allowlist.ts with a reason that names
 // an open decision, a ruling or a plan stage; a baseline entry whose finding is gone fails too (the value
 // was fixed: remove the entry). Fix the value or get a ruling, never this test; regenerate the baseline with
-// `node --import tsx app/scripts/design-lint.ts --write-baseline` and review the reasons.
+// `node --import tsx app/scripts/design-lint.ts --write-baseline` (it refuses new entries without
+// `--allow-new`, and marks those `TODO:` until a person writes the reason). BASELINE_CAPS below only go down.
 // CJS default-import pattern per the other app tests (app sources load as CommonJS under tsx).
 // The section sign is escaped in this file so it cites no section itself.
 import assert from 'node:assert/strict'
@@ -53,10 +54,48 @@ test('every baseline reason names an existing open decision, ruling or plan stag
 			...refs.rulings.filter(n => !rulings.has(n)).map(n => `ruling ${n}`),
 			...refs.stages.filter(n => !stages.has(n)).map(n => `S${n}`),
 		]
-		if (!entry.reason || count === 0 || missing.length)
-			bad.push(`${show(entry)}  reason "${entry.reason}"${missing.length ? ` (unknown ${missing.join(', ')})` : ''}`)
+		const auto = entry.reason.startsWith(lint.AUTO_REASON_PREFIX.trim())
+		if (!entry.reason || count === 0 || missing.length || auto)
+			bad.push(
+				`${show(entry)}  reason "${entry.reason}"${missing.length ? ` (unknown ${missing.join(', ')})` : ''}${auto ? ' (written by --allow-new: write the real reason)' : ''}`,
+			)
 	}
 	assert.deepEqual(bad, [], `Reasons must name a D<n>, a ${S}9 ruling N or an S<n>:\n${bad.join('\n')}`)
+})
+
+/**
+ * The ratchet: allowlisted findings per rule may only go down. A value fixed lowers its count, and this cap must
+ * be lowered with it; growing a count means raising a cap here, in review, with the entry's written reason.
+ */
+const BASELINE_CAPS: Record<(typeof lint.RULES)[number], number> = {
+	'raw-color': 24,
+	'token-definition': 34,
+	'raw-z-index': 45,
+	'raw-duration': 98,
+	'raw-easing': 89,
+	'radius-off-scale': 16,
+	'spacing-off-scale': 138,
+	'font-size-off-scale': 32,
+	'font-size-unscaled': 1,
+	uppercase: 0,
+	'letter-spacing': 4,
+	'font-weight': 4,
+	'inline-svg': 4,
+	'primitive-outside-owner': 7,
+	'button-border': 1,
+}
+
+test('baseline counts per rule never grow and every cap matches its count (lower the cap when a value is fixed)', () => {
+	const over: string[] = []
+	const under: string[] = []
+	for (const rule of lint.RULES) {
+		const count = DESIGN_LINT_ALLOWLIST.filter(e => e.rule === rule).length
+		const cap = BASELINE_CAPS[rule]
+		if (count > cap) over.push(`${rule}: ${count} entries, cap ${cap}`)
+		if (count < cap) under.push(`${rule}: ${count} entries, cap ${cap} (lower it to ${count})`)
+	}
+	assert.deepEqual(over, [], 'the baseline grew: fix the new value instead of listing it')
+	assert.deepEqual(under, [], 'a value was fixed: lower its cap so it cannot come back')
 })
 
 test('the baseline is in canonical order (regenerate it rather than editing lines in place)', () => {
@@ -174,7 +213,38 @@ test('raw-z-index, raw-duration and raw-easing; var() and the reduced-motion cla
 			'.b | transition: color 140ms ease-out | raw-easing',
 			'.c | animation: spin 1s cubic-bezier(0.2, 0.8, 0.2, 1) infinite | raw-duration',
 			'.c | animation: spin 1s cubic-bezier(0.2, 0.8, 0.2, 1) infinite | raw-easing',
+			'.c | transition-timing-function: var(--ease, linear) | raw-easing',
 			'@media (min-width: 1px) .d | transition-duration: 0.01ms | raw-duration',
+		],
+	)
+})
+
+test('indirection: !important, var() fallbacks behind non-tokens, local custom properties, calc() wrappers', () => {
+	assert.deepEqual(
+		css(`
+			.a { color: #f00!important; padding: 6px!important; z-index: 5 ! important }
+			.b { z-index: var(--nope, 9999); padding: var(--nope, 7px); border-radius: var(--x, 3px) }
+			.c { transition: opacity var(--d, 300ms) var(--e, ease-in) }
+			.d { padding: var(--accent, 7px); font-weight: calc(700) }
+			.e { --e-z: 9999; --e-d: 900ms; --e-tt: uppercase; --e-fw: 800; --e-fs: 14px }
+			.f { z-index: var(--e-z); transition-duration: var(--e-d); text-transform: var(--e-tt) }
+			.g { font-weight: var(--e-fw); font-size: var(--e-fs); gap: var(--e-gap-unknown) }
+		`),
+		[
+			'.a | color: #f00!important | raw-color',
+			'.a | padding: 6px!important | spacing-off-scale',
+			'.a | z-index: 5 ! important | raw-z-index',
+			'.b | z-index: var(--nope, 9999) | raw-z-index',
+			'.b | padding: var(--nope, 7px) | spacing-off-scale',
+			'.b | border-radius: var(--x, 3px) | radius-off-scale',
+			'.c | transition: opacity var(--d, 300ms) var(--e, ease-in) | raw-duration',
+			'.c | transition: opacity var(--d, 300ms) var(--e, ease-in) | raw-easing',
+			'.d | font-weight: calc(700) | font-weight',
+			'.f | z-index: var(--e-z) => 9999 | raw-z-index',
+			'.f | transition-duration: var(--e-d) => 900ms | raw-duration',
+			'.f | text-transform: var(--e-tt) => uppercase | uppercase',
+			'.g | font-weight: var(--e-fw) => 800 | font-weight',
+			'.g | font-size: var(--e-fs) => 14px | font-size-off-scale',
 		],
 	)
 })
@@ -190,12 +260,22 @@ test('radius and spacing scales: on-scale, hairlines, segmented 2px, calc widths
 			.segmented-track { padding: 2px } .chip { padding: 2px 8px }
 		`),
 		[
+			'.a | border-radius: var(--r, 10px) | radius-off-scale',
 			'.b | border-radius: 10px 0 0 10px | radius-off-scale',
 			'.d | padding: 6px | spacing-off-scale',
 			'.d | margin-top: calc(-44px - env(safe-area-inset-top, 0px)) | spacing-off-scale',
 			'.e | padding-top: calc(28px + var(--o, 76px)) | spacing-off-scale',
 			'.chip | padding: 2px 8px | spacing-off-scale',
 		],
+	)
+	// rem is checked at 16px; a px argument of max()/min()/clamp() is a value, not a measure; positions
+	// (inset, top/right/bottom/left) are not spaces.
+	assert.deepEqual(
+		css(`
+			.r { padding: 0.375rem; gap: 1.5rem; margin: 0.25rem; padding: max(7px, 0%); gap: 0.3em }
+			.s { inset: 6px; top: 6px; inset-inline: 3px }
+		`),
+		['.r | padding: 0.375rem | spacing-off-scale', '.r | padding: max(7px, 0%) | spacing-off-scale'],
 	)
 })
 
@@ -276,12 +356,13 @@ test('inline-svg in the repository: the icon module is scanned and exempt, every
 
 test('primitive-outside-owner: base rules of a shared primitive only in its owner file', () => {
 	const primitives = [
-		{ name: 'button', owner: 'app/src/renderer/button.css', classes: new Set(['btn', 'btn-primary', 'btn-sm']) },
-		{ name: 'menu', owner: 'app/src/renderer/sidebar/sidebar.css', classes: new Set(['menu-panel', 'menu-item']) },
+		{ name: 'button', owner: 'app/src/renderer/button.css', classes: /^btn(-|$)/ },
+		{ name: 'menu', owner: 'app/src/renderer/sidebar/sidebar.css', classes: /^menu(-|$)/ },
 	]
+	const surfaceModifiers = new Set(['menu-fixed'])
 	const own = (text: string, file = 'app/src/renderer/x.css') =>
 		lint
-			.lintCss(file, text, { coreTokens: CORE, primitives })
+			.lintCss(file, text, { coreTokens: CORE, primitives, surfaceModifiers })
 			.filter(f => f.rule === 'primitive-outside-owner')
 			.map(f => `${f.selector} | ${f.property}: ${f.value}`)
 	const text = `
@@ -304,6 +385,38 @@ test('primitive-outside-owner: base rules of a shared primitive only in its owne
 	assert.deepEqual(own(text, 'app/src/renderer/button.css').length, 1, 'the owner file may style its own base')
 	assert.deepEqual(own(text, 'app/src/renderer/sidebar/sidebar.css').length, 4)
 	assert.deepEqual(own('.btn.menu-item { color: var(--pane) }', 'app/src/renderer/sidebar/sidebar.css'), [])
+	// A new or moved variant the owner file never names is still the primitive's; wrappers do not hide it.
+	assert.deepEqual(own('.btn-danger-outline { color: var(--pane) } :is(.btn) { color: var(--pane) }'), [
+		'.btn-danger-outline | button: .btn-danger-outline',
+		':is(.btn) | button: :is(.btn)',
+	])
+	assert.deepEqual(own(':where(.btn-primary):hover, :is(.a .btn) { color: var(--pane) }'), [
+		':where(.btn-primary):hover, :is(.a .btn) | button: :where(.btn-primary):hover',
+	])
+	assert.deepEqual(lint.expandIsWhere(':is(.a, .b):hover'), ['.a:hover', '.b:hover'])
+	// Primitive base rules in an HTML <style> block or a CSS constant are checked too.
+	const html = lint
+		.lintHtml('app/src/renderer/x.html', '<style>.btn { color: var(--pane) }</style>', {
+			primitives,
+			surfaceModifiers,
+		})
+		.map(f => f.rule)
+	assert.deepEqual(html, ['primitive-outside-owner'])
+	const constant = lint
+		.lintTs('app/src/renderer/x.ts', 'export const PANEL_CSS = `.menu-item { color: var(--pane) }`', {
+			primitives,
+			surfaceModifiers,
+		})
+		.map(f => f.rule)
+	assert.deepEqual(constant, ['primitive-outside-owner'])
+})
+
+test('every surface modifier class matches a primitive pattern (a stale exception cannot hide a variant)', () => {
+	for (const name of lint.SURFACE_MODIFIER_CLASSES.keys())
+		assert.ok(
+			lint.PRIMITIVES.some(p => p.classes.test(name)),
+			`${name} matches no primitive pattern: drop it from SURFACE_MODIFIER_CLASSES`,
+		)
 })
 
 test('every shared primitive owner file exists and defines the primitive (the rule cannot go blind)', () => {
@@ -313,36 +426,49 @@ test('every shared primitive owner file exists and defines the primitive (the ru
 	}
 })
 
-test(`buttons draw no border in any tone (${S}9 ruling 4): every stylesheet, every button subject`, () => {
-	const BORDER = /^border(-(top|right|bottom|left|block|inline)(-(start|end))?)?(-(width|style|color))?$/
-	const BUTTON = /\.(icon-btn|btn|vg-btn)(-[\w-]+)?(?![\w-])/
+test(`buttons draw no border in any tone (${S}9 ruling 4): the button-border rule over every button subject`, () => {
+	const own = (text: string) =>
+		lint
+			.lintCss('app/src/renderer/x.css', text)
+			.filter(f => f.rule === 'button-border')
+			.map(f => `${f.selector} | ${f.property}: ${f.value}`)
+	assert.deepEqual(
+		own(`
+			.btn-quiet { border: 1px solid var(--hairline) } .icon-btn:hover { border-color: var(--accent) }
+			.x button + button { border-left: 1px solid var(--hairline) } [role="button"] { border-bottom: 1px solid }
+			input[type=submit] { border: 1px solid } .row > .vg-btn-x { border-top-width: 2px }
+			.btn { border: none; border-radius: 6px } button { border: 0 } .btn-ghost { border: 0px !important }
+			.card { border: 1px solid } .btn .label { border: 1px solid } :is(.a, .btn-sm) { border: 1px solid }
+		`),
+		[
+			'.btn-quiet | border: 1px solid var(--hairline)',
+			'.icon-btn:hover | border-color: var(--accent)',
+			'.x button + button | border-left: 1px solid var(--hairline)',
+			'[role="button"] | border-bottom: 1px solid',
+			'input[type=submit] | border: 1px solid',
+			'.row > .vg-btn-x | border-top-width: 2px',
+			':is(.a, .btn-sm) | border: 1px solid',
+		],
+	)
+	// HTML <style> blocks and CSS constants (the widget) go through the same rule.
+	assert.deepEqual(
+		lint.lintHtml('app/src/renderer/x.html', '<style>button { border: 1px solid }</style>').map(f => f.rule),
+		['button-border'],
+	)
+	// The rule sees the app's and the widget's button rules (it cannot go blind).
+	let buttonRules = 0
 	const sheets = lint
 		.collectSources(ROOT)
 		.filter(source => source.kind === 'css')
-		.map(source => ({ file: source.file, text: read(source.file) }))
-	const widget = /WIDGET_STYLES\s*=\s*`([^`]*)`/.exec(read('extension/src/widget.styles.ts'))?.[1]
-	assert.ok(widget, 'the widget stylesheet constant is found')
-	sheets.push({ file: 'extension/src/widget.styles.ts', text: widget })
-	const drawn: string[] = []
-	let buttonRules = 0
-	for (const { file, text } of sheets) {
-		for (const d of lint.parseCss(text)) {
-			const subjects = lint.splitTopLevel(d.selector).map(
-				complex =>
-					complex
-						.replace(/\([^)]*\)|\[[^\]]*\]/g, '')
-						.trim()
-						.split(/\s*[>+~]\s*|\s+/)
-						.pop() ?? '',
-			)
-			if (!subjects.some(subject => BUTTON.test(subject))) continue
-			buttonRules++
-			if (BORDER.test(d.property) && !/^(none|0(px)?)$/.test(d.value))
-				drawn.push(`${file}  ${d.selector} { ${d.property}: ${d.value} }`)
-		}
-	}
+		.map(source => read(source.file))
+	const widget = lint.embeddedConstant(
+		'extension/src/widget.styles.ts',
+		read('extension/src/widget.styles.ts'),
+		'WIDGET_STYLES',
+	)
+	for (const text of [...sheets, widget.text])
+		for (const d of lint.parseCss(text)) if (lint.splitTopLevel(d.selector).some(lint.isButtonSubject)) buttonRules++
 	assert.ok(buttonRules > 50, 'button rules are found in the app and the widget')
-	assert.deepEqual(drawn, [], 'buttons take their weight from the fill, never a border')
 })
 
 test('inline styles in TS/TSX: JSX objects (also conditional and cast), DOM style writes, CSS constants', () => {
@@ -381,6 +507,77 @@ test('inline styles in TS/TSX: JSX objects (also conditional and cast), DOM styl
 	)
 })
 
+test('CSS constants: substitutions, any-case names, JSX <style>, and an unreadable upper-case constant throws', () => {
+	assert.deepEqual(
+		tsx(`
+			const R = 5
+			export const WIDGET_STYLES = \`.vg-r { border-radius: \${R}px } .vg-z { z-index: \${depth} }\`
+			export const css = '.a { z-index: 9 }'
+			const panel_styles = \`.b { padding: 7px }\`
+			const style = { zIndex: 3 }
+			export function C() { return <style>{\`.c { letter-spacing: 0.1em }\`}</style> }
+		`),
+		[
+			'.vg-r | border-radius: 5px | radius-off-scale',
+			'.a | z-index: 9 | raw-z-index',
+			'.b | padding: 7px | spacing-off-scale',
+			'.c | letter-spacing: 0.1em | letter-spacing',
+		],
+	)
+	assert.throws(() => tsx('export const WIDGET_STYLES = makeCss()'), /CSS constant WIDGET_STYLES/)
+})
+
+test('the widget stylesheet is read whole (a substitution cannot drop it from the lint)', () => {
+	const text = lint.embeddedConstant(
+		'extension/src/widget.styles.ts',
+		read('extension/src/widget.styles.ts'),
+		'WIDGET_STYLES',
+	).text
+	assert.ok(lint.parseCss(text).length > 400, 'WIDGET_STYLES parses into its declarations')
+	assert.ok(
+		findings.some(f => f.file === 'extension/src/widget.styles.ts'),
+		'the scan reports findings in WIDGET_STYLES',
+	)
+})
+
+test('motion set from TS: Element.animate() timing, same-file constants, easing strings', () => {
+	assert.deepEqual(
+		tsx(`
+			const EASE = 'cubic-bezier(0.16, 1, 0.3, 1)'
+			const MS = 160
+			function f(el, on) {
+				el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: on ? 140 : 180, easing: 'ease-out', delay: 0 })
+				el.style.transition = \`transform \${MS}ms linear\`
+				el.animate([], { duration: d, easing: e })
+			}
+		`),
+		[
+			'in EASE | string: cubic-bezier(0.16, 1, 0.3, 1) | raw-easing',
+			'el.animate() in f | animation-duration: 140ms | raw-duration',
+			'el.animate() in f | animation-duration: 180ms | raw-duration',
+			'el.animate() in f | animation-timing-function: ease-out | raw-easing',
+			'el.style in f | transition: transform 160ms linear | raw-duration',
+			'el.style in f | transition: transform 160ms linear | raw-easing',
+		],
+	)
+})
+
+test('the scan covers production modules outside the scan roots and the Remote offline page', () => {
+	const sources = lint.collectSources(ROOT).map(source => `${source.kind} ${source.file}`)
+	const production = lint.productionFiles(ROOT)
+	const outside = [...production].filter(
+		f => !lint.SCAN_ROOTS.some(root => f.startsWith(`${root}/`)) && !lint.isExcluded(f),
+	)
+	assert.ok(outside.length > 0, 'renderer entries import modules outside the scan roots')
+	for (const file of outside) assert.ok(sources.includes(`ts ${file}`), `${file} is scanned`)
+	for (const { file } of lint.EMBEDDED_HTML) assert.ok(sources.includes(`embedded-html ${file}`), `${file} is scanned`)
+	assert.ok(
+		findings.some(f => f.file === 'app/assets/remote/remote-sw.js' && f.rule === 'token-definition'),
+		'the offline page HTML is linted',
+	)
+	assert.throws(() => lint.embeddedConstant('x.js', 'const A = 1', 'OFFLINE'), /not found/)
+})
+
 test('baseline format: parse/format round trip, multiset matching, reasons kept on regeneration', () => {
 	const f = (value: string) => ({
 		rule: 'raw-z-index' as const,
@@ -393,12 +590,12 @@ test('baseline format: parse/format round trip, multiset matching, reasons kept 
 	const entries = lint.nextBaseline([f('3'), f('3'), f('4')], [{ ...f('3'), reason: 'D8 kept' }])
 	assert.deepEqual(
 		entries.map(e => `${e.value} ${e.reason}`),
-		['3 D8 kept', '3 S2 adds z/motion tokens (pending D2)', '4 S2 adds z/motion tokens (pending D2)'],
+		['3 D8 kept', '3 TODO: S2 adds z/motion tokens (pending D2)', '4 TODO: S2 adds z/motion tokens (pending D2)'],
 	)
 	const text = lint.formatBaseline(entries)
 	assert.equal(
 		text,
-		'## raw-z-index\n### app/src/renderer/x.css\n.a | z-index | 3 | D8 kept\n.a | z-index | 3 | S2 adds z/motion tokens (pending D2)\n.a | z-index | 4 | S2 adds z/motion tokens (pending D2)',
+		'## raw-z-index\n### app/src/renderer/x.css\n.a | z-index | 3 | D8 kept\n.a | z-index | 3 | TODO: S2 adds z/motion tokens (pending D2)\n.a | z-index | 4 | TODO: S2 adds z/motion tokens (pending D2)',
 	)
 	assert.deepEqual(lint.parseBaseline(text), entries)
 	const { unlisted, stale } = lint.compareBaseline([f('3'), f('5')], entries)

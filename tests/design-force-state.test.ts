@@ -1,21 +1,29 @@
 // Storybook StateGrid contract (docs/design-system.md §7): every interactive
 // state selector on a primitive has a `[data-force-state]` alternative in the
-// SAME rule, so a StateGrid cell renders the state from the real CSS. Plain
-// node: a small brace walker, no CSS dependency.
+// SAME rule, so a StateGrid cell renders the state from the real CSS. Rules are
+// read with the design lint's CSS parser (app/src/design/lint.ts parseCss:
+// nesting, strings and at-rules), over every production stylesheet the lint scans.
+// CJS default-import pattern per the other app tests (app sources load as CommonJS under tsx).
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { rendererCssFiles } from './helpers/renderer-css'
+import lintModule from '../app/src/design/lint.ts'
 
-const RENDERER = join(import.meta.dirname, '..', 'app', 'src', 'renderer')
+type LintModule = typeof import('../app/src/design/lint.ts')
+const lint = lintModule as unknown as LintModule
 
-/** CSS files that hold primitive rules. Every file is checked against every
- *  primitive class, so a primitive state rule added to another of these files
- *  is caught too. The styles.css manifest's files (tokens, base, terminal,
- *  agent dock, Signals) hold only the global button focus ring (base.css)
- *  among primitives; their other rules use none of these classes. */
-const PRIMITIVE_CSS_FILES = ['button.css', 'sidebar/sidebar.css', 'sidebar/detail-redesign.css', ...rendererCssFiles()]
+const ROOT = join(import.meta.dirname, '..')
+const RENDERER = join(ROOT, 'app', 'src', 'renderer')
+
+/** Every production stylesheet (the design lint's CSS sources: app renderer,
+ *  Remote, Document Review, viewer, Scheduled runs, Run Context, extension).
+ *  Every file is checked against every primitive class, so a primitive state
+ *  rule written anywhere is caught. Repository-relative paths. */
+const PRIMITIVE_CSS_FILES = lint
+	.collectSources(ROOT)
+	.filter(source => source.kind === 'css')
+	.map(source => source.file)
 
 /** Primitive classes with state rules of their own. A class matches itself and
  *  its `-modifier` variants (`.btn` covers `.btn-primary`). Toggle is not
@@ -48,59 +56,20 @@ interface Rule {
 	selectors: string[]
 }
 
-function stripComments(css: string): string {
-	return css.replace(/\/\*[\s\S]*?\*\//g, '')
-}
-
-/** Split at top-level commas (not inside parentheses or brackets). */
-function splitSelectorList(prelude: string): string[] {
-	const parts: string[] = []
-	let depth = 0
-	let current = ''
-	for (const char of prelude) {
-		if (char === '(' || char === '[') depth++
-		if (char === ')' || char === ']') depth--
-		if (char === ',' && depth === 0) {
-			parts.push(current)
-			current = ''
-		} else current += char
-	}
-	parts.push(current)
-	return parts.map(part => part.replace(/\s+/g, ' ').trim()).filter(Boolean)
-}
-
-/** Style rules at any nesting depth inside at-rule blocks (@media etc.). */
+/** Style rules at any nesting depth (nested `&:hover` resolved against its
+ *  parent, at-rule blocks entered, strings and comments skipped), one per
+ *  distinct selector list in its at-rule context. Keyframe steps are not rules.
+ *  A rule with no declaration has nothing to force and is not listed. */
 function styleRules(css: string): Rule[] {
-	const text = stripComments(css)
-	const rules: Rule[] = []
-	let index = 0
-	const walk = (end: string | null) => {
-		let prelude = ''
-		while (index < text.length) {
-			const char = text[index++]
-			if (char === '{') {
-				const head = prelude.trim()
-				prelude = ''
-				if (head.startsWith('@')) {
-					walk('}')
-				} else {
-					rules.push({ selectors: splitSelectorList(head) })
-					let depth = 1
-					while (index < text.length && depth > 0) {
-						const inner = text[index++]
-						if (inner === '{') depth++
-						if (inner === '}') depth--
-					}
-				}
-			} else if (char === '}' && end === '}') {
-				return
-			} else if (char === ';') {
-				prelude = '' // @import / @charset statements
-			} else prelude += char
-		}
+	const rules = new Map<string, Rule>()
+	for (const d of lint.parseCss(css)) {
+		if (d.atRules.some(at => /^@(-[a-z]+-)?keyframes\b/i.test(at))) continue
+		const prefix = d.atRules.length ? `${d.atRules.join(' ')} ` : ''
+		const list = d.selector.startsWith(prefix) ? d.selector.slice(prefix.length) : d.selector
+		if (list.startsWith('@')) continue
+		if (!rules.has(d.selector)) rules.set(d.selector, { selectors: lint.splitTopLevel(list).filter(Boolean) })
 	}
-	walk(null)
-	return rules
+	return [...rules.values()]
 }
 
 const STATE_PSEUDO = /:(hover|active|focus-visible|focus)(?![\w-])/y
@@ -175,16 +144,32 @@ function primitiveClassesIn(selector: string): string[] {
 	return PRIMITIVE_CLASSES.filter(name => tokens.some(token => token === `.${name}` || token.startsWith(`.${name}-`)))
 }
 
+/** A file under app/src/renderer. */
 function read(file: string): string {
 	return readFileSync(join(RENDERER, file), 'utf8')
 }
 
-test('the brace walker reads selector lists inside @media blocks', () => {
-	const rules = styleRules('@media (hover: hover) { .a:hover, .b[x="1,2"] { color: red; } } /* c { } */ .d { }')
+/** A repository-relative file. */
+function readRepo(file: string): string {
+	return readFileSync(join(ROOT, file), 'utf8')
+}
+
+test('the rule reader handles @media lists, nesting and braces inside strings', () => {
+	const rules = styleRules(
+		'@media (hover: hover) { .a:hover, .b[x="1,2"] { color: red; } } /* c { } */ .d { color: red }',
+	)
 	assert.deepEqual(
 		rules.map(rule => rule.selectors),
 		[['.a:hover', '.b[x="1,2"]'], ['.d']],
 	)
+	assert.deepEqual(
+		styleRules('.btn { color: red; &:hover { color: blue } } .x { content: "{"; } .btn-ghost:hover { color: red }').map(
+			rule => rule.selectors,
+		),
+		[['.btn'], ['.btn:hover'], ['.x'], ['.btn-ghost:hover']],
+	)
+	assert.ok(PRIMITIVE_CSS_FILES.includes('app/src/renderer/remote/remote.css'), 'Remote CSS is checked')
+	assert.ok(PRIMITIVE_CSS_FILES.includes('app/src/renderer/button.css'), 'the button owner is checked')
 	assert.equal(
 		forcedAlternative('.btn-primary:hover:not(:disabled)'),
 		'.btn-primary[data-force-state="hover"]:not(:disabled)',
@@ -203,7 +188,7 @@ test('a state inside :not() needs no twin, and a forced twin inside :not() is ca
 	assert.equal(hasStatePseudo('.a[title=":hover"]'), false)
 })
 
-const ALL_RULES = PRIMITIVE_CSS_FILES.map(file => ({ file, rules: styleRules(read(file)) }))
+const ALL_RULES = PRIMITIVE_CSS_FILES.map(file => ({ file, rules: styleRules(readRepo(file)) }))
 
 for (const { file, rules } of ALL_RULES) {
 	test(`${file}: every primitive state selector has a [data-force-state] alternative in the same rule`, () => {
@@ -231,7 +216,8 @@ for (const { file, rules } of ALL_RULES) {
 					other =>
 						!other.includes('data-force-state') && hasStatePseudo(other) && forcedAlternative(other) === selector,
 				)
-				const isGlobalRing = file === 'base.css' && selector === 'button[data-force-state="focus-visible"]'
+				const isGlobalRing =
+					file === 'app/src/renderer/base.css' && selector === 'button[data-force-state="focus-visible"]'
 				if (!hasReal && !isGlobalRing) stray.push(`${selector}  (no matching real-state selector in its rule)`)
 			}
 		}
@@ -265,7 +251,7 @@ test('StateGrid forced states match the states the CSS answers', () => {
 	assert.deepEqual(states, ['hover', 'active', 'focus-visible'])
 	// Every forced name the CSS uses is one StateGrid can set.
 	for (const file of PRIMITIVE_CSS_FILES) {
-		for (const match of read(file).matchAll(/data-force-state="([^"]+)"/g)) {
+		for (const match of readRepo(file).matchAll(/data-force-state="([^"]+)"/g)) {
 			assert.ok(states.includes(match[1] as string), `${file}: unknown forced state "${match[1]}"`)
 		}
 	}

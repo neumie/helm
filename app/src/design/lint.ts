@@ -1,17 +1,21 @@
 // Token-only design lint (docs/design-system.md §2, §10; plan stage S3 in docs/plans/design-system/spec.md).
 //
 // A pure scanner, no dependency beyond the TypeScript parser the repository already builds with. It reads
-// every production stylesheet, the CSS embedded in TypeScript (`*_STYLES` constants such as the extension
-// widget), `<style>` blocks and `style=""` attributes in HTML, and inline style objects/strings in
-// production TS/TSX, and reports every value the spec says must come from a token or a scale:
-// literal colours, z-index, durations, easings, off-scale radii/spacing/font sizes, unscaled sidebar type,
-// uppercase, letter-spacing, weights outside 400/500/600 and inline SVG outside the icon module. It also
-// holds stage S7's ownership rule: a shared primitive's own base rules live only in the primitive's CSS file
-// (`PRIMITIVES`, `primitiveOutsideOwner`).
+// every production stylesheet, the CSS embedded in TypeScript (`*_STYLES`/`css` constants such as the extension
+// widget, substitutions included, and JSX `<style>`), `<style>` blocks and `style=""` attributes in HTML (also
+// HTML held in a JS constant: `EMBEDDED_HTML`), inline style objects/strings and `Element.animate()` timing in
+// every production TS/TSX module an entry reaches, and reports every value the spec says must come from a
+// token or a scale: literal colours, z-index, durations, easings, off-scale radii/spacing/font sizes, unscaled
+// sidebar type, uppercase, letter-spacing, weights outside 400/500/600 and inline SVG outside the icon module.
+// Values are read through `!important`, through `var()` fallbacks behind a name that is not a core token and
+// through custom properties the same stylesheet defines. It also holds stage S7's ownership rule (a shared
+// primitive's own base rules live only in the primitive's CSS file: `PRIMITIVES`, `primitiveOutsideOwner`) and
+// §9 ruling 4 (no border on any button: `buttonBorders`).
 //
 // A finding is keyed by {file, selector, property, value, rule}; line numbers are only for display because
-// they move. `app/src/design/lint-allowlist.ts` is the ratchet baseline, `tests/design-lint.test.ts` holds it,
-// and `node --import tsx app/scripts/design-lint.ts --write-baseline` regenerates it.
+// they move. `app/src/design/lint-allowlist.ts` is the ratchet baseline, `tests/design-lint.test.ts` holds it
+// (with per-rule caps that only go down), and `node --import tsx app/scripts/design-lint.ts --write-baseline`
+// regenerates it (new entries only with `--allow-new`, marked `TODO:` until a person writes the reason).
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import ts from 'typescript'
@@ -32,6 +36,7 @@ export const RULES = [
 	'font-weight',
 	'inline-svg',
 	'primitive-outside-owner',
+	'button-border',
 ] as const
 export type Rule = (typeof RULES)[number]
 
@@ -55,7 +60,10 @@ export const findingKey = (f: FindingKey): string => [f.rule, f.file, f.selector
 // ---------------------------------------------------------------------------------------------------------
 // What is scanned (explicit, so a new file is picked up automatically and every exclusion has a reason).
 
-/** Directories walked for production sources. */
+/**
+ * Directories walked for production sources (CSS, HTML, and TS/TSX that an entry reaches). A production
+ * TS/TSX module outside them (app/src/agent-dock/, app/src/theme-presets.ts…) is scanned too.
+ */
 export const SCAN_ROOTS = ['app/src/renderer', 'extension/src'] as const
 
 /**
@@ -104,8 +112,20 @@ export const PRODUCTION_ENTRIES = [
 /** The icon module: the only production place a literal `<svg>` may live (§3.18, §9 ruling 54). */
 export const ICON_MODULE_DIRS = ['app/src/renderer/icons/'] as const
 
-/** A TS/JS string constant whose name matches this is CSS (the extension widget's `WIDGET_STYLES`). */
-export const CSS_CONSTANT_NAME = /(^|_)(STYLES?|CSS)$/
+/**
+ * A TS/JS string constant whose name matches this (any case: `WIDGET_STYLES`, `css`, `panel_styles`) is CSS. An
+ * upper-case one (`STRICT_CSS_CONSTANT_NAME`) must be readable as text: the scan throws rather than skip it.
+ */
+export const CSS_CONSTANT_NAME = /(^|_)(STYLES?|CSS)$/i
+export const STRICT_CSS_CONSTANT_NAME = /(^|_)(STYLES?|CSS)$/
+
+/**
+ * HTML held in a JS/TS string constant of a production file outside the scan roots: the Remote PWA's offline
+ * page (`app/assets/remote/remote-sw.js`, served by the service worker when the host is unreachable).
+ */
+export const EMBEDDED_HTML: readonly { file: string; constant: string }[] = [
+	{ file: 'app/assets/remote/remote-sw.js', constant: 'OFFLINE' },
+]
 
 /**
  * Stylesheets whose `font-size` must be written `calc(<px> * var(--ui-scale))` (§2.2, §9 ruling 13;
@@ -151,7 +171,10 @@ export interface Primitive {
 	name: string
 	/** The stylesheet that owns the primitive's base rules. */
 	owner: string
-	/** The primitive's class names; only those its owner file actually uses count (`primitiveVocabulary`). */
+	/**
+	 * The primitive's class-name pattern. Every class matching it is the primitive's, wherever it is written
+	 * (a brand-new `.btn-danger-outline` included), unless `SURFACE_MODIFIER_CLASSES` lists it.
+	 */
 	classes: RegExp
 }
 
@@ -172,6 +195,17 @@ export const PRIMITIVES: readonly Primitive[] = [
 	{ name: 'disclosure', owner: 'app/src/renderer/sidebar/detail-redesign.css', classes: /^disclosure(-|$)/ },
 ]
 
+/**
+ * Classes that match a primitive's pattern but are surface modifiers or surface parts, not the primitive's
+ * base: a compound holding one of them is the surface's context, so `primitiveOutsideOwner` never reports it.
+ * Explicit on purpose: a primitive variant moved out of its owner file, or a new one written elsewhere, is
+ * reported because it is not listed here. Each entry names where it lives.
+ */
+export const SURFACE_MODIFIER_CLASSES: ReadonlyMap<string, string> = new Map([
+	['menu-fixed', 'surface placement of the menu panel (position: fixed escape from a clipping scroller)'],
+	['field-reset', 'Settings field "Default" reset link beside a field'],
+])
+
 /** A primitive with the exact class names its owner file uses. */
 export interface PrimitiveVocabulary {
 	name: string
@@ -184,8 +218,8 @@ export interface PrimitiveVocabulary {
 
 /**
  * §2.3: 4px base scale; 0 is no space and 1px a hairline compensation (a line, not a space). Checked on
- * margin, padding, scroll-margin/-padding, gap and inset; px only (em/% are relative to content), and
- * physical top/right/bottom/left are positions, not spaces.
+ * margin, padding, scroll-margin/-padding and gap, in px and rem (16px; em/% are relative to content).
+ * Positions are not spaces: physical top/right/bottom/left and their `inset` shorthands are not checked.
  */
 export const SPACING_PX = new Set([0, 1, 4, 8, 12, 16, 20, 24, 32])
 /** §2.3: "2px only as inner padding of segmented tracks"; padding on these selectors may be 2px. */
@@ -343,11 +377,19 @@ export interface Declaration {
 }
 
 const collapse = (s: string) => s.replace(/\s+/g, ' ').trim()
+/** Collapses whitespace and normalizes `,` and `( )` spacing outside quoted attribute values. */
 export const normalizeSelector = (s: string) =>
 	collapse(s)
-		.replace(/\s*,\s*/g, ', ')
-		.replace(/\(\s+/g, '(')
-		.replace(/\s+\)/g, ')')
+		.split(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/)
+		.map((part, index) =>
+			index % 2
+				? part
+				: part
+						.replace(/\s*,\s*/g, ', ')
+						.replace(/\(\s+/g, '(')
+						.replace(/\s+\)/g, ')'),
+		)
+		.join('')
 
 const DECLARATION_AT_RULES = new Set([
 	'font-face',
@@ -544,6 +586,8 @@ export function parseValue(text: string): ValueNode[] {
 interface VisitContext {
 	/** Inside a `var()` fallback. */
 	inFallback: boolean
+	/** The custom properties whose `var()` fallbacks enclose the node, outermost first. */
+	fallbackOf: string[]
 	/** Enclosing function nodes, innermost last. */
 	funcs: Extract<ValueNode, { t: 'func' }>[]
 }
@@ -554,15 +598,17 @@ function visit(
 	fn: (node: ValueNode, ctx: VisitContext) => boolean | undefined,
 	ctx?: VisitContext,
 ) {
-	const here = ctx ?? { inFallback: false, funcs: [] }
+	const here = ctx ?? { inFallback: false, fallbackOf: [], funcs: [] }
 	for (const node of nodes) {
 		if (fn(node, here) === false) continue
 		if (node.t !== 'func') continue
 		if (node.name === 'env' || node.name === 'attr') continue
-		const inner = { inFallback: here.inFallback, funcs: [...here.funcs, node] }
+		const inner = { inFallback: here.inFallback, fallbackOf: here.fallbackOf, funcs: [...here.funcs, node] }
 		if (node.name === 'var') {
 			const comma = node.args.findIndex(a => a.t === ',')
-			if (comma !== -1) visit(node.args.slice(comma + 1), fn, { ...inner, inFallback: true })
+			const name = node.args[0]?.t === 'word' ? node.args[0].v : ''
+			if (comma !== -1)
+				visit(node.args.slice(comma + 1), fn, { ...inner, inFallback: true, fallbackOf: [...here.fallbackOf, name] })
 			continue
 		}
 		visit(node.args, fn, inner)
@@ -602,10 +648,18 @@ export interface DeclarationContext {
 	reducedMotion: boolean
 }
 
+/** CSS `rem` read as pixels for the spacing scale (the root font size the renderer never changes). */
+const REM_PX = 16
+
 export function lintDeclaration(property: string, value: string, ctx: DeclarationContext): Rule[] {
 	const rules = new Set<Rule>()
-	const nodes = parseValue(value)
+	const nodes = parseValue(stripImportant(value))
 	const prop = property.toLowerCase()
+	/**
+	 * A `var()` fallback is dead only behind a core token (always defined); behind any other name it is the value
+	 * that renders when the name is undefined, so it is checked like a top-level value.
+	 */
+	const checked = (vctx: VisitContext) => !vctx.inFallback || !vctx.fallbackOf.some(n => ctx.coreTokens.has(n))
 
 	// Colours and token definitions.
 	if (property.startsWith('--')) {
@@ -623,7 +677,7 @@ export function lintDeclaration(property: string, value: string, ctx: Declaratio
 	const literals = (check: (word: string, ctx: VisitContext) => boolean): boolean => {
 		let hit = false
 		visit(nodes, (node, vctx) => {
-			if (!vctx.inFallback && node.t === 'word' && check(node.v, vctx)) hit = true
+			if (checked(vctx) && node.t === 'word' && check(node.v, vctx)) hit = true
 			return undefined
 		})
 		return hit
@@ -642,7 +696,7 @@ export function lintDeclaration(property: string, value: string, ctx: Declaratio
 		if (duration) rules.add('raw-duration')
 		let easing = literals(w => TIMING_KEYWORDS.has(w.toLowerCase()))
 		visit(nodes, (node, vctx) => {
-			if (!vctx.inFallback && node.t === 'func' && TIMING_FUNCTIONS.has(node.name)) easing = true
+			if (checked(vctx) && node.t === 'func' && TIMING_FUNCTIONS.has(node.name)) easing = true
 			return undefined
 		})
 		if (easing) rules.add('raw-easing')
@@ -661,17 +715,24 @@ export function lintDeclaration(property: string, value: string, ctx: Declaratio
 	}
 
 	if (
-		/^(margin|padding|scroll-margin|scroll-padding|inset)(-[a-z-]+)?$/.test(prop) ||
+		/^(margin|padding|scroll-margin|scroll-padding)(-[a-z-]+)?$/.test(prop) ||
 		/^(grid-)?(row-|column-)?gap$/.test(prop)
 	) {
 		const twoAllowed = prop.startsWith('padding') && SEGMENTED_SELECTOR.test(ctx.selector)
 		const off = literals((w, vctx) => {
 			const n = parseNumber(w)
-			if (!n || n.unit !== 'px') return false
-			// `calc((100% - 800px) / 2)`: a px term beside a relative length is a width (a measure), not a space.
-			if (vctx.funcs.some(f => f.args.some(a => a.t === 'word' && /^[\d.]+(%|vw|vh|dvh|svh|lvh|vi|vb)$/.test(a.v))))
+			if (!n || (n.unit !== 'px' && n.unit !== 'rem')) return false
+			// `calc((100% - 800px) / 2)`: a px term beside a relative length inside calc() (or one of its bare
+			// groups) is a width (a measure), not a space. `max(7px, 0%)` is not: each argument is a value.
+			if (
+				vctx.funcs.some(
+					f =>
+						(f.name === 'calc' || f.name === '') &&
+						f.args.some(a => a.t === 'word' && /^[\d.]+(%|vw|vh|dvh|svh|lvh|vi|vb)$/.test(a.v)),
+				)
+			)
 				return false
-			const px = Math.abs(n.n)
+			const px = Math.abs(n.unit === 'rem' ? n.n * REM_PX : n.n)
 			return !SPACING_PX.has(px) && !(twoAllowed && px === 2)
 		})
 		if (off) rules.add('spacing-off-scale')
@@ -682,7 +743,7 @@ export function lintDeclaration(property: string, value: string, ctx: Declaratio
 		const sizeNodes = prop === 'font' ? fontShorthandSize(nodes) : nodes
 		const sizeWords: { word: string; ctx: VisitContext }[] = []
 		visit(sizeNodes, (node, vctx) => {
-			if (!vctx.inFallback && node.t === 'word') sizeWords.push({ word: node.v, ctx: vctx })
+			if (checked(vctx) && node.t === 'word') sizeWords.push({ word: node.v, ctx: vctx })
 			return undefined
 		})
 		let off = false
@@ -721,7 +782,14 @@ export function lintDeclaration(property: string, value: string, ctx: Declaratio
 	}
 
 	if (prop === 'font-weight' || prop === 'font') {
-		const weightNodes = prop === 'font' ? fontShorthandWeight(nodes) : nodes
+		const weightNodes: ValueNode[] = []
+		if (prop === 'font') weightNodes.push(...fontShorthandWeight(nodes))
+		else
+			visit(nodes, (node, vctx) => {
+				// `calc(700)` and fallbacks are weights too.
+				if (checked(vctx) && node.t === 'word') weightNodes.push(node)
+				return undefined
+			})
 		const off = weightNodes.some(node => {
 			if (node.t !== 'word') return false
 			const lower = node.v.toLowerCase()
@@ -790,8 +858,10 @@ function hasSvgDataUri(nodes: ValueNode[]): boolean {
 export interface LintOptions {
 	/** Core token names (custom properties a token source defines). */
 	coreTokens?: ReadonlySet<string>
-	/** Shared primitives with their owner files' class names (`primitiveVocabulary`); CSS files only. */
-	primitives?: readonly PrimitiveVocabulary[]
+	/** Shared primitives and their owner files (`PRIMITIVES`): enables `primitive-outside-owner`. */
+	primitives?: readonly Primitive[]
+	/** Classes matching a primitive pattern that are surface modifiers (default `SURFACE_MODIFIER_CLASSES`). */
+	surfaceModifiers?: ReadonlyMap<string, string> | ReadonlySet<string>
 }
 
 const MAX_VALUE = 120
@@ -811,10 +881,46 @@ const inDirs = (file: string, dirs: readonly string[]) => dirs.some(d => file.st
 const blockMatch = (list: readonly { file: string; selector: string }[], file: string, selector: string) =>
 	list.some(b => b.file === file && b.selector === selector)
 
+/** Rules a custom-property indirection is checked for: colours and SVG are already held at the definition. */
+const INDIRECT_RULES: ReadonlySet<Rule> = new Set(RULES.filter(r => r !== 'raw-color' && r !== 'inline-svg'))
+
+/**
+ * `value` with every `var(--x[, fallback])` whose name `defs` holds replaced by each of its definitions (one
+ * string per combination, at most 16; nested definitions resolved up to four levels). `[]` when none applies.
+ */
+export function resolveLocalVars(value: string, defs: ReadonlyMap<string, readonly string[]>, depth = 0): string[] {
+	if (depth > 4) return []
+	const at = /\bvar\(\s*(--[\w-]+)/g
+	for (let m = at.exec(value); m; m = at.exec(value)) {
+		const options = defs.get(m[1] as string)
+		if (!options?.length) continue
+		let level = 1
+		let end = m.index + 4
+		for (; end < value.length && level > 0; end++) {
+			if (value[end] === '(') level++
+			else if (value[end] === ')') level--
+		}
+		const out: string[] = []
+		for (const option of options) {
+			const replaced = value.slice(0, m.index) + option + value.slice(end)
+			const deeper = resolveLocalVars(replaced, defs, depth + 1)
+			out.push(...(deeper.length ? deeper : [replaced]))
+		}
+		return [...new Set(out)].slice(0, 16)
+	}
+	return []
+}
+
 export function lintDeclarations(file: string, declarations: Declaration[], opts: LintOptions = {}): Finding[] {
 	const coreTokens = opts.coreTokens ?? new Set<string>()
 	const scaledType = inDirs(file, SCALED_TYPE_DIRS)
 	const out: Finding[] = []
+	// Custom properties this stylesheet defines outside token sources: a `z-index: var(--my-z)` is checked
+	// against `--my-z`'s own value(s), so an indirection cannot carry a raw value past the rules.
+	const localDefs = new Map<string, string[]>()
+	for (const d of declarations)
+		if (d.property.startsWith('--') && !coreTokens.has(d.property) && !blockMatch(TOKEN_SOURCES, file, d.selector))
+			localDefs.set(d.property, [...new Set([...(localDefs.get(d.property) ?? []), stripImportant(d.value)])])
 	for (const d of declarations) {
 		const ctx: DeclarationContext = {
 			file,
@@ -825,8 +931,25 @@ export function lintDeclarations(file: string, declarations: Declaration[], opts
 			scopedPalette: blockMatch(SCOPED_TOKEN_BLOCKS, file, d.selector),
 			reducedMotion: d.atRules.some(a => /prefers-reduced-motion\s*:\s*reduce/.test(a)),
 		}
-		for (const rule of lintDeclaration(d.property, d.value, ctx))
+		const direct = lintDeclaration(d.property, d.value, ctx)
+		for (const rule of direct)
 			out.push({ file, selector: d.selector, property: d.property, value: keyValue(d.value), rule, line: d.line })
+		if (d.property.startsWith('--') || !d.value.includes('var(')) continue
+		const seen = new Set<string>(direct)
+		for (const resolved of resolveLocalVars(stripImportant(d.value), localDefs)) {
+			for (const rule of lintDeclaration(d.property, resolved, ctx)) {
+				if (!INDIRECT_RULES.has(rule) || seen.has(rule)) continue
+				seen.add(rule)
+				out.push({
+					file,
+					selector: d.selector,
+					property: d.property,
+					value: keyValue(`${d.value} => ${resolved}`),
+					rule,
+					line: d.line,
+				})
+			}
+		}
 	}
 	return out
 }
@@ -834,7 +957,9 @@ export function lintDeclarations(file: string, declarations: Declaration[], opts
 export function lintCss(file: string, text: string, opts: LintOptions = {}, firstLine = 1): Finding[] {
 	const declarations = parseCss(text, { firstLine })
 	const out = lintDeclarations(file, declarations, opts)
-	if (opts.primitives?.length) out.push(...primitiveOutsideOwner(file, declarations, opts.primitives))
+	if (opts.primitives?.length)
+		out.push(...primitiveOutsideOwner(file, declarations, opts.primitives, opts.surfaceModifiers))
+	out.push(...buttonBorders(file, declarations))
 	return out
 }
 
@@ -862,18 +987,58 @@ function stripSelectorArguments(selector: string): string {
 }
 
 /**
+ * `:is(…)` / `:where(…)` at the top level of a complex selector, expanded into one complex selector per argument
+ * (`:is(.btn, .chip):hover` → `.btn:hover`, `.chip:hover`), so a wrapper cannot hide a primitive's base rule.
+ * Arguments with context (`:is(.a .btn)`) stay contextual after the expansion. Bounded to 64 alternatives.
+ */
+export function expandIsWhere(complex: string): string[] {
+	let depth = 0
+	let quote = ''
+	for (let i = 0; i < complex.length; i++) {
+		const c = complex[i] as string
+		if (quote) {
+			if (c === '\\') i++
+			else if (c === quote) quote = ''
+			continue
+		}
+		if (c === '"' || c === "'") quote = c
+		else if (c === '(' || c === '[') depth++
+		else if (c === ')' || c === ']') depth = Math.max(0, depth - 1)
+		else if (depth === 0 && c === ':') {
+			const m = /^:(is|where)\(/i.exec(complex.slice(i))
+			if (!m) continue
+			const open = i + m[0].length
+			let inner = 1
+			let j = open
+			for (; j < complex.length && inner > 0; j++) {
+				if (complex[j] === '(') inner++
+				else if (complex[j] === ')') inner--
+			}
+			const args = splitTopLevel(complex.slice(open, j - 1))
+			const before = complex.slice(0, i)
+			const after = complex.slice(j)
+			const out: string[] = []
+			for (const arg of args) for (const rest of expandIsWhere(after)) out.push(`${before}${arg}${rest}`)
+			return out.slice(0, 64)
+		}
+	}
+	return [complex]
+}
+
+/**
  * Stage S7's ownership rule. A rule styles a primitive's own base when one complex selector of its list is a
- * single compound (no ancestor, child or sibling context) whose classes are all primitive classes, e.g.
- * `.btn`, `.btn-primary:hover:not(:disabled)`, `button.btn.btn-sm`, `.menu-item[data-force-state="hover"]`,
- * `.icon-btn.menu-trigger-counted`. Such a rule may live only in the owner file of one of the primitives it
- * names. Context selectors stay with their surface: a descendant (`.review-intents .btn`) or a surface class in
- * the same compound (`.agent-dock-key.btn`, `.menu-panel.menu-fixed` where `.menu-fixed` is not a class of the
- * menu's owner file) is a surface modifier, not the primitive's base, and is never reported.
+ * single compound (no ancestor, child or sibling context) whose classes all match a primitive's pattern
+ * (`PRIMITIVES`), e.g. `.btn`, `.btn-primary:hover:not(:disabled)`, `button.btn.btn-sm`,
+ * `.menu-item[data-force-state="hover"]`, `.icon-btn.menu-trigger-counted`, `:is(.btn)`. Such a rule may live
+ * only in the owner file of one of the primitives it names. Context selectors stay with their surface: a
+ * descendant (`.review-intents .btn`) or a surface class in the same compound (`.agent-dock-key.btn`, or a
+ * listed surface modifier: `.menu-panel.menu-fixed`) is not the primitive's base and is never reported.
  */
 export function primitiveOutsideOwner(
 	file: string,
 	declarations: readonly Declaration[],
-	primitives: readonly PrimitiveVocabulary[],
+	primitives: readonly Primitive[],
+	surfaceModifiers: ReadonlyMap<string, string> | ReadonlySet<string> = SURFACE_MODIFIER_CLASSES,
 ): Finding[] {
 	const out: Finding[] = []
 	const seen = new Set<string>()
@@ -881,30 +1046,110 @@ export function primitiveOutsideOwner(
 		const prefix = d.atRules.length ? `${d.atRules.join(' ')} ` : ''
 		const selectorList = d.selector.startsWith(prefix) ? d.selector.slice(prefix.length) : d.selector
 		for (const complex of splitTopLevel(selectorList)) {
-			const top = stripSelectorArguments(complex).trim()
-			if (top === '' || /[\s>+~]/.test(top)) continue
-			const classes = [...top.matchAll(SELECTOR_CLASS)].map(m => m[1] as string)
-			if (!classes.length) continue
-			const owners = classes.map(c => primitives.filter(p => p.classes.has(c)))
-			if (owners.some(list => list.length === 0)) continue
-			const involved = [...new Set(owners.flat())]
-			if (involved.some(p => p.owner === file)) continue
-			const value = normalizeSelector(complex)
-			const key = `${d.selector}\u0000${value}`
-			if (seen.has(key)) continue
-			seen.add(key)
-			out.push({
-				file,
-				selector: d.selector,
-				property: involved.map(p => p.name).join(' + '),
-				value: keyValue(value),
-				rule: 'primitive-outside-owner',
-				line: d.line,
-			})
+			for (const alternative of expandIsWhere(complex)) {
+				const top = stripSelectorArguments(alternative).trim()
+				if (top === '' || /[\s>+~]/.test(top)) continue
+				const classes = [...top.matchAll(SELECTOR_CLASS)].map(m => m[1] as string)
+				if (!classes.length) continue
+				const owners = classes.map(c => (surfaceModifiers.has(c) ? [] : primitives.filter(p => p.classes.test(c))))
+				if (owners.some(list => list.length === 0)) continue
+				const involved = [...new Set(owners.flat())]
+				if (involved.some(p => p.owner === file)) continue
+				const value = normalizeSelector(complex)
+				const key = `${d.selector}\u0000${value}`
+				if (seen.has(key)) continue
+				seen.add(key)
+				out.push({
+					file,
+					selector: d.selector,
+					property: involved.map(p => p.name).join(' + '),
+					value: keyValue(value),
+					rule: 'primitive-outside-owner',
+					line: d.line,
+				})
+			}
 		}
 	}
 	return out
 }
+
+/** A border property (`border`, `border-left`, `border-inline-start-color`, …), never `border-radius`. */
+const BORDER_PROPERTY = /^border(-(top|right|bottom|left|block|inline)(-(start|end))?)?(-(width|style|color))?$/
+const BUTTON_CLASS = /\.(icon-btn|btn|vg-btn)(-[\w-]+)?(?![\w-])/
+const BUTTON_ELEMENT = /^button(?![\w-])/i
+const BUTTON_ROLE = /\[\s*role\s*=\s*["']?button["']?\s*(\s[is])?\]/i
+const BUTTON_INPUT = /^input(?![\w-]).*\[\s*type\s*=\s*["']?(button|submit|reset)["']?\s*(\s[is])?\]/i
+
+/** The last compound of a complex selector (its subject), with `(…)` arguments removed and attributes kept. */
+function selectorSubject(complex: string): string {
+	let depth = 0
+	let bracket = 0
+	let quote = ''
+	let last = 0
+	let out = ''
+	for (let i = 0; i < complex.length; i++) {
+		const c = complex[i] as string
+		if (quote) {
+			if (c === '\\') i++
+			else if (c === quote) quote = ''
+			if (depth === 0) out += c
+			continue
+		}
+		if (c === '"' || c === "'") {
+			quote = c
+			if (depth === 0) out += c
+		} else if (c === '(') depth++
+		else if (c === ')') depth = Math.max(0, depth - 1)
+		else if (depth > 0) continue
+		else {
+			if (c === '[') bracket++
+			if (c === ']') bracket = Math.max(0, bracket - 1)
+			if (bracket === 0 && /[\s>+~]/.test(c)) last = out.length + 1
+			out += c
+		}
+	}
+	return out.slice(last).trim()
+}
+
+/**
+ * The subject of a complex selector is a button: a button class (`.btn*`, `.icon-btn*`, the widget's `.vg-btn*`),
+ * a `button` element, `[role=button]` or `input[type=button|submit|reset]`.
+ */
+export function isButtonSubject(complex: string): boolean {
+	return expandIsWhere(complex).some(alternative => {
+		const subject = selectorSubject(alternative)
+		return (
+			BUTTON_CLASS.test(subject) ||
+			BUTTON_ELEMENT.test(subject) ||
+			BUTTON_ROLE.test(subject) ||
+			BUTTON_INPUT.test(subject)
+		)
+	})
+}
+
+/** §9 ruling 4: no border in any button tone; a button's weight comes from its fill. */
+export function buttonBorders(file: string, declarations: readonly Declaration[]): Finding[] {
+	const out: Finding[] = []
+	for (const d of declarations) {
+		if (!BORDER_PROPERTY.test(d.property)) continue
+		if (/^(none|0(px)?|hidden)$/i.test(stripImportant(d.value))) continue
+		const prefix = d.atRules.length ? `${d.atRules.join(' ')} ` : ''
+		const selectorList = d.selector.startsWith(prefix) ? d.selector.slice(prefix.length) : d.selector
+		if (!splitTopLevel(selectorList).some(isButtonSubject)) continue
+		out.push({
+			file,
+			selector: d.selector,
+			property: d.property,
+			value: keyValue(d.value),
+			rule: 'button-border',
+			line: d.line,
+		})
+	}
+	return out
+}
+
+/** Removes a trailing `!important` (with or without whitespace before it). */
+export const stripImportant = (value: string): string => value.replace(/\s*!\s*important\s*$/i, '').trim()
 
 /** Every primitive with the class names (matching its pattern) that its owner file uses in any selector. */
 export function primitiveVocabulary(
@@ -960,9 +1205,17 @@ const kebab = (name: string) =>
 				.replace(/^(Webkit|Moz|Ms)(?=[A-Z])/, m => `-${m.toLowerCase()}`)
 				.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`)
 
+/** `Element.animate()` timing options, read as the CSS animation property each one is. */
+const ANIMATE_TIMING: Readonly<Record<string, string>> = {
+	duration: 'animation-duration',
+	delay: 'animation-delay',
+	endDelay: 'animation-delay',
+	easing: 'animation-timing-function',
+}
+
 /** React/Solid number values that mean pixels for the properties this lint checks. */
 const PX_NUMBER_PROPERTY =
-	/^(font-size|border(-[a-z]+)*-radius|(margin|padding|scroll-margin|scroll-padding|inset)(-[a-z-]+)?|(row-|column-)?gap)$/
+	/^(font-size|border(-[a-z]+)*-radius|(margin|padding|scroll-margin|scroll-padding)(-[a-z-]+)?|(row-|column-)?gap)$/
 
 export function lintTs(file: string, text: string, opts: LintOptions = {}): Finding[] {
 	const kind = file.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
@@ -970,6 +1223,29 @@ export function lintTs(file: string, text: string, opts: LintOptions = {}): Find
 	const out: Finding[] = []
 	const iconModule = inDirs(file, ICON_MODULE_DIRS)
 	const lineOf = (node: ts.Node) => source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1
+	/** Nodes already read as style values: the generic motion-string check below skips them. */
+	const consumed = new Set<ts.Node>()
+	const isConsumed = (node: ts.Node) => {
+		for (let p: ts.Node | undefined = node; p; p = p.parent) if (consumed.has(p)) return true
+		return false
+	}
+	/** Same-file `const NAME = 'literal' | 123`: a template substitution of one reads as its value. */
+	const constants = new Map<string, string>()
+	const collectConstants = (node: ts.Node): void => {
+		if (
+			ts.isVariableDeclaration(node) &&
+			ts.isIdentifier(node.name) &&
+			node.initializer &&
+			ts.isVariableDeclarationList(node.parent) &&
+			node.parent.flags & ts.NodeFlags.Const
+		) {
+			const init = node.initializer
+			if (ts.isStringLiteral(init) || ts.isNoSubstitutionTemplateLiteral(init) || ts.isNumericLiteral(init))
+				constants.set(node.name.text, init.text)
+		}
+		ts.forEachChild(node, collectConstants)
+	}
+	collectConstants(source)
 
 	const enclosing = (node: ts.Node): string => {
 		for (let p: ts.Node | undefined = node.parent; p; p = p.parent) {
@@ -977,6 +1253,21 @@ export function lintTs(file: string, text: string, opts: LintOptions = {}): Find
 			if ((ts.isMethodDeclaration(p) || ts.isPropertyAssignment(p) || ts.isPropertyDeclaration(p)) && p.name)
 				return p.name.getText(source)
 			if (ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return p.name.text
+		}
+		return 'module'
+	}
+
+	/** The named function or method around `node` (skipping the variable that holds a call's result). */
+	const enclosingFunction = (node: ts.Node): string => {
+		for (let p: ts.Node | undefined = node.parent; p; p = p.parent) {
+			if ((ts.isFunctionDeclaration(p) || ts.isClassDeclaration(p)) && p.name) return p.name.text
+			if (ts.isMethodDeclaration(p) && p.name) return p.name.getText(source)
+			if (
+				(ts.isArrowFunction(p) || ts.isFunctionExpression(p)) &&
+				(ts.isVariableDeclaration(p.parent) || ts.isPropertyAssignment(p.parent)) &&
+				p.parent.name
+			)
+				return p.parent.name.getText(source)
 		}
 		return 'module'
 	}
@@ -993,9 +1284,19 @@ export function lintTs(file: string, text: string, opts: LintOptions = {}): Find
 			return `-${node.operand.text}`
 		if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node))
 			return literal(node.expression)
-		// `\`color-mix(in srgb, ${hex} 78%, white)\``: each substitution reads as an opaque token.
+		// `\`color-mix(in srgb, ${hex} 78%, white)\``: a same-file constant reads as its value, any other
+		// substitution as an opaque token.
 		if (ts.isTemplateExpression(node))
-			return node.head.text + node.templateSpans.map(span => `var(--expr)${span.literal.text}`).join('')
+			return (
+				node.head.text +
+				node.templateSpans
+					.map(span => {
+						const known = ts.isIdentifier(span.expression) ? constants.get(span.expression.text) : undefined
+						return `${known ?? 'var(--expr)'}${span.literal.text}`
+					})
+					.join('')
+			)
+		if (ts.isIdentifier(node)) return constants.get(node.text) ?? null
 		return null
 	}
 
@@ -1019,6 +1320,7 @@ export function lintTs(file: string, text: string, opts: LintOptions = {}): Find
 	}
 
 	const declare = (selector: string, rawProperty: string, valueNode: ts.Expression, at: ts.Node) => {
+		consumed.add(valueNode)
 		const value = literal(valueNode)
 		if (value === null) return
 		const property = rawProperty.startsWith('--') ? rawProperty : kebab(rawProperty)
@@ -1036,6 +1338,7 @@ export function lintTs(file: string, text: string, opts: LintOptions = {}): Find
 	}
 
 	const declareCssText = (selector: string, node: ts.Expression) => {
+		consumed.add(node)
 		const css = literal(node)
 		if (css === null) return
 		out.push(...lintDeclarations(file, parseCss(css, { inline: selector, firstLine: lineOf(node) }), opts))
@@ -1047,17 +1350,39 @@ export function lintTs(file: string, text: string, opts: LintOptions = {}): Find
 	}
 
 	const walk = (node: ts.Node): void => {
-		// CSS held in a string constant (`export const WIDGET_STYLES = \`…\``).
+		// CSS held in a string constant (`export const WIDGET_STYLES = \`…\``); substitutions read as opaque
+		// tokens (or a same-file constant's value), so one `${}` cannot hide the whole stylesheet.
 		if (
 			ts.isVariableDeclaration(node) &&
 			ts.isIdentifier(node.name) &&
 			CSS_CONSTANT_NAME.test(node.name.text) &&
-			node.initializer &&
-			(ts.isNoSubstitutionTemplateLiteral(node.initializer) || ts.isStringLiteral(node.initializer))
+			node.initializer
 		) {
 			const init = node.initializer
-			out.push(...lintCss(file, init.text, opts, lineOf(init)))
-			return
+			const stringLike =
+				ts.isNoSubstitutionTemplateLiteral(init) || ts.isStringLiteral(init) || ts.isTemplateExpression(init)
+			const text = stringLike ? literal(init) : null
+			if (text !== null) {
+				consumed.add(init)
+				out.push(...lintCss(file, text, opts, lineOf(init)))
+				return
+			}
+			if (STRICT_CSS_CONSTANT_NAME.test(node.name.text))
+				throw new Error(
+					`${file}:${lineOf(node)}: CSS constant ${node.name.text} is not a string or template the design lint can read`,
+				)
+		}
+		// JSX `<style>{\`…\`}</style>`.
+		if (ts.isJsxElement(node) && node.openingElement.tagName.getText(source) === 'style') {
+			for (const child of node.children) {
+				const text = ts.isJsxText(child)
+					? child.text
+					: ts.isJsxExpression(child) && child.expression
+						? literal(child.expression)
+						: null
+				if (child && ts.isJsxExpression(child) && child.expression) consumed.add(child.expression)
+				if (text !== null) out.push(...lintCss(file, text, opts, lineOf(child)))
+			}
 		}
 		// JSX `style={{ … }}` and `<svg>`.
 		if (ts.isJsxAttribute(node) && node.name.getText(source) === 'style' && node.initializer) {
@@ -1121,6 +1446,38 @@ export function lintTs(file: string, text: string, opts: LintOptions = {}): Find
 				declareObject(`${a0.getText(source)} in ${enclosing(node)}`, a1)
 			// `document.createElementNS(ns, 'svg')`
 			if (method === 'createElementNS' && literal(a1) === 'svg') svg(node, 'createElementNS', "'svg'")
+			// `el.animate(keyframes, { duration, easing, delay })`: Web Animations timing is motion like CSS.
+			if (method === 'animate' && a1 && ts.isObjectLiteralExpression(a1)) {
+				const selector = `${callee.expression.getText(source)}.animate() in ${enclosingFunction(node)}`
+				for (const prop of a1.properties) {
+					if (!ts.isPropertyAssignment(prop)) continue
+					const name = ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name) ? prop.name.text : ''
+					const css = ANIMATE_TIMING[name]
+					if (!css) continue
+					for (const valueNode of styleValues(prop.initializer)) {
+						consumed.add(valueNode)
+						const raw = literal(valueNode)
+						if (raw === null) continue
+						const value = name === 'easing' || !/^-?[\d.]+$/.test(raw) ? raw : `${raw}ms`
+						out.push(
+							...lintDeclarations(file, [{ selector, property: css, value, line: lineOf(prop), atRules: [] }], opts),
+						)
+					}
+				}
+			}
+		}
+		// A string holding an easing function outside any style value (`const EASING = 'cubic-bezier(…)'`,
+		// later written into a transition through a parameter): a timing curve is motion wherever it is kept.
+		if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && !isConsumed(node)) {
+			for (const m of node.text.matchAll(/\b(cubic-bezier|steps)\([^)]*\)/gi))
+				out.push({
+					file,
+					selector: `in ${enclosing(node)}`,
+					property: 'string',
+					value: collapse(m[0]),
+					rule: 'raw-easing',
+					line: lineOf(node),
+				})
 		}
 		// A string holding SVG markup (innerHTML, data URIs).
 		if (
@@ -1143,13 +1500,12 @@ export function lintTs(file: string, text: string, opts: LintOptions = {}): Find
 // ---------------------------------------------------------------------------------------------------------
 // Repository scan.
 
-export type SourceKind = 'css' | 'html' | 'ts'
+export type SourceKind = 'css' | 'html' | 'ts' | 'embedded-html'
 
 export function isExcluded(file: string): boolean {
 	return inDirs(file, EXCLUDED_DIRS) || EXCLUDED_FILES.some(re => re.test(file))
 }
 
-/** Walks the scan roots and returns every production source, repository-relative and sorted. */
 const IMPORT_SPECIFIER =
 	/(?:^|[^\w.])(?:import|export)\s[^'"`;]*?\bfrom\s*['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)|\bimport\s+['"]([^'"]+)['"]|new URL\(\s*['"]([^'"]+)['"]\s*,\s*import\.meta\.url/g
 
@@ -1180,6 +1536,10 @@ export function productionFiles(root: string): Set<string> {
 	return seen
 }
 
+/**
+ * Every production source, repository-relative: the scan roots walked in order, then the production TS/TSX
+ * modules outside them, then `EMBEDDED_HTML`.
+ */
 export function collectSources(root: string): { file: string; kind: SourceKind }[] {
 	const out: { file: string; kind: SourceKind }[] = []
 	const production = productionFiles(root)
@@ -1205,7 +1565,38 @@ export function collectSources(root: string): { file: string; kind: SourceKind }
 		}
 	}
 	for (const dir of SCAN_ROOTS) walkDir(join(root, dir))
+	// Production modules outside the scan roots that an entry imports (app/src/agent-dock/, theme-presets.ts…).
+	const listed = new Set(out.map(source => source.file))
+	for (const file of [...production].sort()) if (!listed.has(file) && !isExcluded(file)) out.push({ file, kind: 'ts' })
+	for (const { file } of EMBEDDED_HTML)
+		if (!out.some(source => source.file === file)) out.push({ file, kind: 'embedded-html' })
 	return out
+}
+
+/** The text of a top-level string/template constant `name` in a JS/TS file (substitutions read as `var(--expr)`). */
+export function embeddedConstant(file: string, text: string, name: string): { text: string; line: number } {
+	const kind = /\.(m|c)?js$/.test(file) ? ts.ScriptKind.JS : file.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+	const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind)
+	let found: { text: string; line: number } | null = null
+	const walk = (node: ts.Node): void => {
+		if (found) return
+		if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name && node.initializer) {
+			const init = node.initializer
+			const value =
+				ts.isStringLiteral(init) || ts.isNoSubstitutionTemplateLiteral(init)
+					? init.text
+					: ts.isTemplateExpression(init)
+						? init.head.text + init.templateSpans.map(span => `var(--expr)${span.literal.text}`).join('')
+						: null
+			if (value !== null)
+				found = { text: value, line: source.getLineAndCharacterOfPosition(init.getStart(source)).line + 1 }
+			return
+		}
+		ts.forEachChild(node, walk)
+	}
+	walk(source)
+	if (!found) throw new Error(`${file}: embedded HTML constant ${name} not found (update EMBEDDED_HTML)`)
+	return found
 }
 
 /** Core token names: every custom property a token source block defines, plus the bundled preset keys. */
@@ -1223,6 +1614,12 @@ export function lintSource(root: string, source: { file: string; kind: SourceKin
 	const text = readFileSync(join(root, source.file), 'utf8')
 	if (source.kind === 'css') return lintCss(source.file, text, opts)
 	if (source.kind === 'html') return lintHtml(source.file, text, opts)
+	if (source.kind === 'embedded-html') {
+		return EMBEDDED_HTML.filter(e => e.file === source.file).flatMap(e => {
+			const embedded = embeddedConstant(source.file, text, e.constant)
+			return lintHtml(source.file, embedded.text, opts).map(f => ({ ...f, line: f.line + embedded.line - 1 }))
+		})
+	}
 	return lintTs(source.file, text, opts)
 }
 
@@ -1243,9 +1640,8 @@ export const PRESET_TOKENS: readonly string[] = [
 /** Scans the whole repository. */
 export function scanRepository(root: string): Finding[] {
 	const coreTokens = coreTokensFrom(root, PRESET_TOKENS)
-	const primitives = primitiveVocabulary(root)
 	return collectSources(root)
-		.flatMap(source => lintSource(root, source, source.kind === 'css' ? { coreTokens, primitives } : { coreTokens }))
+		.flatMap(source => lintSource(root, source, { coreTokens, primitives: PRIMITIVES }))
 		.sort((a, b) => compareFindings(a, b) || a.line - b.line)
 }
 
@@ -1331,7 +1727,13 @@ export function compareBaseline(
 	return { unlisted, stale: [...pool.values()].flat() }
 }
 
-/** Regenerates the baseline: every finding listed, keeping the reason of entries that still match. */
+/** Marks a reason the script wrote rather than a person; tests/design-lint.test.ts rejects it. */
+export const AUTO_REASON_PREFIX = 'TODO: '
+
+/**
+ * Regenerates the baseline: every finding listed, keeping the reason of entries that still match. A finding
+ * with no entry gets `TODO: ` plus its rule's default reason (the script refuses those without `--allow-new`).
+ */
 export function nextBaseline(findings: readonly Finding[], entries: readonly AllowlistEntry[]): AllowlistEntry[] {
 	const reasons = new Map<string, string[]>()
 	for (const e of entries) reasons.set(findingKey(e), [...(reasons.get(findingKey(e)) ?? []), e.reason])
@@ -1343,7 +1745,7 @@ export function nextBaseline(findings: readonly Finding[], entries: readonly All
 			selector: f.selector,
 			property: f.property,
 			value: f.value,
-			reason: kept ?? defaultReason(f),
+			reason: kept ?? `${AUTO_REASON_PREFIX}${defaultReason(f)}`,
 		}
 	})
 }
@@ -1353,7 +1755,7 @@ const isRemote = (file: string) => file.startsWith('app/src/renderer/remote/')
 const isReview = (file: string) =>
 	file.startsWith('app/src/renderer/document-review/') || file.startsWith('app/src/renderer/viewer/')
 
-/** The reason a new baseline entry gets: the decision or ruling that keeps a value of its kind today. */
+/** The reason suggested for a new baseline entry: the decision or ruling that keeps a value of its kind today. */
 export function defaultReason(f: FindingKey): string {
 	if (isPopup(f.file)) return 'D9 extension popup (moves onto Helm tokens)'
 	switch (f.rule) {
@@ -1387,6 +1789,8 @@ export function defaultReason(f: FindingKey): string {
 		case 'primitive-outside-owner':
 			if (isRemote(f.file) || isReview(f.file)) return 'D7 surface reach (the surface restyles the shared primitive)'
 			return 'S7 primitive CSS outside its owner file (move it there when the surface is next touched)'
+		case 'button-border':
+			return '§9 ruling 4 (no border on any button): needs a pick or a fix'
 		default:
 			return 'D8 off-scale values'
 	}
