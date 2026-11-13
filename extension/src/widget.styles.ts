@@ -448,7 +448,7 @@ export const WIDGET_STYLES = `
 
 	.vg-card__actions { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--vg-hairline); }
 
-	/* Buttons (§3.1 md, §9 ruling 28): no borders in any tone — weight comes from the fill. */
+	/* Buttons (§3.1 md, §9 ruling 88): no borders in any tone (§9 ruling 4) — weight comes from the fill. */
 	.vg-btn {
 		height: 32px;
 		padding: 0 14px;

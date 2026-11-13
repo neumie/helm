@@ -70,7 +70,7 @@ export const WithAction: Story = {
 	),
 }
 
-export const StackLimit: Story = {
+export const Stack: Story = {
 	render: () => (
 		<Stage>
 			<div style={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>

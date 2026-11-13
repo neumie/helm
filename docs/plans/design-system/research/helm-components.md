@@ -239,7 +239,7 @@ Sharing is structurally blocked: the extension is SolidJS and the app is React. 
 | TabDrag.stories.tsx | Views/Tab drag | 1 | CollapsedFolders |
 | TabNumbers.stories.tsx | Views/Tab numbers | 2 | BuildCollapsed, BuildExpanded |
 | TerminalWorkspace.stories.tsx | Views/Terminal workspace | 26 | FullWorkspace, TabStrip, BackgroundTerminals, CollapsedBackgroundGroup, GroupedTabHeaders, CollapsedTabGroup, BrowserHarness, SidebarVisibility, AgentDock, AgentDockQuestion, AgentDockPermission, AgentDockPlan, AgentDockTurn, AgentDockOrphaned, AgentDockAgents, AgentDockNarrow, AgentDockNarrowQuestion, AgentDockSourceDown, AgentDockEmpty, AgentDockTop, AgentDockReceiptSending, AgentDockReceiptUnconfirmed, AgentDockReceiptAnswered, AgentDockReceiptRefused, AgentDockReceiptFailed, AgentDockHarness |
-| Toast.stories.tsx | Compositions/Toast | 4 | Message, WithDetail, WithAction, StackLimit |
+| Toast.stories.tsx | Compositions/Toast | 4 | Message, WithDetail, WithAction, Stack |
 | TopbarBackground.stories.tsx | Views/Topbar background terminals | 2 | BackgroundTerminals, States |
 | viewer/CsvViewer.stories.tsx | Views/Document review/CSV | 12 | Invoices, InvoicesLightWindow, CzechExcelExport, ExcelSepLine, SentryTsv, Wide500Columns, MillionRows, QuotedLineBreaks, UnclosedQuote, TooManyRows, Windows1250, Empty |
 | viewer/PdfViewer.stories.tsx | Views/Document review/PDF | 11 | Report, ReportLightWindow, Scan, Locked, Ledger500Pages, TooManyPages, Cjk, Jbig2Fax, Jpeg2000, ActiveContent, Broken |
