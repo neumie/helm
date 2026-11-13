@@ -2014,7 +2014,7 @@ export function defaultReason(f: FindingKey): string {
 		case 'raw-z-index':
 		case 'raw-duration':
 		case 'raw-easing':
-			return 'S2 adds z/motion tokens (pending D2)'
+			return 'S2 adds z/motion tokens'
 		case 'spacing-off-scale':
 			if (/(^|[\s.,])\.?(chip|vg-chip|menu-trigger-badge)\b/.test(f.selector) && /\b2px 8px\b/.test(f.value))
 				return '§9 ruling 26 chip padding 2×8'

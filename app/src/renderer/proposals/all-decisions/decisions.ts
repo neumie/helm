@@ -1,6 +1,6 @@
 // The open design-system decisions that have Storybook variants (docs/plans/design-system/spec.md § Open decisions)
 // on one page. Decided groups leave this list and their stories are deleted; open decisions with no proposal yet
-// (D2's package shape, D15–D18) are not here.
+// (D15–D18) are not here.
 // Visible decisions name their Proposals/ story group; the page reads that group's variants from the Storybook
 // index, so a new variant shows up without editing this file. tests/design-proposals-order.test.ts checks that
 // every Proposals/ group has an entry here and every entry names an existing group.

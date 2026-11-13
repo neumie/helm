@@ -60,283 +60,283 @@ export const DESIGN_LINT_BASELINE = String.raw`
 
 ## raw-z-index
 ### app/src/renderer/agent-dock/agent-dock.css
-.agent-dock-agent::before | z-index | -1 | S2 adds z/motion tokens (pending D2)
-.agent-dock-resize | z-index | 3 | S2 adds z/motion tokens (pending D2)
-.agent-dock::before | z-index | 1 | S2 adds z/motion tokens (pending D2)
+.agent-dock-agent::before | z-index | -1 | S2 adds z/motion tokens
+.agent-dock-resize | z-index | 3 | S2 adds z/motion tokens
+.agent-dock::before | z-index | 1 | S2 adds z/motion tokens
 ### app/src/renderer/document-review/document-review.css
-.review-selection-actions | z-index | 3 | S2 adds z/motion tokens (pending D2)
+.review-selection-actions | z-index | 3 | S2 adds z/motion tokens
 ### app/src/renderer/no-terminals.css
-#no-terms | z-index | 2 | S2 adds z/motion tokens (pending D2)
+#no-terms | z-index | 2 | S2 adds z/motion tokens
 ### app/src/renderer/remote/remote.css
-.remote-back::before | z-index | -1 | S2 adds z/motion tokens (pending D2)
-.remote-chat > .remote-header | z-index | 4 | S2 adds z/motion tokens (pending D2)
-.remote-compose-surface::before | z-index | -1 | S2 adds z/motion tokens (pending D2)
-.remote-composer | z-index | 3 | S2 adds z/motion tokens (pending D2)
-.remote-information-view | z-index | 10 | S2 adds z/motion tokens (pending D2)
-.remote-jump | z-index | 2 | S2 adds z/motion tokens (pending D2)
-.remote-navigation-scrim | z-index | 70 | S2 adds z/motion tokens (pending D2)
-.remote-navigation-trigger::before | z-index | -1 | S2 adds z/motion tokens (pending D2)
-.remote-row-menu | z-index | 2 | S2 adds z/motion tokens (pending D2)
-.remote-sheet-scrim | z-index | 60 | S2 adds z/motion tokens (pending D2)
+.remote-back::before | z-index | -1 | S2 adds z/motion tokens
+.remote-chat > .remote-header | z-index | 4 | S2 adds z/motion tokens
+.remote-compose-surface::before | z-index | -1 | S2 adds z/motion tokens
+.remote-composer | z-index | 3 | S2 adds z/motion tokens
+.remote-information-view | z-index | 10 | S2 adds z/motion tokens
+.remote-jump | z-index | 2 | S2 adds z/motion tokens
+.remote-navigation-scrim | z-index | 70 | S2 adds z/motion tokens
+.remote-navigation-trigger::before | z-index | -1 | S2 adds z/motion tokens
+.remote-row-menu | z-index | 2 | S2 adds z/motion tokens
+.remote-sheet-scrim | z-index | 60 | S2 adds z/motion tokens
 ### app/src/renderer/sidebar/sidebar.css
-.action-bar | z-index | 10 | S2 adds z/motion tokens (pending D2)
-.action-row::after | z-index | -1 | S2 adds z/motion tokens (pending D2)
-.menu-panel | z-index | 40 | S2 adds z/motion tokens (pending D2)
-.push-header | z-index | 10 | S2 adds z/motion tokens (pending D2)
-.sheet | z-index | 1 | S2 adds z/motion tokens (pending D2)
-.sheet-layer | z-index | 60 | S2 adds z/motion tokens (pending D2)
-.sheet-scrim | z-index | 0 | S2 adds z/motion tokens (pending D2)
-.swipe-scrim | z-index | 30 | S2 adds z/motion tokens (pending D2)
+.action-bar | z-index | 10 | S2 adds z/motion tokens
+.action-row::after | z-index | -1 | S2 adds z/motion tokens
+.menu-panel | z-index | 40 | S2 adds z/motion tokens
+.push-header | z-index | 10 | S2 adds z/motion tokens
+.sheet | z-index | 1 | S2 adds z/motion tokens
+.sheet-layer | z-index | 60 | S2 adds z/motion tokens
+.sheet-scrim | z-index | 0 | S2 adds z/motion tokens
+.swipe-scrim | z-index | 30 | S2 adds z/motion tokens
 ### app/src/renderer/signals/signals.css
-.signals-band | z-index | 1 | S2 adds z/motion tokens (pending D2)
+.signals-band | z-index | 1 | S2 adds z/motion tokens
 ### app/src/renderer/terminal-context-menu.css
-.menu-panel.menu-fixed | z-index | 40 | S2 adds z/motion tokens (pending D2)
+.menu-panel.menu-fixed | z-index | 40 | S2 adds z/motion tokens
 ### app/src/renderer/terminal-tabs.css
-.tab-drag-preview | z-index | 60 | S2 adds z/motion tokens (pending D2)
-.tab-group-drag-preview | z-index | 60 | S2 adds z/motion tokens (pending D2)
+.tab-drag-preview | z-index | 60 | S2 adds z/motion tokens
+.tab-group-drag-preview | z-index | 60 | S2 adds z/motion tokens
 ### app/src/renderer/terminal-well.css
-.term-holder[data-reveal]::after | z-index | 9 | S2 adds z/motion tokens (pending D2)
-.term-mount .term-frame-freeze | z-index | 8 | S2 adds z/motion tokens (pending D2)
-.term-scrollbar | z-index | 2 | S2 adds z/motion tokens (pending D2)
+.term-holder[data-reveal]::after | z-index | 9 | S2 adds z/motion tokens
+.term-mount .term-frame-freeze | z-index | 8 | S2 adds z/motion tokens
+.term-scrollbar | z-index | 2 | S2 adds z/motion tokens
 ### app/src/renderer/toast.css
-#toasts | z-index | 100 | S2 adds z/motion tokens (pending D2)
+#toasts | z-index | 100 | S2 adds z/motion tokens
 ### app/src/renderer/viewer/viewer.css
-.viewer-grid-band | z-index | 3 | S2 adds z/motion tokens (pending D2)
-.viewer-grid-band > .viewer-grid-number | z-index | 2 | S2 adds z/motion tokens (pending D2)
-.viewer-grid-cells | z-index | 0 | S2 adds z/motion tokens (pending D2)
-.viewer-grid-corner | z-index | 1 | S2 adds z/motion tokens (pending D2)
-.viewer-grid-letters | z-index | 4 | S2 adds z/motion tokens (pending D2)
-.viewer-grid-numbers | z-index | 2 | S2 adds z/motion tokens (pending D2)
-.viewer-grid-selection, .viewer-grid-active | z-index | 1 | S2 adds z/motion tokens (pending D2)
-.viewer-pdf-text | z-index | 0 | S2 adds z/motion tokens (pending D2)
-.viewer-pdf-text .viewer-pdf-eoc | z-index | 0 | S2 adds z/motion tokens (pending D2)
-.viewer-pdf-text > :not(.markedContent), .viewer-pdf-text .markedContent span:not(.markedContent) | z-index | 1 | S2 adds z/motion tokens (pending D2)
+.viewer-grid-band | z-index | 3 | S2 adds z/motion tokens
+.viewer-grid-band > .viewer-grid-number | z-index | 2 | S2 adds z/motion tokens
+.viewer-grid-cells | z-index | 0 | S2 adds z/motion tokens
+.viewer-grid-corner | z-index | 1 | S2 adds z/motion tokens
+.viewer-grid-letters | z-index | 4 | S2 adds z/motion tokens
+.viewer-grid-numbers | z-index | 2 | S2 adds z/motion tokens
+.viewer-grid-selection, .viewer-grid-active | z-index | 1 | S2 adds z/motion tokens
+.viewer-pdf-text | z-index | 0 | S2 adds z/motion tokens
+.viewer-pdf-text .viewer-pdf-eoc | z-index | 0 | S2 adds z/motion tokens
+.viewer-pdf-text > :not(.markedContent), .viewer-pdf-text .markedContent span:not(.markedContent) | z-index | 1 | S2 adds z/motion tokens
 ### extension/src/widget.styles.ts
-.vg-card | z-index | 2147483647 | S2 adds z/motion tokens (pending D2)
-.vg-model__menu | z-index | 40 | S2 adds z/motion tokens (pending D2)
-.vg-more [role="menu"] | z-index | 5 | S2 adds z/motion tokens (pending D2)
-.vg-pill | z-index | 2147483647 | S2 adds z/motion tokens (pending D2)
+.vg-card | z-index | 2147483647 | S2 adds z/motion tokens
+.vg-model__menu | z-index | 40 | S2 adds z/motion tokens
+.vg-more [role="menu"] | z-index | 5 | S2 adds z/motion tokens
+.vg-pill | z-index | 2147483647 | S2 adds z/motion tokens
 
 ## raw-duration
 ### app/src/renderer/agent-dock/agent-dock.css
-.agent-dock-agent-glyph[data-tone="working"] | animation | agent-dock-pulse 1.6s ease-in-out infinite | S2 adds z/motion tokens (pending D2)
-.agent-dock-agent::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock-agents-n | transition | color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock-choice | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock-entry, .agent-dock-more, .agent-dock-agents-entry | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock-entry-name | transition | color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock-group-option | transition | color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock-prompt | transition | border-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock-qtab | transition | color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock-reveal-link | transition | color 140ms ease-out, text-decoration-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock-title-btn | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-@media (prefers-reduced-motion: no-preference) .agent-dock-row [data-arrival] | animation | agent-dock-arrival-fill 1.4s ease-out 1 | S2 adds z/motion tokens (pending D2)
-@media (prefers-reduced-motion: no-preference) .agent-dock:has(.agent-dock-row [data-arrival="turn"])::before | animation | agent-dock-arrival-edge-accent 1.4s ease-out 1 | S2 adds z/motion tokens (pending D2)
-@media (prefers-reduced-motion: no-preference) .agent-dock:has(.agent-dock-row [data-arrival]:not([data-arrival="turn"]))::before | animation | agent-dock-arrival-edge-warn 1.4s ease-out 1 | S2 adds z/motion tokens (pending D2)
+.agent-dock-agent-glyph[data-tone="working"] | animation | agent-dock-pulse 1.6s ease-in-out infinite | S2 adds z/motion tokens
+.agent-dock-agent::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock-agents-n | transition | color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock-choice | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock-entry, .agent-dock-more, .agent-dock-agents-entry | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock-entry-name | transition | color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock-group-option | transition | color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock-prompt | transition | border-color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock-qtab | transition | color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock-reveal-link | transition | color 140ms ease-out, text-decoration-color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock-title-btn | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+@media (prefers-reduced-motion: no-preference) .agent-dock-row [data-arrival] | animation | agent-dock-arrival-fill 1.4s ease-out 1 | S2 adds z/motion tokens
+@media (prefers-reduced-motion: no-preference) .agent-dock:has(.agent-dock-row [data-arrival="turn"])::before | animation | agent-dock-arrival-edge-accent 1.4s ease-out 1 | S2 adds z/motion tokens
+@media (prefers-reduced-motion: no-preference) .agent-dock:has(.agent-dock-row [data-arrival]:not([data-arrival="turn"]))::before | animation | agent-dock-arrival-edge-warn 1.4s ease-out 1 | S2 adds z/motion tokens
 ### app/src/renderer/background-terminals.css
-#bg-toggle | transition | transform 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.bg-group-header-row | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.bg-row | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
+#bg-toggle | transition | transform 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.bg-group-header-row | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+.bg-row | transition | background-color 140ms ease-out | S2 adds z/motion tokens
 ### app/src/renderer/button.css
-.btn | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
+.btn | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
 ### app/src/renderer/document-review/document-review.css
-.review-screenshot-remove | transition | opacity 120ms ease-out | S2 adds z/motion tokens (pending D2)
+.review-screenshot-remove | transition | opacity 120ms ease-out | S2 adds z/motion tokens
 ### app/src/renderer/panes.css
-#divider | transition | background-color 120ms ease-out | S2 adds z/motion tokens (pending D2)
+#divider | transition | background-color 120ms ease-out | S2 adds z/motion tokens
 ### app/src/renderer/remote/remote.css
-.remote-back::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.remote-composer-actions .menu-panel | animation | remote-popover-in 140ms ease-out both | S2 adds z/motion tokens (pending D2)
-.remote-information-view | animation | remote-reading-view-in 160ms ease-out both | S2 adds z/motion tokens (pending D2)
-.remote-navigation-dismiss | animation | remote-scrim-in 160ms ease-out both | S2 adds z/motion tokens (pending D2)
-.remote-navigation-item | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.remote-navigation-menu | animation | remote-navigation-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both | S2 adds z/motion tokens (pending D2)
-.remote-navigation-trigger::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.remote-row-menu | animation | remote-popover-in 140ms ease-out both | S2 adds z/motion tokens (pending D2)
-.remote-sheet | animation | remote-sheet-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both | S2 adds z/motion tokens (pending D2)
-.remote-sheet-dismiss | animation | remote-scrim-in 160ms ease-out both | S2 adds z/motion tokens (pending D2)
-.remote-sheet-option | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.remote-usage | animation | remote-reading-view-in 160ms ease-out both | S2 adds z/motion tokens (pending D2)
-@media (min-width: 1200px) .remote-information-rail | animation | remote-rail-in 160ms ease-out both | S2 adds z/motion tokens (pending D2)
+.remote-back::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+.remote-composer-actions .menu-panel | animation | remote-popover-in 140ms ease-out both | S2 adds z/motion tokens
+.remote-information-view | animation | remote-reading-view-in 160ms ease-out both | S2 adds z/motion tokens
+.remote-navigation-dismiss | animation | remote-scrim-in 160ms ease-out both | S2 adds z/motion tokens
+.remote-navigation-item | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.remote-navigation-menu | animation | remote-navigation-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both | S2 adds z/motion tokens
+.remote-navigation-trigger::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+.remote-row-menu | animation | remote-popover-in 140ms ease-out both | S2 adds z/motion tokens
+.remote-sheet | animation | remote-sheet-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both | S2 adds z/motion tokens
+.remote-sheet-dismiss | animation | remote-scrim-in 160ms ease-out both | S2 adds z/motion tokens
+.remote-sheet-option | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.remote-usage | animation | remote-reading-view-in 160ms ease-out both | S2 adds z/motion tokens
+@media (min-width: 1200px) .remote-information-rail | animation | remote-rail-in 160ms ease-out both | S2 adds z/motion tokens
 ### app/src/renderer/sidebar/sidebar.css
-.action-row::after | transition | opacity 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.attachment-row | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.clamp-cue | transition | color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.dot-pulse | animation | dot-pulse 1.6s ease-in-out infinite | S2 adds z/motion tokens (pending D2)
-.field-reset | transition | color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.icon-btn | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.input | transition | border-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.item-row | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.menu-panel | animation | menu-in 120ms ease-out | S2 adds z/motion tokens (pending D2)
-.nav-pop-out | animation | nav-out 120ms ease-out forwards | S2 adds z/motion tokens (pending D2)
-.nav-push-in | animation | nav-in 150ms ease-out | S2 adds z/motion tokens (pending D2)
-.nav-under-away | animation | nav-under-away 150ms ease-out | S2 adds z/motion tokens (pending D2)
-.nav-under-back | animation | nav-under-back 120ms ease-out | S2 adds z/motion tokens (pending D2)
-.new-item-prompt-field::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.project-trigger | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.segment | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.sheet | animation | sheet-in 150ms ease-out | S2 adds z/motion tokens (pending D2)
-.sheet-scrim | animation | scrim-in 150ms ease-out | S2 adds z/motion tokens (pending D2)
-.task-metadata summary::after | transition | transform 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.toggle | transition | background-color 140ms ease-out, border-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.toggle-knob | transition | transform 140ms ease-out | S2 adds z/motion tokens (pending D2)
+.action-row::after | transition | opacity 140ms ease-out | S2 adds z/motion tokens
+.attachment-row | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+.clamp-cue | transition | color 140ms ease-out | S2 adds z/motion tokens
+.dot-pulse | animation | dot-pulse 1.6s ease-in-out infinite | S2 adds z/motion tokens
+.field-reset | transition | color 140ms ease-out | S2 adds z/motion tokens
+.icon-btn | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.input | transition | border-color 140ms ease-out | S2 adds z/motion tokens
+.item-row | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+.menu-panel | animation | menu-in 120ms ease-out | S2 adds z/motion tokens
+.nav-pop-out | animation | nav-out 120ms ease-out forwards | S2 adds z/motion tokens
+.nav-push-in | animation | nav-in 150ms ease-out | S2 adds z/motion tokens
+.nav-under-away | animation | nav-under-away 150ms ease-out | S2 adds z/motion tokens
+.nav-under-back | animation | nav-under-back 120ms ease-out | S2 adds z/motion tokens
+.new-item-prompt-field::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+.project-trigger | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.segment | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.sheet | animation | sheet-in 150ms ease-out | S2 adds z/motion tokens
+.sheet-scrim | animation | scrim-in 150ms ease-out | S2 adds z/motion tokens
+.task-metadata summary::after | transition | transform 140ms ease-out | S2 adds z/motion tokens
+.toggle | transition | background-color 140ms ease-out, border-color 140ms ease-out | S2 adds z/motion tokens
+.toggle-knob | transition | transform 140ms ease-out | S2 adds z/motion tokens
 ### app/src/renderer/signals/signals.css
-.signals-list-btn | transition | color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.signals-tr | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-@media (prefers-reduced-motion: no-preference) .signals-resting .signals-braille-dot | animation | signals-calm-wave 4.8s ease-in-out infinite | S2 adds z/motion tokens (pending D2)
+.signals-list-btn | transition | color 140ms ease-out | S2 adds z/motion tokens
+.signals-tr | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+@media (prefers-reduced-motion: no-preference) .signals-resting .signals-braille-dot | animation | signals-calm-wave 4.8s ease-in-out infinite | S2 adds z/motion tokens
 ### app/src/renderer/terminal-tabs.css
-#new-tab | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.activity-indicator-dot | animation | activity-indicator-clockwise 1s linear infinite | S2 adds z/motion tokens (pending D2)
-.activity-indicator-dot:nth-child(2) | animation-delay | -833ms | S2 adds z/motion tokens (pending D2)
-.activity-indicator-dot:nth-child(3) | animation-delay | -167ms | S2 adds z/motion tokens (pending D2)
-.activity-indicator-dot:nth-child(4) | animation-delay | -667ms | S2 adds z/motion tokens (pending D2)
-.activity-indicator-dot:nth-child(5) | animation-delay | -333ms | S2 adds z/motion tokens (pending D2)
-.activity-indicator-dot:nth-child(6) | animation-delay | -500ms | S2 adds z/motion tokens (pending D2)
-.activity-indicator-label | animation | activity-indicator-label-breathe 1.8s ease-in-out infinite | S2 adds z/motion tokens (pending D2)
-.activity-indicator[data-variant="attention"] .activity-indicator-dot | animation | activity-indicator-attention-color 1.8s ease-in-out infinite | S2 adds z/motion tokens (pending D2)
-.activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(1) | animation-delay | -0.9s | S2 adds z/motion tokens (pending D2)
-.activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(2), .activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(3) | animation-delay | -0.6s | S2 adds z/motion tokens (pending D2)
-.activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(4), .activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(5) | animation-delay | -0.3s | S2 adds z/motion tokens (pending D2)
-.activity-indicator[data-variant="waiting"] .activity-indicator-dot | animation | activity-indicator-waiting 0.9s ease-in-out infinite | S2 adds z/motion tokens (pending D2)
-.tab | transition | opacity 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.tab-close | transition | opacity 140ms ease-out, background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.tab-group-toggle | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
+#new-tab | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.activity-indicator-dot | animation | activity-indicator-clockwise 1s linear infinite | S2 adds z/motion tokens
+.activity-indicator-dot:nth-child(2) | animation-delay | -833ms | S2 adds z/motion tokens
+.activity-indicator-dot:nth-child(3) | animation-delay | -167ms | S2 adds z/motion tokens
+.activity-indicator-dot:nth-child(4) | animation-delay | -667ms | S2 adds z/motion tokens
+.activity-indicator-dot:nth-child(5) | animation-delay | -333ms | S2 adds z/motion tokens
+.activity-indicator-dot:nth-child(6) | animation-delay | -500ms | S2 adds z/motion tokens
+.activity-indicator-label | animation | activity-indicator-label-breathe 1.8s ease-in-out infinite | S2 adds z/motion tokens
+.activity-indicator[data-variant="attention"] .activity-indicator-dot | animation | activity-indicator-attention-color 1.8s ease-in-out infinite | S2 adds z/motion tokens
+.activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(1) | animation-delay | -0.9s | S2 adds z/motion tokens
+.activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(2), .activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(3) | animation-delay | -0.6s | S2 adds z/motion tokens
+.activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(4), .activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(5) | animation-delay | -0.3s | S2 adds z/motion tokens
+.activity-indicator[data-variant="waiting"] .activity-indicator-dot | animation | activity-indicator-waiting 0.9s ease-in-out infinite | S2 adds z/motion tokens
+.tab | transition | opacity 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.tab-close | transition | opacity 140ms ease-out, background-color 140ms ease-out | S2 adds z/motion tokens
+.tab-group-toggle | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
 ### app/src/renderer/terminal-well.css
-.term-scrollbar-thumb | transition | background-color 140ms ease-out, width 140ms ease-out | S2 adds z/motion tokens (pending D2)
-@media (prefers-reduced-motion: no-preference) .term-holder[data-reveal]::after | animation | term-reveal-pulse 1.4s ease-out 1 forwards | S2 adds z/motion tokens (pending D2)
+.term-scrollbar-thumb | transition | background-color 140ms ease-out, width 140ms ease-out | S2 adds z/motion tokens
+@media (prefers-reduced-motion: no-preference) .term-holder[data-reveal]::after | animation | term-reveal-pulse 1.4s ease-out 1 forwards | S2 adds z/motion tokens
 ### app/src/renderer/terminal-workspace.ts
-element.animate() in animateStripReflow | animation-duration | 160ms | §9 ruling 50 tab drag FLIP 160ms on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
-preview.animate() in settleBackgroundTabPreview | animation-duration | 140ms | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
-preview.animate() in settleBackgroundTabPreview | animation-duration | 180ms | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
-preview.animate() in settleGroupPreview | animation-duration | 140ms | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
-preview.animate() in settleGroupPreview | animation-duration | 180ms | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
-preview.animate() in settleTabPreview | animation-duration | 140ms | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
-preview.animate() in settleTabPreview | animation-duration | 180ms | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
+element.animate() in animateStripReflow | animation-duration | 160ms | §9 ruling 50 tab drag FLIP 160ms on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending)
+preview.animate() in settleBackgroundTabPreview | animation-duration | 140ms | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending)
+preview.animate() in settleBackgroundTabPreview | animation-duration | 180ms | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending)
+preview.animate() in settleGroupPreview | animation-duration | 140ms | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending)
+preview.animate() in settleGroupPreview | animation-duration | 180ms | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending)
+preview.animate() in settleTabPreview | animation-duration | 140ms | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending)
+preview.animate() in settleTabPreview | animation-duration | 180ms | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending)
 ### app/src/renderer/toast.css
-.toast | transition | opacity 150ms ease-out, transform 150ms ease-out | S2 adds z/motion tokens (pending D2)
-.toast.leaving | transition-duration | 120ms | S2 adds z/motion tokens (pending D2)
+.toast | transition | opacity 150ms ease-out, transform 150ms ease-out | S2 adds z/motion tokens
+.toast.leaving | transition-duration | 120ms | S2 adds z/motion tokens
 ### app/src/renderer/viewer/viewer.css
-.viewer-grid-letter, .viewer-grid-number | transition | color var(--motion-state, 140ms) ease-out | S2 adds z/motion tokens (pending D2): --motion-state is not defined yet, so the 140ms fallback renders
-.viewer-pdf-canvas | transition | opacity 150ms ease-out | S2 adds z/motion tokens (pending D2)
+.viewer-grid-letter, .viewer-grid-number | transition | color var(--motion-state, 140ms) ease-out | S2 adds z/motion tokens: --motion-state is not defined yet, so the 140ms fallback renders
+.viewer-pdf-canvas | transition | opacity 150ms ease-out | S2 adds z/motion tokens
 ### extension/src/widget.styles.ts
-.vg-agent__option | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.vg-btn | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.vg-card | animation | vg-rise 150ms ease-out | S2 adds z/motion tokens (pending D2)
-.vg-close | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.vg-dot--pulse | animation | vg-pulse 1.6s ease-in-out infinite | S2 adds z/motion tokens (pending D2)
-.vg-model__chevron | transition | transform 120ms ease-out | S2 adds z/motion tokens (pending D2)
-.vg-model__menu--down | animation | vg-menu-down 120ms ease-out | S2 adds z/motion tokens (pending D2)
-.vg-model__menu--up | animation | vg-menu-up 120ms ease-out | S2 adds z/motion tokens (pending D2)
-.vg-model__trigger | transition | border-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.vg-pill | transition | background-color 140ms ease-out, border-color 140ms ease-out, transform 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.vg-pr | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
+.vg-agent__option | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.vg-btn | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.vg-card | animation | vg-rise 150ms ease-out | S2 adds z/motion tokens
+.vg-close | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.vg-dot--pulse | animation | vg-pulse 1.6s ease-in-out infinite | S2 adds z/motion tokens
+.vg-model__chevron | transition | transform 120ms ease-out | S2 adds z/motion tokens
+.vg-model__menu--down | animation | vg-menu-down 120ms ease-out | S2 adds z/motion tokens
+.vg-model__menu--up | animation | vg-menu-up 120ms ease-out | S2 adds z/motion tokens
+.vg-model__trigger | transition | border-color 140ms ease-out | S2 adds z/motion tokens
+.vg-pill | transition | background-color 140ms ease-out, border-color 140ms ease-out, transform 140ms ease-out | S2 adds z/motion tokens
+.vg-pr | transition | background-color 140ms ease-out | S2 adds z/motion tokens
 
 ## raw-easing
 ### app/src/renderer/agent-dock/agent-dock.css
-.agent-dock-agent-glyph[data-tone="working"] | animation | agent-dock-pulse 1.6s ease-in-out infinite | S2 adds z/motion tokens (pending D2)
-.agent-dock-agent::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock-agents-n | transition | color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock-choice | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock-entry, .agent-dock-more, .agent-dock-agents-entry | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock-entry-name | transition | color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock-group-option | transition | color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock-prompt | transition | border-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock-qtab | transition | color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock-reveal-link | transition | color 140ms ease-out, text-decoration-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock-title-btn | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.agent-dock::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-@media (prefers-reduced-motion: no-preference) .agent-dock-row [data-arrival] | animation | agent-dock-arrival-fill 1.4s ease-out 1 | S2 adds z/motion tokens (pending D2)
-@media (prefers-reduced-motion: no-preference) .agent-dock:has(.agent-dock-row [data-arrival="turn"])::before | animation | agent-dock-arrival-edge-accent 1.4s ease-out 1 | S2 adds z/motion tokens (pending D2)
-@media (prefers-reduced-motion: no-preference) .agent-dock:has(.agent-dock-row [data-arrival]:not([data-arrival="turn"]))::before | animation | agent-dock-arrival-edge-warn 1.4s ease-out 1 | S2 adds z/motion tokens (pending D2)
+.agent-dock-agent-glyph[data-tone="working"] | animation | agent-dock-pulse 1.6s ease-in-out infinite | S2 adds z/motion tokens
+.agent-dock-agent::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock-agents-n | transition | color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock-choice | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock-entry, .agent-dock-more, .agent-dock-agents-entry | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock-entry-name | transition | color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock-group-option | transition | color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock-prompt | transition | border-color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock-qtab | transition | color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock-reveal-link | transition | color 140ms ease-out, text-decoration-color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock-title-btn | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.agent-dock::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+@media (prefers-reduced-motion: no-preference) .agent-dock-row [data-arrival] | animation | agent-dock-arrival-fill 1.4s ease-out 1 | S2 adds z/motion tokens
+@media (prefers-reduced-motion: no-preference) .agent-dock:has(.agent-dock-row [data-arrival="turn"])::before | animation | agent-dock-arrival-edge-accent 1.4s ease-out 1 | S2 adds z/motion tokens
+@media (prefers-reduced-motion: no-preference) .agent-dock:has(.agent-dock-row [data-arrival]:not([data-arrival="turn"]))::before | animation | agent-dock-arrival-edge-warn 1.4s ease-out 1 | S2 adds z/motion tokens
 ### app/src/renderer/background-terminals.css
-#bg-toggle | transition | transform 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.bg-group-header-row | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.bg-row | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
+#bg-toggle | transition | transform 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.bg-group-header-row | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+.bg-row | transition | background-color 140ms ease-out | S2 adds z/motion tokens
 ### app/src/renderer/button.css
-.btn | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
+.btn | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
 ### app/src/renderer/document-review/document-review.css
-.review-screenshot-remove | transition | opacity 120ms ease-out | S2 adds z/motion tokens (pending D2)
+.review-screenshot-remove | transition | opacity 120ms ease-out | S2 adds z/motion tokens
 ### app/src/renderer/panes.css
-#divider | transition | background-color 120ms ease-out | S2 adds z/motion tokens (pending D2)
+#divider | transition | background-color 120ms ease-out | S2 adds z/motion tokens
 ### app/src/renderer/remote/remote.css
-.remote-back::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.remote-composer-actions .menu-panel | animation | remote-popover-in 140ms ease-out both | S2 adds z/motion tokens (pending D2)
-.remote-information-view | animation | remote-reading-view-in 160ms ease-out both | S2 adds z/motion tokens (pending D2)
-.remote-navigation-dismiss | animation | remote-scrim-in 160ms ease-out both | S2 adds z/motion tokens (pending D2)
-.remote-navigation-item | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.remote-navigation-menu | animation | remote-navigation-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both | S2 adds z/motion tokens (pending D2)
-.remote-navigation-trigger::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.remote-row-menu | animation | remote-popover-in 140ms ease-out both | S2 adds z/motion tokens (pending D2)
-.remote-sheet | animation | remote-sheet-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both | S2 adds z/motion tokens (pending D2)
-.remote-sheet-dismiss | animation | remote-scrim-in 160ms ease-out both | S2 adds z/motion tokens (pending D2)
-.remote-sheet-option | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.remote-usage | animation | remote-reading-view-in 160ms ease-out both | S2 adds z/motion tokens (pending D2)
-@media (min-width: 1200px) .remote-information-rail | animation | remote-rail-in 160ms ease-out both | S2 adds z/motion tokens (pending D2)
+.remote-back::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+.remote-composer-actions .menu-panel | animation | remote-popover-in 140ms ease-out both | S2 adds z/motion tokens
+.remote-information-view | animation | remote-reading-view-in 160ms ease-out both | S2 adds z/motion tokens
+.remote-navigation-dismiss | animation | remote-scrim-in 160ms ease-out both | S2 adds z/motion tokens
+.remote-navigation-item | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.remote-navigation-menu | animation | remote-navigation-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both | S2 adds z/motion tokens
+.remote-navigation-trigger::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+.remote-row-menu | animation | remote-popover-in 140ms ease-out both | S2 adds z/motion tokens
+.remote-sheet | animation | remote-sheet-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both | S2 adds z/motion tokens
+.remote-sheet-dismiss | animation | remote-scrim-in 160ms ease-out both | S2 adds z/motion tokens
+.remote-sheet-option | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.remote-usage | animation | remote-reading-view-in 160ms ease-out both | S2 adds z/motion tokens
+@media (min-width: 1200px) .remote-information-rail | animation | remote-rail-in 160ms ease-out both | S2 adds z/motion tokens
 ### app/src/renderer/sidebar/sidebar.css
-.action-row::after | transition | opacity 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.attachment-row | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.clamp-cue | transition | color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.dot-pulse | animation | dot-pulse 1.6s ease-in-out infinite | S2 adds z/motion tokens (pending D2)
-.field-reset | transition | color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.icon-btn | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.input | transition | border-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.item-row | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.menu-panel | animation | menu-in 120ms ease-out | S2 adds z/motion tokens (pending D2)
-.nav-pop-out | animation | nav-out 120ms ease-out forwards | S2 adds z/motion tokens (pending D2)
-.nav-push-in | animation | nav-in 150ms ease-out | S2 adds z/motion tokens (pending D2)
-.nav-under-away | animation | nav-under-away 150ms ease-out | S2 adds z/motion tokens (pending D2)
-.nav-under-back | animation | nav-under-back 120ms ease-out | S2 adds z/motion tokens (pending D2)
-.new-item-prompt-field::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.project-trigger | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.segment | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.sheet | animation | sheet-in 150ms ease-out | S2 adds z/motion tokens (pending D2)
-.sheet-scrim | animation | scrim-in 150ms ease-out | S2 adds z/motion tokens (pending D2)
-.task-metadata summary::after | transition | transform 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.toggle | transition | background-color 140ms ease-out, border-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.toggle-knob | transition | transform 140ms ease-out | S2 adds z/motion tokens (pending D2)
+.action-row::after | transition | opacity 140ms ease-out | S2 adds z/motion tokens
+.attachment-row | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+.clamp-cue | transition | color 140ms ease-out | S2 adds z/motion tokens
+.dot-pulse | animation | dot-pulse 1.6s ease-in-out infinite | S2 adds z/motion tokens
+.field-reset | transition | color 140ms ease-out | S2 adds z/motion tokens
+.icon-btn | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.input | transition | border-color 140ms ease-out | S2 adds z/motion tokens
+.item-row | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+.menu-panel | animation | menu-in 120ms ease-out | S2 adds z/motion tokens
+.nav-pop-out | animation | nav-out 120ms ease-out forwards | S2 adds z/motion tokens
+.nav-push-in | animation | nav-in 150ms ease-out | S2 adds z/motion tokens
+.nav-under-away | animation | nav-under-away 150ms ease-out | S2 adds z/motion tokens
+.nav-under-back | animation | nav-under-back 120ms ease-out | S2 adds z/motion tokens
+.new-item-prompt-field::before | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+.project-trigger | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.segment | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.sheet | animation | sheet-in 150ms ease-out | S2 adds z/motion tokens
+.sheet-scrim | animation | scrim-in 150ms ease-out | S2 adds z/motion tokens
+.task-metadata summary::after | transition | transform 140ms ease-out | S2 adds z/motion tokens
+.toggle | transition | background-color 140ms ease-out, border-color 140ms ease-out | S2 adds z/motion tokens
+.toggle-knob | transition | transform 140ms ease-out | S2 adds z/motion tokens
 ### app/src/renderer/sidebar/swipe.ts
-in SWIPE_COMMIT_EASING | string | cubic-bezier(0.16, 1, 0.3, 1) | §9 ruling 35 swipe-back settle curve (§3.10; a sanctioned §2.5 exception, S2 motion tokens pending D2)
-in SWIPE_SPRING_EASING | string | cubic-bezier(0.32, 0.72, 0, 1) | §9 ruling 35 swipe-back settle curve (§3.10; a sanctioned §2.5 exception, S2 motion tokens pending D2)
+in SWIPE_COMMIT_EASING | string | cubic-bezier(0.16, 1, 0.3, 1) | §9 ruling 35 swipe-back settle curve (§3.10; a sanctioned §2.5 exception, S2 motion tokens pending)
+in SWIPE_SPRING_EASING | string | cubic-bezier(0.32, 0.72, 0, 1) | §9 ruling 35 swipe-back settle curve (§3.10; a sanctioned §2.5 exception, S2 motion tokens pending)
 ### app/src/renderer/signals/signals.css
-.signals-list-btn | transition | color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.signals-tr | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-@media (prefers-reduced-motion: no-preference) .signals-resting .signals-braille-dot | animation | signals-calm-wave 4.8s ease-in-out infinite | S2 adds z/motion tokens (pending D2)
+.signals-list-btn | transition | color 140ms ease-out | S2 adds z/motion tokens
+.signals-tr | transition | background-color 140ms ease-out | S2 adds z/motion tokens
+@media (prefers-reduced-motion: no-preference) .signals-resting .signals-braille-dot | animation | signals-calm-wave 4.8s ease-in-out infinite | S2 adds z/motion tokens
 ### app/src/renderer/terminal-tabs.css
-#new-tab | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.activity-indicator-dot | animation | activity-indicator-clockwise 1s linear infinite | S2 adds z/motion tokens (pending D2)
-.activity-indicator-label | animation | activity-indicator-label-breathe 1.8s ease-in-out infinite | S2 adds z/motion tokens (pending D2)
-.activity-indicator[data-variant="attention"] .activity-indicator-dot | animation | activity-indicator-attention-color 1.8s ease-in-out infinite | S2 adds z/motion tokens (pending D2)
-.activity-indicator[data-variant="waiting"] .activity-indicator-dot | animation | activity-indicator-waiting 0.9s ease-in-out infinite | S2 adds z/motion tokens (pending D2)
-.tab | transition | opacity 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.tab-close | transition | opacity 140ms ease-out, background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.tab-group-toggle | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
+#new-tab | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.activity-indicator-dot | animation | activity-indicator-clockwise 1s linear infinite | S2 adds z/motion tokens
+.activity-indicator-label | animation | activity-indicator-label-breathe 1.8s ease-in-out infinite | S2 adds z/motion tokens
+.activity-indicator[data-variant="attention"] .activity-indicator-dot | animation | activity-indicator-attention-color 1.8s ease-in-out infinite | S2 adds z/motion tokens
+.activity-indicator[data-variant="waiting"] .activity-indicator-dot | animation | activity-indicator-waiting 0.9s ease-in-out infinite | S2 adds z/motion tokens
+.tab | transition | opacity 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.tab-close | transition | opacity 140ms ease-out, background-color 140ms ease-out | S2 adds z/motion tokens
+.tab-group-toggle | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
 ### app/src/renderer/terminal-well.css
-.term-scrollbar-thumb | transition | background-color 140ms ease-out, width 140ms ease-out | S2 adds z/motion tokens (pending D2)
-@media (prefers-reduced-motion: no-preference) .term-holder[data-reveal]::after | animation | term-reveal-pulse 1.4s ease-out 1 forwards | S2 adds z/motion tokens (pending D2)
+.term-scrollbar-thumb | transition | background-color 140ms ease-out, width 140ms ease-out | S2 adds z/motion tokens
+@media (prefers-reduced-motion: no-preference) .term-holder[data-reveal]::after | animation | term-reveal-pulse 1.4s ease-out 1 forwards | S2 adds z/motion tokens
 ### app/src/renderer/terminal-workspace.ts
-element.animate() in animateStripReflow | animation-timing-function | cubic-bezier(0.2, 0.8, 0.2, 1) | §9 ruling 50 tab drag FLIP 160ms on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
-preview.animate() in settleBackgroundTabPreview | animation-timing-function | cubic-bezier(0.2, 0.8, 0.2, 1) | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
-preview.animate() in settleGroupPreview | animation-timing-function | cubic-bezier(0.2, 0.8, 0.2, 1) | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
-preview.animate() in settleTabPreview | animation-timing-function | cubic-bezier(0.2, 0.8, 0.2, 1) | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending D2)
+element.animate() in animateStripReflow | animation-timing-function | cubic-bezier(0.2, 0.8, 0.2, 1) | §9 ruling 50 tab drag FLIP 160ms on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending)
+preview.animate() in settleBackgroundTabPreview | animation-timing-function | cubic-bezier(0.2, 0.8, 0.2, 1) | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending)
+preview.animate() in settleGroupPreview | animation-timing-function | cubic-bezier(0.2, 0.8, 0.2, 1) | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending)
+preview.animate() in settleTabPreview | animation-timing-function | cubic-bezier(0.2, 0.8, 0.2, 1) | §9 ruling 50 drag settle 180ms (140ms into Background) on cubic-bezier(0.2, 0.8, 0.2, 1) (§3.18; a sanctioned §2.5 exception, S2 motion tokens pending)
 ### app/src/renderer/toast.css
-.toast | transition | opacity 150ms ease-out, transform 150ms ease-out | S2 adds z/motion tokens (pending D2)
+.toast | transition | opacity 150ms ease-out, transform 150ms ease-out | S2 adds z/motion tokens
 ### app/src/renderer/toast.ts
-countdownEl.style in showToast | transition | transform var(--expr)ms linear | S2 adds z/motion tokens (pending D2)
+countdownEl.style in showToast | transition | transform var(--expr)ms linear | S2 adds z/motion tokens
 ### app/src/renderer/viewer/viewer.css
-.viewer-grid-letter, .viewer-grid-number | transition | color var(--motion-state, 140ms) ease-out | S2 adds z/motion tokens (pending D2)
-.viewer-pdf-canvas | transition | opacity 150ms ease-out | S2 adds z/motion tokens (pending D2)
+.viewer-grid-letter, .viewer-grid-number | transition | color var(--motion-state, 140ms) ease-out | S2 adds z/motion tokens
+.viewer-pdf-canvas | transition | opacity 150ms ease-out | S2 adds z/motion tokens
 ### extension/src/widget.styles.ts
-.vg-agent__option | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.vg-btn | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.vg-card | animation | vg-rise 150ms ease-out | S2 adds z/motion tokens (pending D2)
-.vg-close | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.vg-dot--pulse | animation | vg-pulse 1.6s ease-in-out infinite | S2 adds z/motion tokens (pending D2)
-.vg-model__chevron | transition | transform 120ms ease-out | S2 adds z/motion tokens (pending D2)
-.vg-model__menu--down | animation | vg-menu-down 120ms ease-out | S2 adds z/motion tokens (pending D2)
-.vg-model__menu--up | animation | vg-menu-up 120ms ease-out | S2 adds z/motion tokens (pending D2)
-.vg-model__trigger | transition | border-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.vg-pill | transition | background-color 140ms ease-out, border-color 140ms ease-out, transform 140ms ease-out | S2 adds z/motion tokens (pending D2)
-.vg-pr | transition | background-color 140ms ease-out | S2 adds z/motion tokens (pending D2)
+.vg-agent__option | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.vg-btn | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.vg-card | animation | vg-rise 150ms ease-out | S2 adds z/motion tokens
+.vg-close | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens
+.vg-dot--pulse | animation | vg-pulse 1.6s ease-in-out infinite | S2 adds z/motion tokens
+.vg-model__chevron | transition | transform 120ms ease-out | S2 adds z/motion tokens
+.vg-model__menu--down | animation | vg-menu-down 120ms ease-out | S2 adds z/motion tokens
+.vg-model__menu--up | animation | vg-menu-up 120ms ease-out | S2 adds z/motion tokens
+.vg-model__trigger | transition | border-color 140ms ease-out | S2 adds z/motion tokens
+.vg-pill | transition | background-color 140ms ease-out, border-color 140ms ease-out, transform 140ms ease-out | S2 adds z/motion tokens
+.vg-pr | transition | background-color 140ms ease-out | S2 adds z/motion tokens
 
 ## radius-off-scale
 ### app/src/renderer/agent-dock/agent-dock.css

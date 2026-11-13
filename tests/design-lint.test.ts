@@ -697,12 +697,12 @@ test('baseline format: parse/format round trip, multiset matching, reasons kept 
 	const entries = lint.nextBaseline([f('3'), f('3'), f('4')], [{ ...f('3'), reason: 'D8 kept' }])
 	assert.deepEqual(
 		entries.map(e => `${e.value} ${e.reason}`),
-		['3 D8 kept', '3 TODO: S2 adds z/motion tokens (pending D2)', '4 TODO: S2 adds z/motion tokens (pending D2)'],
+		['3 D8 kept', '3 TODO: S2 adds z/motion tokens', '4 TODO: S2 adds z/motion tokens'],
 	)
 	const text = lint.formatBaseline(entries)
 	assert.equal(
 		text,
-		'## raw-z-index\n### app/src/renderer/x.css\n.a | z-index | 3 | D8 kept\n.a | z-index | 3 | TODO: S2 adds z/motion tokens (pending D2)\n.a | z-index | 4 | TODO: S2 adds z/motion tokens (pending D2)',
+		'## raw-z-index\n### app/src/renderer/x.css\n.a | z-index | 3 | D8 kept\n.a | z-index | 3 | TODO: S2 adds z/motion tokens\n.a | z-index | 4 | TODO: S2 adds z/motion tokens',
 	)
 	assert.deepEqual(lint.parseBaseline(text), entries)
 	const { unlisted, stale } = lint.compareBaseline([f('3'), f('5')], entries)
