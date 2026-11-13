@@ -434,7 +434,10 @@ test('every repository path AGENTS.md ## Design system names exists', () => {
 // Plan notes record history (the research and the S8 stage say the guidance was removed), so they may
 // name the tool. Every other doc is guidance an agent follows. A listed file that no longer names it fails.
 const SYSBUDGET_PENDING = new Map([
-	['docs/remote/README.md', 'Remote runbook commands, outside the design-system stages; rewrite them to run directly'],
+	[
+		'docs/remote/README.md',
+		'Remote runbook commands, outside this branch (spec.md S8 Progress names it); rewrite them to run directly',
+	],
 ])
 
 test('AGENTS.md and docs carry no guidance for the retired CPU-lease tool', () => {
@@ -464,13 +467,16 @@ function doneStages(): Set<number> {
 	return done
 }
 
+const STILL_TO_COME = /\b(?:pending|[Uu]ntil(?: stage)?) S(\d+)\b|\bS(\d+) lands\b/g
+
 test('the spec names no finished stage as the check still to come', () => {
 	const done = doneStages()
 	assert.ok(done.has(1) && done.has(5), 'the plan reports S1 and S5 done')
 	const stale: string[] = []
 	spec.split('\n').forEach((line, index) => {
-		for (const [, n] of line.matchAll(/\bpending S(\d+)\b/g))
-			if (done.has(Number(n))) stale.push(`${SPEC_PATH}:${index + 1}: pending S${n}`)
+		// `pending S<n>`, `until (stage) S<n>`, `S<n> lands`: each says the stage is still to come.
+		for (const match of line.matchAll(STILL_TO_COME))
+			if (done.has(Number(match[1] ?? match[2]))) stale.push(`${SPEC_PATH}:${index + 1}: ${match[0]}`)
 	})
 	assert.deepEqual(stale, [], 'name the check that holds it now, or the unfinished stage that will')
 })
