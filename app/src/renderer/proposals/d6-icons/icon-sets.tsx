@@ -101,7 +101,6 @@ export const ICON_ROWS: readonly IconRow[] = [
 	},
 	{
 		key: 'group',
-		glyph: 'group',
 		where: 'not used in production',
 		slot: 14,
 		hero: 'rectangle-group',
@@ -327,6 +326,19 @@ export function currentNonGlyph(key: string): ReactNode {
 					fill="none"
 					stroke="currentColor"
 					strokeWidth="1.6"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+				/>
+			</svg>
+		)
+	if (key === 'group')
+		// The hand-drawn group glyph D6 deleted from GLYPH (§9 ruling 95), kept here for the gallery only.
+		return (
+			<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+				<path
+					d="M3 3.5h10v3H3zM3 9.5h7v3H3z"
+					stroke="currentColor"
+					strokeWidth="1.5"
 					strokeLinecap="round"
 					strokeLinejoin="round"
 				/>

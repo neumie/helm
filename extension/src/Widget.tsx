@@ -831,15 +831,17 @@ function ModelSelect(props: {
 					>
 						<span class="vg-model__value">{currentLabel()}</span>
 						<span class="vg-model__chevron" aria-hidden="true">
-							<svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true">
-								<path
-									d="M1 1l4 4 4-4"
-									fill="none"
-									stroke="currentColor"
-									stroke-width="1.5"
-									stroke-linecap="round"
-									stroke-linejoin="round"
-								/>
+							{/* Heroicons v2.2.0 24px outline Chevron Down at stroke 2 (MIT; THIRD_PARTY_NOTICES.md, §9 ruling 95). */}
+							<svg
+								width="14"
+								height="14"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+								aria-hidden="true"
+							>
+								<path d="M19.5 8.25L12 15.75L4.5 8.25" stroke-linecap="round" stroke-linejoin="round" />
 							</svg>
 						</span>
 					</button>
@@ -869,15 +871,17 @@ function ModelSelect(props: {
 										<span class="vg-model__option-label">{row.label}</span>
 										<Show when={row.id === props.value()}>
 											<span class="vg-model__check" aria-hidden="true">
-												<svg width="10" height="8" viewBox="0 0 10 8" aria-hidden="true">
-													<path
-														d="M1 4l2.6 2.6L9 1"
-														fill="none"
-														stroke="currentColor"
-														stroke-width="1.6"
-														stroke-linecap="round"
-														stroke-linejoin="round"
-													/>
+												{/* Heroicons v2.2.0 24px outline Check at stroke 2 (MIT). */}
+												<svg
+													width="14"
+													height="14"
+													viewBox="0 0 24 24"
+													fill="none"
+													stroke="currentColor"
+													stroke-width="2"
+													aria-hidden="true"
+												>
+													<path d="M4.5 12.75L10.5 18.75L19.5 5.25" stroke-linecap="round" stroke-linejoin="round" />
 												</svg>
 											</span>
 										</Show>

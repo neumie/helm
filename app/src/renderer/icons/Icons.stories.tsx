@@ -1,5 +1,5 @@
-// Every production icon from the icon module (./icons.ts), in both forms, with its source. The hand-drawn ones
-// await decision D6 (docs/plans/design-system/spec.md).
+// Every production icon from the icon module (./icons.ts), in both forms, with its source: one set, Heroicons
+// v2.2.0 24px outline at stroke 2 (docs/design-system.md §3.1 Icons, §9 ruling 95).
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { useEffect, useRef } from 'react'
 import { Icon } from './Icon'
@@ -21,17 +21,15 @@ const CSS = `
 .icons-gallery td { padding: 6px 12px; vertical-align: middle; }
 .icons-gallery .icons-glyph { display: inline-flex; width: 24px; height: 24px; align-items: center; justify-content: center; color: var(--text-0); }
 .icons-gallery .icons-name { color: var(--text-0); font-family: var(--font-mono); }
-.icons-gallery .icons-hand-drawn { color: var(--warn); }
 `
 
 function sourceText(source: IconSource): string {
-	return source.kind === 'heroicons'
-		? `Heroicons ${source.name}, ${source.style}, ${source.revision.slice(0, 9)} (${source.license})`
-		: `hand-drawn (${source.decision})`
+	return `Heroicons ${source.name}, ${source.style}, ${source.revision} (${source.license})`
 }
 
-function SourceCell({ source }: { source: IconSource }) {
-	return <td className={source.kind === 'hand-drawn' ? 'icons-hand-drawn' : undefined}>{sourceText(source)}</td>
+function SourceCell({ source }: { source: IconSource | readonly IconSource[] }) {
+	const sources: readonly IconSource[] = Array.isArray(source) ? source : [source as IconSource]
+	return <td>{sources.map(sourceText).join('; ')}</td>
 }
 
 /** The DOM form, mounted as the terminal workspace mounts it. */
@@ -45,13 +43,10 @@ function DomIcon({ icon }: { icon: IconData }) {
 
 function IconGallery() {
 	const names = Object.keys(ICONS) as IconName[]
-	const handDrawn = names.filter(name => ICONS[name].source.kind === 'hand-drawn').length
 	return (
 		<div className="icons-gallery">
 			<style>{CSS}</style>
-			<h2>
-				{names.length} icons in app/src/renderer/icons/icons.ts · {handDrawn} hand-drawn (D6)
-			</h2>
+			<h2>{names.length} icons in app/src/renderer/icons/icons.ts · Heroicons 24 outline, stroke 2</h2>
 			<table>
 				<thead>
 					<tr>

@@ -66,7 +66,10 @@ for (const viewport of [
 		await followUp.press('Enter')
 		await expect(mode).toBeFocused()
 		await expect(mode).toHaveAccessibleName('Message delivery: Follow-up')
-		await expect(mode.locator('svg path')).toHaveAttribute('d', 'M8 2.5v7M5.5 7 8 9.5 10.5 7M3.5 12.5h9')
+		await expect(mode.locator('svg path')).toHaveAttribute(
+			'd',
+			'M3 16.5V18.75C3 19.9926 4.00736 21 5.25 21H18.75C19.9926 21 21 19.9926 21 18.75V16.5M16.5 12L12 16.5M12 16.5L7.5 12M12 16.5V3',
+		)
 		await expectFullyContained(mode, viewport)
 		await expect.poll(async () => (await surface.boundingBox())?.height ?? 0).toBeLessThanOrEqual(60)
 		await expect.poll(() => page.evaluate(() => window.__remoteFixture?.commands.length)).toBe(0)
@@ -371,7 +374,10 @@ test('delivery selection is icon-only, checked, focus-restored, and does not dis
 	await expect(trigger).toHaveText('')
 	await expect(trigger).toHaveCSS('width', '44px')
 	await expect(trigger).toHaveCSS('height', '44px')
-	await expect(trigger.locator('svg path')).toHaveAttribute('d', 'M6.5 4 3 7.5 6.5 11M3.5 7.5H9a4 4 0 0 1 4 4')
+	await expect(trigger.locator('svg path')).toHaveAttribute(
+		'd',
+		'M9 15L3 9M3 9L9 3M3 9H15C18.3137 9 21 11.6863 21 15C21 18.3137 18.3137 21 15 21H12',
+	)
 	await trigger.click()
 	await expect(page.getByRole('menuitemradio', { name: 'Steer at the next safe point' })).toBeChecked()
 	await page.keyboard.press('Escape')
@@ -380,12 +386,18 @@ test('delivery selection is icon-only, checked, focus-restored, and does not dis
 	await page.getByRole('menuitemradio', { name: 'Follow up after current work' }).click()
 	const followUpTrigger = page.getByRole('button', { name: 'Message delivery: Follow-up' })
 	await expect(followUpTrigger).toHaveText('')
-	await expect(followUpTrigger.locator('svg path')).toHaveAttribute('d', 'M8 2.5v7M5.5 7 8 9.5 10.5 7M3.5 12.5h9')
+	await expect(followUpTrigger.locator('svg path')).toHaveAttribute(
+		'd',
+		'M3 16.5V18.75C3 19.9926 4.00736 21 5.25 21H18.75C19.9926 21 21 19.9926 21 18.75V16.5M16.5 12L12 16.5M12 16.5L7.5 12M12 16.5V3',
+	)
 	await expect.poll(() => page.evaluate(() => window.__remoteFixture?.commands.length)).toBe(0)
 	await page.getByRole('button', { name: 'Message delivery: Follow-up' }).click()
 	await expect(page.getByRole('menuitemradio', { name: 'Follow up after current work' })).toBeChecked()
 	await page.getByRole('menuitemradio', { name: 'Steer at the next safe point' }).click()
-	await expect(trigger.locator('svg path')).toHaveAttribute('d', 'M6.5 4 3 7.5 6.5 11M3.5 7.5H9a4 4 0 0 1 4 4')
+	await expect(trigger.locator('svg path')).toHaveAttribute(
+		'd',
+		'M9 15L3 9M3 9L9 3M3 9H15C18.3137 9 21 11.6863 21 15C21 18.3137 18.3137 21 15 21H12',
+	)
 	await expect.poll(() => page.evaluate(() => window.__remoteFixture?.commands.length)).toBe(0)
 	await page.getByLabel('Message', { exact: true }).fill('Exact steer draft')
 	await page.getByRole('button', { name: 'Send', exact: true }).click()

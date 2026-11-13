@@ -427,7 +427,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 		if (color !== null) element.style.setProperty('--group-color', tabGroupColorCssVar(color))
 	}
 
-	// Heroicons “Folder”, 16px solid (MIT); geometry and source in the icon module.
+	// Heroicons “Folder”, 24px outline at stroke 2 (MIT); geometry and source in the icon module.
 	function createGroupIcon(): SVGSVGElement {
 		return iconNode(ICONS.folder)
 	}

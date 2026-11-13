@@ -611,12 +611,12 @@ h1 | font-size | 14px | D9 extension popup (moves onto Helm tokens)
 
 ## inline-svg
 ### app/src/renderer/index.html
-html | markup | <svg viewBox="0 0 16 16"> | §9 ruling 54: static first-paint copy of the icon module's backgroundStack, held equal by tests/design-icons.test.ts
+html | markup | <svg viewBox="0 0 24 24"> | §9 ruling 54: static first-paint copy of the icon module's backgroundStack, held equal by tests/design-icons.test.ts
 ### app/src/renderer/sidebar/sidebar.css
-.select | background-image | url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' … #34f18bb3 | D6 hand-drawn icons (a CSS data URI, listed in ICONS_OUTSIDE_MODULE)
+.select | background-image | url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' … #3f163f2b | §9 ruling 95: the outline Chevron Down as a CSS data URI (listed in ICONS_OUTSIDE_MODULE, held to the set by tests/design-icons.test.ts)
 ### extension/src/Widget.tsx
-in ModelSelect | jsx | <svg viewBox="0 0 10 6"> | D6 hand-drawn icons (D1: the SolidJS extension keeps its own icons)
-in ModelSelect | jsx | <svg viewBox="0 0 10 8"> | D6 hand-drawn icons (D1: the SolidJS extension keeps its own icons)
+in ModelSelect | jsx | <svg viewBox="0 0 24 24"> | §9 ruling 95: outline Chevron Down in the SolidJS extension (D1: it keeps its own icons, held to the set by tests/design-icons.test.ts)
+in ModelSelect | jsx | <svg viewBox="0 0 24 24"> | §9 ruling 95: outline Check in the SolidJS extension (D1: it keeps its own icons, held to the set by tests/design-icons.test.ts)
 
 ## primitive-outside-owner
 ### extension/src/widget.styles.ts

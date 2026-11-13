@@ -49,18 +49,48 @@ Helm does not ship pdf.js's scripting sandbox (QuickJS) or the no-wasm JavaScrip
 - Copyright (c) 2026 Contember Limited
 - License: MIT (full text below, under Heroicons; identical terms with this copyright line)
 
-## Heroicons (16px solid)
+## Heroicons (24px outline)
 
-Helm vendors native-size Heroicons for distinct concepts. Their exact geometry and source live in the icon module, `app/src/renderer/icons/icons.ts` (entry name in parentheses):
+Helm draws every UI icon from one set, Heroicons v2.2.0 24px outline (docs/design-system.md §9 ruling 95). The path geometry is copied unchanged from <https://github.com/tailwindlabs/heroicons/tree/v2.2.0/src/24/outline>; Helm binds the stroke to `currentColor` and draws it with stroke width 2 (the published files use 1.5). The geometry and source of each icon live in the icon module, `app/src/renderer/icons/icons.ts` (entry name in parentheses):
 
-- Terminal groups — **Folder** (`folder`): <https://github.com/tailwindlabs/heroicons/blob/616b7a4dbbf3d011760af8066262cd5c6b3868f3/optimized/16/solid/folder.svg>
-- Background terminals — **Arrow Down on Square Stack** (`backgroundStack`; `app/src/renderer/index.html` keeps a static first-paint copy, held equal by `tests/design-icons.test.ts`): <https://github.com/tailwindlabs/heroicons/blob/616b7a4dbbf3d011760af8066262cd5c6b3868f3/optimized/16/solid/arrow-down-on-square-stack.svg>
-- Scheduled runs — **Calendar Days** (`calendar`): <https://github.com/tailwindlabs/heroicons/blob/616b7a4dbbf3d011760af8066262cd5c6b3868f3/optimized/16/solid/calendar-days.svg>
-- Remote composer send — **Arrow Up** (`arrowUp`), v2.2.0: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/arrow-up.svg>
-- Remote navigation drawer — **Bars 2** (`menu`), v2.2.0: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/bars-2.svg>
-- Remote latest-message navigation — **Arrow Down** (`arrowDown`), v2.2.0: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/arrow-down.svg>
-- Document Review passage conversation — **Chat Bubble Left Ellipsis** (`chatBubbleLeftEllipsis`), v2.2.0: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/chat-bubble-left-ellipsis.svg>
+- **Plus** (`plus`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/plus.svg>
+- **Bars 2** (`menu`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/bars-2.svg>
+- **Chevron Left** (`back`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/chevron-left.svg>
+- **Chevron Right** (`chevronRight`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/chevron-right.svg>
+- **Chevron Down** (`chevronDown`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/chevron-down.svg>
+- **Ellipsis Horizontal** (`ellipsis`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/ellipsis-horizontal.svg>
+- **Arrow Top Right on Square** (`external`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/arrow-top-right-on-square.svg>
+- **Square 2 Stack** (`copy`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/square-2-stack.svg>
+- **Check** (`check`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/check.svg>
+- **CPU Chip** (`agent`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/cpu-chip.svg>
+- **User** (`manual`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/user.svg>
+- **Play** (`play`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/play.svg>
+- **Arrow Down Tray** (`queue`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/arrow-down-tray.svg>
+- **Arrow Path** (`retry`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/arrow-path.svg>
+- **Stop** (`stop`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/stop.svg>
+- **Pause** (`pause`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/pause.svg>
+- **Arrow Uturn Left** (`return`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/arrow-uturn-left.svg>
+- **Document Text** (`plan`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/document-text.svg>
+- **Archive Box** (`archive`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/archive-box.svg>
+- **Calendar Days** (`calendar`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/calendar-days.svg>
+- **Cog 6 Tooth** (`settings`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/cog-6-tooth.svg>
+- **X Mark** (`close`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/x-mark.svg>
+- **Arrow Up** (`arrowUp`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/arrow-up.svg>
+- **Arrow Down** (`arrowDown`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/arrow-down.svg>
+- **Chat Bubble Left Ellipsis** (`chatBubbleLeftEllipsis`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/chat-bubble-left-ellipsis.svg>
+- Terminal groups — **Folder** (`folder`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/folder.svg>
+- Background terminals — **Arrow Down on Square Stack** (`backgroundStack`; `app/src/renderer/index.html` keeps a static first-paint copy, held equal by `tests/design-icons.test.ts`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/arrow-down-on-square-stack.svg>
+- Task sidebar toggle — **View Columns** (`sidebarToggle`): <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/view-columns.svg>
+
+Copies outside the module, same set and stroke:
+
+- Select chevron — **Chevron Down**, the `.select` data URI in `app/src/renderer/sidebar/sidebar.css`: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/chevron-down.svg>
+- Extension model picker — **Chevron Down** and **Check** in `extension/src/Widget.tsx`: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/chevron-down.svg>, <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/src/24/outline/check.svg>
+
+One app icon asset keeps the 16px solid style:
+
 - Remote PWA launcher — **Command Line**, v2.2.0, exact source `app/assets/remote/command-line.svg`; generated PNGs use Helm colors and mask-safe padding: <https://github.com/tailwindlabs/heroicons/blob/v2.2.0/optimized/16/solid/command-line.svg>
+
 - Project: <https://heroicons.com>
 - Copyright © Tailwind Labs, Inc.
 - License: MIT

@@ -2007,7 +2007,7 @@ export function defaultReason(f: FindingKey): string {
 		case 'font-weight':
 			return 'D8 off-scale values (weights 650/700)'
 		case 'inline-svg':
-			return 'D6 hand-drawn icons (outside the icon module: list it in ICONS_OUTSIDE_MODULE)'
+			return '§9 ruling 95 icon set (draw it in the icon module, or list a real exception in ICONS_OUTSIDE_MODULE)'
 		case 'primitive-outside-owner':
 			if (isRemote(f.file) || isReview(f.file)) return 'D7 surface reach (the surface restyles the shared primitive)'
 			return 'S7 primitive CSS outside its owner file (move it there when the surface is next touched)'

@@ -31,7 +31,7 @@ export function Icon({ icon }: { icon: IconData }): ReactElement {
 }
 
 // The sidebar's glyph table (Btn/IconBtn content across the sidebar, Document Review and Remote), re-exported
-// from sidebar/ui.tsx. A plain mutable object on purpose: the D6 proposal stories swap its entries.
+// from sidebar/ui.tsx. A plain mutable object (Storybook-only seams may swap its entries).
 export const GLYPH = {
 	plus: iconElement(ICONS.plus),
 	menu: iconElement(ICONS.menu),
@@ -53,7 +53,6 @@ export const GLYPH = {
 	plan: iconElement(ICONS.plan),
 	archive: iconElement(ICONS.archive),
 	calendar: iconElement(ICONS.calendar),
-	group: iconElement(ICONS.group),
 	settings: iconElement(ICONS.settings),
 	close: iconElement(ICONS.close),
 }
