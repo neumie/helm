@@ -8,7 +8,7 @@
 // token or a scale: literal colours, z-index, durations, easings, off-scale radii/spacing/font sizes, unscaled
 // sidebar type, uppercase, letter-spacing, weights outside 400/500/600 and inline SVG outside the icon module.
 // Values are read through `!important`, through `var()` fallbacks behind a name that is not a core token and
-// through custom properties the same stylesheet defines. It also holds stage S7's ownership rule (a shared
+// through custom properties the same stylesheet, style object or function defines. It also holds stage S7's ownership rule (a shared
 // primitive's own base rules live only in the primitive's CSS file: `PRIMITIVES`, `primitiveOutsideOwner`) and
 // §9 ruling 4 (no border on any button: `buttonBorders`).
 //
@@ -113,8 +113,10 @@ export const PRODUCTION_ENTRIES = [
 export const ICON_MODULE_DIRS = ['app/src/renderer/icons/'] as const
 
 /**
- * A TS/JS string constant whose name matches this (any case: `WIDGET_STYLES`, `css`, `panel_styles`) is CSS. An
- * upper-case one (`STRICT_CSS_CONSTANT_NAME`) must be readable as text: the scan throws rather than skip it.
+ * A TS/JS string constant whose name matches this (any case: `WIDGET_STYLES`, `css`, `panel_styles`) is CSS, read
+ * from a string, a template or a tagged template (`String.raw`). The scan throws rather than skip one it cannot
+ * read: an upper-case one (`STRICT_CSS_CONSTANT_NAME`) whatever it holds, a lower-case one when it builds text
+ * (concatenation, a conditional, `.join()`), since `const style = getComputedStyle(el)` is not a stylesheet.
  */
 export const CSS_CONSTANT_NAME = /(^|_)(STYLES?|CSS)$/i
 export const STRICT_CSS_CONSTANT_NAME = /(^|_)(STYLES?|CSS)$/
@@ -204,6 +206,10 @@ export const PRIMITIVES: readonly Primitive[] = [
 export const SURFACE_MODIFIER_CLASSES: ReadonlyMap<string, string> = new Map([
 	['menu-fixed', 'surface placement of the menu panel (position: fixed escape from a clipping scroller)'],
 	['field-reset', 'Settings field "Default" reset link beside a field'],
+	// The tab/group context menu's "Move to new group…" name form (terminal-context-menu.css, built in
+	// terminal-workspace.ts): parts of that surface whose names start with `menu-`, not menu variants.
+	['menu-name-form', 'terminal context menu: the group-name form laid out inside the fixed menu panel'],
+	['menu-name-input', 'terminal context menu: the group-name text field of that form'],
 ])
 
 /** A primitive with the exact class names its owner file uses. */
@@ -1018,11 +1024,49 @@ export function expandIsWhere(complex: string): string[] {
 			const before = complex.slice(0, i)
 			const after = complex.slice(j)
 			const out: string[] = []
-			for (const arg of args) for (const rest of expandIsWhere(after)) out.push(`${before}${arg}${rest}`)
+			for (const arg of args) {
+				const joined = joinCompound(before, arg)
+				if (joined === null) continue
+				for (const rest of expandIsWhere(after)) out.push(`${joined}${rest}`)
+			}
 			return out.slice(0, 64)
 		}
 	}
 	return [complex]
+}
+
+/** A leading type selector (`button`, `svg|rect`, `*`) of a compound. */
+const LEADING_TYPE = /^(?:(?:[\w-]+|\*)?\|)?(?:[a-zA-Z][\w-]*|\*)/
+
+/**
+ * `before` + an `:is()`/`:where()` argument as one selector. A type selector in the argument moves to the front of
+ * the compound it joins (`.toolbar-item` + `button` → `button.toolbar-item`; plain concatenation would read
+ * `.toolbar-itembutton`). A compound that already names another element type can never match: null.
+ */
+function joinCompound(before: string, arg: string): string | null {
+	const type = LEADING_TYPE.exec(arg)?.[0]
+	if (!type || before === '' || /[\s>+~]$/.test(before)) return `${before}${arg}`
+	let start = 0
+	let depth = 0
+	let quote = ''
+	for (let i = 0; i < before.length; i++) {
+		const c = before[i] as string
+		if (quote) {
+			if (c === '\\') i++
+			else if (c === quote) quote = ''
+			continue
+		}
+		if (c === '"' || c === "'") quote = c
+		else if (c === '(' || c === '[') depth++
+		else if (c === ')' || c === ']') depth = Math.max(0, depth - 1)
+		else if (depth === 0 && /[\s>+~]/.test(c)) start = i + 1
+	}
+	const compound = before.slice(start)
+	const own = LEADING_TYPE.exec(compound)?.[0]
+	const rest = arg.slice(type.length)
+	if (own && own !== '*' && type !== '*' && own.toLowerCase() !== type.toLowerCase()) return null
+	const lead = own && type === '*' ? own : type
+	return `${before.slice(0, start)}${lead}${own ? compound.slice(own.length) : compound}${rest}`
 }
 
 /**
@@ -1229,23 +1273,104 @@ export function lintTs(file: string, text: string, opts: LintOptions = {}): Find
 		for (let p: ts.Node | undefined = node; p; p = p.parent) if (consumed.has(p)) return true
 		return false
 	}
-	/** Same-file `const NAME = 'literal' | 123`: a template substitution of one reads as its value. */
-	const constants = new Map<string, string>()
-	const collectConstants = (node: ts.Node): void => {
-		if (
-			ts.isVariableDeclaration(node) &&
-			ts.isIdentifier(node.name) &&
-			node.initializer &&
-			ts.isVariableDeclarationList(node.parent) &&
-			node.parent.flags & ts.NodeFlags.Const
-		) {
-			const init = node.initializer
-			if (ts.isStringLiteral(init) || ts.isNoSubstitutionTemplateLiteral(init) || ts.isNumericLiteral(init))
-				constants.set(node.name.text, init.text)
+	/**
+	 * The initializer of the `const` an identifier names, found lexically (a parameter of that name shadows it):
+	 * a same-file `const MS = 160` reads as its value in a template substitution, a style value or an option.
+	 */
+	const resolveConst = (id: ts.Identifier): ts.Expression | undefined => {
+		for (let p: ts.Node | undefined = id.parent; p; p = p.parent) {
+			if (ts.isFunctionLike(p) && p.parameters.some(param => param.name.getText(source) === id.text)) return undefined
+			if (!(ts.isBlock(p) || ts.isSourceFile(p) || ts.isModuleBlock(p))) continue
+			for (const statement of p.statements) {
+				if (!ts.isVariableStatement(statement) || !(statement.declarationList.flags & ts.NodeFlags.Const)) continue
+				for (const d of statement.declarationList.declarations)
+					if (ts.isIdentifier(d.name) && d.name.text === id.text && d.initializer && d !== id.parent)
+						return d.initializer
+			}
 		}
-		ts.forEachChild(node, collectConstants)
+		return undefined
 	}
-	collectConstants(source)
+	/** An expression with its type assertions and parentheses removed. */
+	const bare = (node: ts.Expression): ts.Expression =>
+		ts.isParenthesizedExpression(node) ||
+		ts.isAsExpression(node) ||
+		ts.isSatisfiesExpression(node) ||
+		ts.isNonNullExpression(node)
+			? bare(node.expression)
+			: node
+	/** An expression, or the same-file `const` initializer it names (one step, then through assertions). */
+	const dereference = (node: ts.Expression): ts.Expression => {
+		const b = bare(node)
+		if (!ts.isIdentifier(b)) return b
+		const init = resolveConst(b)
+		return init ? bare(init) : b
+	}
+	/** A template's text, `${}` substitutions as a same-file constant's value or an opaque `var(--expr)`. */
+	const templateText = (node: ts.TemplateLiteral, raw: boolean): string => {
+		const text = (part: ts.TemplateLiteralLikeNode) => (raw ? (part.rawText ?? part.text) : part.text)
+		if (ts.isNoSubstitutionTemplateLiteral(node)) return text(node)
+		return (
+			text(node.head) +
+			node.templateSpans
+				.map(span => {
+					const known = ts.isIdentifier(span.expression) ? literal(span.expression) : null
+					return `${known ?? 'var(--expr)'}${text(span.literal)}`
+				})
+				.join('')
+		)
+	}
+	/** CSS text an expression holds: a string, a template, a tagged template (`String.raw` reads raw), a const. */
+	const cssText = (node: ts.Expression, depth = 0): string | null => {
+		const b = bare(node)
+		if (ts.isStringLiteral(b)) return b.text
+		if (ts.isNoSubstitutionTemplateLiteral(b) || ts.isTemplateExpression(b)) return templateText(b, false)
+		if (ts.isTaggedTemplateExpression(b)) return templateText(b.template, b.tag.getText(source) === 'String.raw')
+		if (ts.isIdentifier(b) && depth < 4) {
+			const init = resolveConst(b)
+			return init ? cssText(init, depth + 1) : null
+		}
+		return null
+	}
+	/**
+	 * An initializer that builds text the lint cannot read: string concatenation, a conditional or `||`/`??`
+	 * between texts, an array `.join()`, a text method (`.concat()`, `.replace()`, `.trim()`). A lower-case
+	 * CSS-named constant holding anything else is not a stylesheet (`const style = getComputedStyle(el)`).
+	 */
+	const looksLikeText = (node: ts.Expression, depth = 0): boolean => {
+		const b = bare(node)
+		if (depth > 6) return false
+		if (
+			ts.isStringLiteral(b) ||
+			ts.isNoSubstitutionTemplateLiteral(b) ||
+			ts.isTemplateExpression(b) ||
+			ts.isTaggedTemplateExpression(b)
+		)
+			return true
+		if (ts.isBinaryExpression(b)) {
+			const op = b.operatorToken.kind
+			if (
+				op === ts.SyntaxKind.PlusToken ||
+				op === ts.SyntaxKind.BarBarToken ||
+				op === ts.SyntaxKind.QuestionQuestionToken
+			)
+				return looksLikeText(b.left, depth + 1) || looksLikeText(b.right, depth + 1)
+		}
+		if (ts.isConditionalExpression(b))
+			return looksLikeText(b.whenTrue, depth + 1) || looksLikeText(b.whenFalse, depth + 1)
+		if (ts.isCallExpression(b) && ts.isPropertyAccessExpression(b.expression)) {
+			const method = b.expression.name.text
+			const receiver = bare(b.expression.expression)
+			if (method === 'join') return ts.isArrayLiteralExpression(receiver)
+			if (/^(concat|replace|replaceAll|trim|trimStart|trimEnd)$/.test(method)) return looksLikeText(receiver, depth + 1)
+		}
+		return false
+	}
+	/** A JSX `<style>` child naming a CSS constant: its declaration is already linted, so the child is not. */
+	const namesCssConstant = (node: ts.Expression): boolean => {
+		const b = bare(node)
+		if (!ts.isIdentifier(b) || !CSS_CONSTANT_NAME.test(b.text)) return false
+		return resolveConst(b) !== undefined
+	}
 
 	const enclosing = (node: ts.Node): string => {
 		for (let p: ts.Node | undefined = node.parent; p; p = p.parent) {
@@ -1286,17 +1411,20 @@ export function lintTs(file: string, text: string, opts: LintOptions = {}): Find
 			return literal(node.expression)
 		// `\`color-mix(in srgb, ${hex} 78%, white)\``: a same-file constant reads as its value, any other
 		// substitution as an opaque token.
-		if (ts.isTemplateExpression(node))
-			return (
-				node.head.text +
-				node.templateSpans
-					.map(span => {
-						const known = ts.isIdentifier(span.expression) ? constants.get(span.expression.text) : undefined
-						return `${known ?? 'var(--expr)'}${span.literal.text}`
-					})
-					.join('')
+		if (ts.isTemplateExpression(node)) return templateText(node, false)
+		if (ts.isIdentifier(node)) {
+			const init = resolveConst(node)
+			const b = init && bare(init)
+			if (
+				b &&
+				(ts.isStringLiteral(b) ||
+					ts.isNoSubstitutionTemplateLiteral(b) ||
+					ts.isNumericLiteral(b) ||
+					ts.isPrefixUnaryExpression(b))
 			)
-		if (ts.isIdentifier(node)) return constants.get(node.text) ?? null
+				return literal(b)
+			return null
+		}
 		return null
 	}
 
@@ -1319,22 +1447,82 @@ export function lintTs(file: string, text: string, opts: LintOptions = {}): Find
 		return [node]
 	}
 
-	const declare = (selector: string, rawProperty: string, valueNode: ts.Expression, at: ts.Node) => {
+	const toDeclaration = (
+		selector: string,
+		rawProperty: string,
+		valueNode: ts.Expression,
+		at: ts.Node,
+	): Declaration | null => {
 		consumed.add(valueNode)
 		const value = literal(valueNode)
-		if (value === null) return
+		if (value === null) return null
 		const property = rawProperty.startsWith('--') ? rawProperty : kebab(rawProperty)
-		const numeric = ts.isNumericLiteral(valueNode) || ts.isPrefixUnaryExpression(valueNode)
+		const numeric = ts.isNumericLiteral(bare(valueNode)) || ts.isPrefixUnaryExpression(bare(valueNode))
 		const css = numeric && PX_NUMBER_PROPERTY.test(property) ? `${value}px` : value
-		out.push(...lintDeclarations(file, [{ selector, property, value: css, line: lineOf(at), atRules: [] }], opts))
+		return { selector, property, value: css, line: lineOf(at), atRules: [] }
+	}
+
+	/** The function (or file) a style write sits in: custom properties set there are its local definitions. */
+	const scopeOf = (node: ts.Node): ts.Node => {
+		for (let p: ts.Node | undefined = node.parent; p; p = p.parent) if (ts.isFunctionLike(p)) return p
+		return source
+	}
+	/** The selector of a scope definition passed along as context: never a real selector. */
+	const SCOPE_DEFINITION = '\u0000scope'
+	/** `el.style.setProperty('--x', '…')` definitions per scope, so a later `z-index: var(--x)` there resolves. */
+	const scopeDefs = new Map<ts.Node, Declaration[]>()
+	const collectScopeDefs = (node: ts.Node): void => {
+		if (
+			ts.isCallExpression(node) &&
+			ts.isPropertyAccessExpression(node.expression) &&
+			node.expression.name.text === 'setProperty' &&
+			ts.isPropertyAccessExpression(node.expression.expression) &&
+			node.expression.expression.name.text === 'style'
+		) {
+			const [a0, a1] = node.arguments
+			const prop = literal(a0)
+			const value = a1 ? literal(a1) : null
+			if (prop?.startsWith('--') && value !== null) {
+				const scope = scopeOf(node)
+				const list = scopeDefs.get(scope) ?? []
+				list.push({ selector: SCOPE_DEFINITION, property: prop, value, line: lineOf(node), atRules: [] })
+				scopeDefs.set(scope, list)
+			}
+		}
+		ts.forEachChild(node, collectScopeDefs)
+	}
+	collectScopeDefs(source)
+
+	/**
+	 * Lints declarations written together (one style object, or one write) with the custom properties defined in
+	 * the same scope, so `{ '--z': 9999, zIndex: 'var(--z)' }` resolves `--z`. Findings on scope definitions are
+	 * dropped here: each definition is linted at its own write.
+	 */
+	const lintTogether = (declarations: Declaration[], at: ts.Node) => {
+		if (!declarations.length) return
+		const context = (scopeDefs.get(scopeOf(at)) ?? []).filter(
+			d => !declarations.some(own => own.property === d.property),
+		)
+		const findings = lintDeclarations(file, [...context, ...declarations], opts)
+		out.push(...findings.filter(f => f.selector !== SCOPE_DEFINITION))
+	}
+
+	const declare = (selector: string, rawProperty: string, valueNode: ts.Expression, at: ts.Node) => {
+		const d = toDeclaration(selector, rawProperty, valueNode, at)
+		if (d) lintTogether([d], at)
 	}
 
 	const declareObject = (selector: string, object: ts.ObjectLiteralExpression) => {
+		const declarations: Declaration[] = []
 		for (const prop of object.properties) {
-			if (!ts.isPropertyAssignment(prop)) continue
-			const name = ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name) ? prop.name.text : null
-			if (name) declare(selector, name, prop.initializer, prop)
+			let d: Declaration | null = null
+			if (ts.isPropertyAssignment(prop)) {
+				const name = ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name) ? prop.name.text : null
+				if (name) d = toDeclaration(selector, name, prop.initializer, prop)
+			} else if (ts.isShorthandPropertyAssignment(prop)) d = toDeclaration(selector, prop.name.text, prop.name, prop)
+			if (d) declarations.push(d)
 		}
+		lintTogether(declarations, object)
 	}
 
 	const declareCssText = (selector: string, node: ts.Expression) => {
@@ -1358,16 +1546,19 @@ export function lintTs(file: string, text: string, opts: LintOptions = {}): Find
 			CSS_CONSTANT_NAME.test(node.name.text) &&
 			node.initializer
 		) {
-			const init = node.initializer
-			const stringLike =
-				ts.isNoSubstitutionTemplateLiteral(init) || ts.isStringLiteral(init) || ts.isTemplateExpression(init)
-			const text = stringLike ? literal(init) : null
+			const init = bare(node.initializer)
+			const textLike =
+				ts.isNoSubstitutionTemplateLiteral(init) ||
+				ts.isStringLiteral(init) ||
+				ts.isTemplateExpression(init) ||
+				ts.isTaggedTemplateExpression(init)
+			const text = textLike ? cssText(init) : null
 			if (text !== null) {
-				consumed.add(init)
+				consumed.add(node.initializer)
 				out.push(...lintCss(file, text, opts, lineOf(init)))
 				return
 			}
-			if (STRICT_CSS_CONSTANT_NAME.test(node.name.text))
+			if (STRICT_CSS_CONSTANT_NAME.test(node.name.text) || looksLikeText(init))
 				throw new Error(
 					`${file}:${lineOf(node)}: CSS constant ${node.name.text} is not a string or template the design lint can read`,
 				)
@@ -1375,13 +1566,17 @@ export function lintTs(file: string, text: string, opts: LintOptions = {}): Find
 		// JSX `<style>{\`…\`}</style>`.
 		if (ts.isJsxElement(node) && node.openingElement.tagName.getText(source) === 'style') {
 			for (const child of node.children) {
-				const text = ts.isJsxText(child)
-					? child.text
-					: ts.isJsxExpression(child) && child.expression
-						? literal(child.expression)
-						: null
-				if (child && ts.isJsxExpression(child) && child.expression) consumed.add(child.expression)
-				if (text !== null) out.push(...lintCss(file, text, opts, lineOf(child)))
+				if (ts.isJsxText(child)) {
+					if (child.text.trim()) out.push(...lintCss(file, child.text, opts, lineOf(child)))
+					continue
+				}
+				if (!ts.isJsxExpression(child) || !child.expression) continue
+				consumed.add(child.expression)
+				if (namesCssConstant(child.expression)) continue
+				const text = cssText(child.expression)
+				if (text === null)
+					throw new Error(`${file}:${lineOf(child)}: a <style> child the design lint cannot read as CSS text`)
+				out.push(...lintCss(file, text, opts, lineOf(child)))
 			}
 		}
 		// JSX `style={{ … }}` and `<svg>`.
@@ -1447,21 +1642,48 @@ export function lintTs(file: string, text: string, opts: LintOptions = {}): Find
 			// `document.createElementNS(ns, 'svg')`
 			if (method === 'createElementNS' && literal(a1) === 'svg') svg(node, 'createElementNS', "'svg'")
 			// `el.animate(keyframes, { duration, easing, delay })`: Web Animations timing is motion like CSS.
-			if (method === 'animate' && a1 && ts.isObjectLiteralExpression(a1)) {
+			if (method === 'animate' && (a0 || a1)) {
 				const selector = `${callee.expression.getText(source)}.animate() in ${enclosingFunction(node)}`
-				for (const prop of a1.properties) {
-					if (!ts.isPropertyAssignment(prop)) continue
-					const name = ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name) ? prop.name.text : ''
+				const timing = (name: string, valueNode: ts.Expression, at: ts.Node) => {
 					const css = ANIMATE_TIMING[name]
-					if (!css) continue
-					for (const valueNode of styleValues(prop.initializer)) {
-						consumed.add(valueNode)
-						const raw = literal(valueNode)
-						if (raw === null) continue
-						const value = name === 'easing' || !/^-?[\d.]+$/.test(raw) ? raw : `${raw}ms`
-						out.push(
-							...lintDeclarations(file, [{ selector, property: css, value, line: lineOf(prop), atRules: [] }], opts),
-						)
+					if (!css) return
+					for (const option of styleValues(valueNode)) {
+						const items = ts.isArrayLiteralExpression(bare(option))
+							? (bare(option) as ts.ArrayLiteralExpression).elements
+							: [option]
+						for (const item of items) {
+							consumed.add(item)
+							const raw = literal(item)
+							if (raw === null) continue
+							const value = name === 'easing' || !/^-?[\d.]+$/.test(raw) ? raw : `${raw}ms`
+							out.push(
+								...lintDeclarations(file, [{ selector, property: css, value, line: lineOf(at), atRules: [] }], opts),
+							)
+						}
+					}
+				}
+				const timings = (object: ts.ObjectLiteralExpression, only?: string) => {
+					for (const prop of object.properties) {
+						if (ts.isPropertyAssignment(prop)) {
+							const name = ts.isIdentifier(prop.name) || ts.isStringLiteral(prop.name) ? prop.name.text : ''
+							if (!only || name === only) timing(name, prop.initializer, prop)
+						} else if (ts.isShorthandPropertyAssignment(prop) && (!only || prop.name.text === only))
+							timing(prop.name.text, prop.name, prop)
+					}
+				}
+				// Options: `{ duration, easing, delay }`, a const holding them, or a bare duration (`600`).
+				if (a1) {
+					const options = dereference(a1)
+					if (ts.isObjectLiteralExpression(options)) timings(options)
+					else timing('duration', a1, a1)
+				}
+				// Keyframes: an `easing` per keyframe (`[{ opacity: 0, easing: 'ease-in' }, …]`) or property-indexed.
+				if (a0) {
+					const keyframes = dereference(a0)
+					const frames = ts.isArrayLiteralExpression(keyframes) ? keyframes.elements : [keyframes]
+					for (const frame of frames) {
+						const f = dereference(frame)
+						if (ts.isObjectLiteralExpression(f)) timings(f, 'easing')
 					}
 				}
 			}

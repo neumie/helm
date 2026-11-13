@@ -619,9 +619,6 @@ in ModelSelect | jsx | <svg viewBox="0 0 10 6"> | D6 hand-drawn icons (D1: the S
 in ModelSelect | jsx | <svg viewBox="0 0 10 8"> | D6 hand-drawn icons (D1: the SolidJS extension keeps its own icons)
 
 ## primitive-outside-owner
-### app/src/renderer/terminal-context-menu.css
-.menu-name-form | menu | .menu-name-form | S7 the terminal context menu rename field uses menu-named classes outside sidebar.css (move or rename them when the surface is next touched)
-.menu-name-input | menu | .menu-name-input | S7 the terminal context menu rename field uses menu-named classes outside sidebar.css (move or rename them when the surface is next touched)
 ### extension/src/widget.styles.ts
 .chip-amber | chip | .chip-amber | D1 the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
 .chip-blue | chip | .chip-blue | D1 the SolidJS extension widget keeps its own chip tones (not the app chip primitive)

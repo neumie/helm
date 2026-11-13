@@ -81,7 +81,7 @@ const BASELINE_CAPS: Record<(typeof lint.RULES)[number], number> = {
 	'letter-spacing': 4,
 	'font-weight': 4,
 	'inline-svg': 4,
-	'primitive-outside-owner': 7,
+	'primitive-outside-owner': 5,
 	'button-border': 1,
 }
 
@@ -245,6 +245,20 @@ test('indirection: !important, var() fallbacks behind non-tokens, local custom p
 			'.f | text-transform: var(--e-tt) => uppercase | uppercase',
 			'.g | font-weight: var(--e-fw) => 800 | font-weight',
 			'.g | font-size: var(--e-fs) => 14px | font-size-off-scale',
+		],
+	)
+	// The same indirection in TS: a sibling custom property of one style object, and a setProperty definition
+	// read by a later write in the same function (not in another one).
+	assert.deepEqual(
+		tsx(`
+			export const C = () => <div style={{ '--zz': 9999, zIndex: 'var(--zz)', '--d': '900ms', transitionDuration: 'var(--d)' }} />
+			function f(el) { el.style.setProperty('--zz', '9999'); el.style.zIndex = 'var(--zz)' }
+			function g(el) { el.style.zIndex = 'var(--zz)' }
+		`),
+		[
+			'<div style> in C | z-index: var(--zz) => 9999 | raw-z-index',
+			'<div style> in C | transition-duration: var(--d) => 900ms | raw-duration',
+			'el.style in f | z-index: var(--zz) => 9999 | raw-z-index',
 		],
 	)
 })
@@ -450,6 +464,16 @@ test(`buttons draw no border in any tone (${S}9 ruling 4): the button-border rul
 			':is(.a, .btn-sm) | border: 1px solid',
 		],
 	)
+	// A type selector inside :is()/:where() after a class joins the compound (`button.x`), not `.xbutton`.
+	assert.deepEqual(
+		own(
+			'.x:is(button) { border: 1px solid } .y:where(button):hover { border-color: red } a.z:is(button) { border: 1px solid }',
+		),
+		['.x:is(button) | border: 1px solid', '.y:where(button):hover | border-color: red'],
+	)
+	assert.deepEqual(lint.expandIsWhere('.x:is(button, .b):hover'), ['button.x:hover', '.x.b:hover'])
+	assert.deepEqual(lint.expandIsWhere('.a > :is(button)'), ['.a > button'])
+	assert.deepEqual(lint.expandIsWhere('a.x:is(button)'), [], 'an anchor that is a button never matches')
 	// HTML <style> blocks and CSS constants (the widget) go through the same rule.
 	assert.deepEqual(
 		lint.lintHtml('app/src/renderer/x.html', '<style>button { border: 1px solid }</style>').map(f => f.rule),
@@ -525,6 +549,23 @@ test('CSS constants: substitutions, any-case names, JSX <style>, and an unreadab
 		],
 	)
 	assert.throws(() => tsx('export const WIDGET_STYLES = makeCss()'), /CSS constant WIDGET_STYLES/)
+	// Tagged templates are read (String.raw raw), in any case; a <style> child naming a template with a
+	// substitution reads it, and a CSS constant named there is linted once, at its declaration.
+	assert.deepEqual(
+		tsx(`
+			export const css = String.raw\`.a { z-index: 9 } .b::after { content: "\\2014" }\`
+			const SHEET = \`.c { z-index: 8 } \${x}\`
+			const PANEL_STYLES = \`.d { z-index: 7 }\`
+			export const C = () => <><style>{SHEET}</style><style>{PANEL_STYLES}</style></>
+		`),
+		['.a | z-index: 9 | raw-z-index', '.d | z-index: 7 | raw-z-index', '.c | z-index: 8 | raw-z-index'],
+	)
+	// A lower-case CSS-named constant that builds text the lint cannot read fails loud; any other value
+	// (`const style = getComputedStyle(el)`) is not a stylesheet.
+	assert.throws(() => tsx("const css = '.a { z-index: ' + depth + ' }'"), /CSS constant css/)
+	assert.throws(() => tsx("const styles = ['.a {', '}'].join('')"), /CSS constant styles/)
+	assert.deepEqual(tsx('function f(el) { const style = getComputedStyle(el); return style }'), [])
+	assert.throws(() => tsx('export const C = () => <style>{makeCss()}</style>'), /<style> child/)
 })
 
 test('the widget stylesheet is read whole (a substitution cannot drop it from the lint)', () => {
@@ -558,6 +599,27 @@ test('motion set from TS: Element.animate() timing, same-file constants, easing 
 			'el.animate() in f | animation-timing-function: ease-out | raw-easing',
 			'el.style in f | transition: transform 160ms linear | raw-duration',
 			'el.style in f | transition: transform 160ms linear | raw-easing',
+		],
+	)
+	// Shorthand options, a bare-number duration, options held in a const, and an easing per keyframe.
+	assert.deepEqual(
+		tsx(`
+			function g(el) { const duration = 600; const easing = 'ease-in'; el.animate([{ opacity: 0 }], { duration, easing }) }
+			function h(el) { el.animate([{ opacity: 0 }], 600) }
+			function i(el) { const o = { duration: 700, easing: 'ease-out' } as const; el.animate([{ opacity: 0 }], o) }
+			function j(el) { el.animate([{ opacity: 0, easing: 'ease-in-out' }, { opacity: 1 }], { duration: 'var(--motion-fast)' }) }
+			function k(el) { el.animate({ opacity: [0, 1], easing: ['linear', 'ease'] }, { duration: speed }) }
+			function l(el, duration) { el.animate([], { duration }) }
+		`),
+		[
+			'el.animate() in g | animation-duration: 600ms | raw-duration',
+			'el.animate() in g | animation-timing-function: ease-in | raw-easing',
+			'el.animate() in h | animation-duration: 600ms | raw-duration',
+			'el.animate() in i | animation-duration: 700ms | raw-duration',
+			'el.animate() in i | animation-timing-function: ease-out | raw-easing',
+			'el.animate() in j | animation-timing-function: ease-in-out | raw-easing',
+			'el.animate() in k | animation-timing-function: linear | raw-easing',
+			'el.animate() in k | animation-timing-function: ease | raw-easing',
 		],
 	)
 })
