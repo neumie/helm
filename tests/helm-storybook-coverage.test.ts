@@ -30,7 +30,7 @@ test('Storybook discovers the whole renderer and sorts large review views first'
 	assert.match(read('app/.storybook/main.ts'), /stories: \['\.\.\/src\/renderer\/\*\*\/\*\.stories\.tsx'\]/)
 	assert.match(
 		read('app/.storybook/preview.ts'),
-		/order: \[\s*'Proposals',(?:\s*\/\/[^\n]*)?\s*(?:\[[^\]]*\],\s*)?'Views'/,
+		/order: \[\s*'Proposals',(?:\s*\/\/[^\n]*)*\s*(?:\[[^\]]*\],\s*)?'Views'/,
 	)
 })
 
