@@ -21,8 +21,9 @@ function presetTokens(id: string): Record<string, string> {
 	return preset.tokens
 }
 
-/** `app/src/renderer/tokens.css` `:root`: colours derived from the tones (§2.8): soft fills, and the Run Context banner's border. */
+/** `app/src/renderer/tokens.css` `:root`: colours derived from the tones (§2.8): soft fills, the Run Context banner's border, and the accent-text alias (§9 ruling 87). */
 const ROOT_DERIVED = {
+	'--accent-text': 'var(--accent)',
 	'--accent-soft': 'color-mix(in srgb, var(--accent) 15%, transparent)',
 	'--success-soft': 'color-mix(in srgb, var(--success) 15%, transparent)',
 	'--warn-soft': 'color-mix(in srgb, var(--warn) 15%, transparent)',
@@ -445,6 +446,8 @@ export const ROWS: readonly ContrastRow[] = [
 	// helm: tones
 	row('helm', '--accent', CHROME, 'text', 5.99),
 	row('helm', '--accent', PANE, 'text', 6.41),
+	// helm: --accent-text (an alias of --accent) for the shortcut recording line on the Settings pane
+	row('helm', '--accent-text', PANE, 'text', 6.41),
 	row('helm', '--accent', ['--pane', '--accent-soft'], 'text', 5.16),
 	row('helm', '--success', CHROME, 'text', 8.16),
 	row('helm', '--success', PANE, 'text', 8.73),
@@ -524,6 +527,8 @@ export const ROWS: readonly ContrastRow[] = [
 	// high-contrast: tones
 	row('high-contrast', '--accent', CHROME, 'text', 7.96),
 	row('high-contrast', '--accent', PANE, 'text', 8.71),
+	// high-contrast: --accent-text (an alias of --accent) for the shortcut recording line on the Settings pane
+	row('high-contrast', '--accent-text', PANE, 'text', 8.71),
 	row('high-contrast', '--accent', ['--pane', '--accent-soft'], 'text', 6.88),
 	row('high-contrast', '--success', CHROME, 'text', 11.0),
 	row('high-contrast', '--success', PANE, 'text', 12.02),

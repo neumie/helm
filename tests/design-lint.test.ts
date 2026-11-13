@@ -44,7 +44,11 @@ test('every baseline reason names an existing open decision, ruling or plan stag
 	const stages = new Set([...plan.matchAll(/^\| \*\*S(\d+) /gm)].map(m => Number(m[1])))
 	const rulingsSection = spec.slice(spec.indexOf('## 9. Rulings'), spec.indexOf('## 10. Enforcement map'))
 	const rulings = new Set([...rulingsSection.matchAll(/^\| (\d+) \|/gm)].map(m => Number(m[1])))
-	assert.ok(decisions.size > 10 && stages.size >= 9 && rulings.size > 50, 'decision, stage and ruling lists parse')
+	// Open decisions shrink as Jakub picks them (S9), so only the section is required, not a count.
+	assert.ok(
+		plan.includes('## Open decisions') && stages.size >= 9 && rulings.size > 50,
+		'decision, stage and ruling lists parse',
+	)
 	const bad: string[] = []
 	for (const entry of DESIGN_LINT_ALLOWLIST) {
 		const refs = lint.reasonReferences(entry.reason)
@@ -74,9 +78,9 @@ const BASELINE_CAPS: Record<(typeof lint.RULES)[number], number> = {
 	'raw-duration': 98,
 	'raw-easing': 89,
 	'radius-off-scale': 16,
-	'spacing-off-scale': 138,
+	'spacing-off-scale': 140,
 	'font-size-off-scale': 32,
-	'font-size-unscaled': 1,
+	'font-size-unscaled': 0,
 	uppercase: 0,
 	'letter-spacing': 4,
 	'font-weight': 4,

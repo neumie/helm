@@ -6,8 +6,8 @@
 	z-index: 40;
 }
 
-/* The group-name form reuses the existing compact field grammar inside the
- * detached menu; it is not a second dialog/chrome pattern. */
+/* The group-name form reuses the §3.7 28px field grammar (radius md, §9
+ * ruling 17) inside the detached menu; it is not a second dialog/chrome pattern. */
 .menu-name-form {
 	display: grid;
 	gap: 4px;
@@ -20,7 +20,7 @@
 	height: 28px;
 	padding: 0 8px;
 	border: 1px solid var(--accent);
-	border-radius: var(--radius-sm);
+	border-radius: var(--radius-md);
 	background: var(--fill-subtle);
 	color: var(--text-0);
 	font-family: inherit;

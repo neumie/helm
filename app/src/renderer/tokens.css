@@ -46,6 +46,9 @@
 	--danger-soft: color-mix(in srgb, var(--danger) 15%, transparent);
 	--neutral-soft: color-mix(in srgb, var(--neutral) 15%, transparent);
 	--danger-strong: color-mix(in srgb, var(--danger) 50%, transparent);
+	/* Accent-coloured text for a live state (shortcut recording): an alias of the
+	 * accent, so it follows every preset and theme (§9 ruling 87). */
+	--accent-text: var(--accent);
 	/* Scroll thumbs + toast countdown share one alpha pair (§3.17) */
 	--thumb: rgba(255, 255, 255, 0.14);
 	--thumb-hover: rgba(255, 255, 255, 0.24);
@@ -82,6 +85,10 @@
 	/* Type families (not theme tokens; docs/design-system.md §2.2) */
 	--font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
 	--font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+	/* Radii (§2.4, §9 ruling 17; not theme tokens) */
+	--radius-lg: 8px;
+	--radius-md: 6px;
+	--radius-sm: 4px;
 	/* Layout + type scale knobs (not theme tokens) */
 	--left-width: 340px;
 	--ui-scale: 1;

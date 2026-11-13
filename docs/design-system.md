@@ -41,7 +41,7 @@ Where every Helm surface lives, which sections specify it, which Storybook title
 
 ## 1. Principles
 
-1. **One bold element per surface.** Each surface gets exactly one signature/high-emphasis element (a detail page owns its single primary button; the sidebar list owns its filter's active segment). The topbar deliberately owns NONE — traffic-light inset, drag region, tab strip; no branding, no status jewelry. Never two filled-accent elements visible at once (§9 ruling 5).
+1. **One bold element per surface.** Each surface gets exactly one signature/high-emphasis element (a detail page owns its single primary button; the sidebar list owns its filter's active segment). The topbar deliberately owns NONE — traffic-light inset, drag region, tab strip; no branding, no status jewelry. Never two filled-accent actions visible at once (§9 ruling 5): the rule counts actions (buttons, the commit segment of a segmented control); a state indicator that shows a value, such as an on toggle (§3.16), does not count.
 2. **Depth from the ladder, not decoration.** Hierarchy comes from the three-step background ladder + hairlines + white-alpha fills. No decorative gradients, no borders heavier than 1px, no shadows on inline elements — shadows are for detached surfaces (toast, menu, sheet, widget) only. **In-flow content is flat**: grouping comes from section headers, hairline rules, and spacing — bordered/boxed cards are reserved for detached surfaces and wells, never for content sitting in the page flow.
 3. **Quiet motion.** 120–160ms, ease-out, transform/opacity only. `prefers-reduced-motion` MUST be respected globally. Ambient animation (pulse, breathe) is reserved for live status, never decoration.
 4. **Designed for its width.** Every surface is designed at its real width (sidebar: 340px). Never cram a desktop layout into a narrow pane; use push navigation instead of side-by-side panes below 480px.
@@ -87,6 +87,7 @@ Accent and semantic tones. Each tone has a **text/icon value** and a **soft fill
 | --- | --- | --- | --- |
 | `--accent` | `#4c9aff` | `rgba(76,154,255,0.15)` | Links, focus ring, running state, cursor, selection |
 | `--accent-fill` | `#3b82f6` | (hover `#5a9dff`) | Filled primary button background ONLY — `#4c9aff` is too bright as a fill under white text |
+| `--accent-text` | `var(--accent)` | — | Accent-coloured text for a live state that holds the keys (the shortcut recording line in Settings → Terminal); an alias on `:root`, so it follows every preset and theme (§9 ruling 87) |
 | `--success` | `#4ec98a` | `rgba(78,201,138,0.15)` | Done, connected, merged |
 | `--warn` | `#e0b341` | `rgba(224,179,65,0.15)` | Needs attention, review, degraded |
 | `--danger` | `#f2585b` | `rgba(242,88,91,0.15)` | Failed, destructive actions |
@@ -150,7 +151,7 @@ Scale (px / weight / notes). Base letter-spacing is `-0.01em` everywhere. The on
 | `--radius-sm` | 4 | kbd, segmented inner option, tab-close hover, mini affordances |
 | full | 999 | Chips, pills, dots |
 
-Never 10/12/14px radii (extension card's 14px is reconciled to 8 — see appendix). Buttons and compact controls use these radii; full-width row hover/selection/current stripes always use radius 0.
+The three tokens are defined on `:root` in `app/src/renderer/tokens.css` (§9 ruling 17); the extension widget mirrors them as `--vg-radius-lg/md/sm`. A 28px field takes `--radius-md` like every input (§3.7), also inside a menu (the tab menu's group-name field); `--radius-sm` is for affordances smaller than a field, such as the 20px tab rename editor (§3.14). Never 10/12/14px radii (extension card's 14px is reconciled to 8 — see appendix). Buttons and compact controls use these radii; full-width row hover/selection/current stripes always use radius 0.
 
 ### 2.5 Motion
 
@@ -212,7 +213,7 @@ Every color in this document is a **CSS custom property** — components MUST co
 The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2.x contrast of every foreground/background token pair a surface actually draws, per palette: Helm, High contrast, Remote, the Document Review light reading scope, the extension popup) and checked by `tests/design-contrast.test.ts`: each ratio must meet the need stated beside it, or the pair is listed as open with the decision that owns it (D5). Do not edit the rows by hand; change the token or the pair list and regenerate.
 
 <!-- contrast-table:begin -->
-377 pairs, 101 open (D5 97, D9 4). Palettes: Helm, High contrast, Remote, Review light, Viewer (dark), Extension popup, and one per terminal group colour in each preset. High contrast is the bundled preset; a theme file seeded before newer tokens existed fills them from Helm (D10), so its contrast can differ. Need: text 4.5, large text and `ui` (control edges, focus ring, a filled control against its surface) 3, decorative n/a. Ratios are WCAG 2.x, two decimals, truncated; translucent fills are composited over the surface named under them. The extension widget's `--vg-*` values are checked equal to Helm's, so its pairs are the Helm rows. Generated by `node --import tsx app/scripts/contrast-table.ts`.
+379 pairs, 101 open (D5 97, D9 4). Palettes: Helm, High contrast, Remote, Review light, Viewer (dark), Extension popup, and one per terminal group colour in each preset. High contrast is the bundled preset; a theme file seeded before newer tokens existed fills them from Helm (D10), so its contrast can differ. Need: text 4.5, large text and `ui` (control edges, focus ring, a filled control against its surface) 3, decorative n/a. Ratios are WCAG 2.x, two decimals, truncated; translucent fills are composited over the surface named under them. The extension widget's `--vg-*` values are checked equal to Helm's, so its pairs are the Helm rows. Generated by `node --import tsx app/scripts/contrast-table.ts`.
 
 | Palette | Foreground | Background | Use | Need | Ratio | Status |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -241,6 +242,7 @@ The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2
 | Helm | `--dock-dim` | `--fill-raised` over `--chrome` | text | 4.5 | 3.67 | open D5 |
 | Helm | `--accent` | `--chrome` | text | 4.5 | 5.99 | pass |
 | Helm | `--accent` | `--pane` | text | 4.5 | 6.41 | pass |
+| Helm | `--accent-text` | `--pane` | text | 4.5 | 6.41 | pass |
 | Helm | `--accent` | `--accent-soft` over `--pane` | text | 4.5 | 5.16 | pass |
 | Helm | `--success` | `--chrome` | text | 4.5 | 8.16 | pass |
 | Helm | `--success` | `--pane` | text | 4.5 | 8.73 | pass |
@@ -313,6 +315,7 @@ The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2
 | High contrast | `--dock-dim` | `--fill-raised` over `--chrome` | text | 4.5 | 5.19 | pass |
 | High contrast | `--accent` | `--chrome` | text | 4.5 | 7.96 | pass |
 | High contrast | `--accent` | `--pane` | text | 4.5 | 8.71 | pass |
+| High contrast | `--accent-text` | `--pane` | text | 4.5 | 8.71 | pass |
 | High contrast | `--accent` | `--accent-soft` over `--pane` | text | 4.5 | 6.88 | pass |
 | High contrast | `--success` | `--chrome` | text | 4.5 | 11.00 | pass |
 | High contrast | `--success` | `--pane` | text | 4.5 | 12.02 | pass |
@@ -681,7 +684,7 @@ Reference implementation: `app/src/renderer/toast.ts` + `toast.css`.
 - Motion: enter 150ms ease-out (opacity 0→1, translateY(8px)→0, double-rAF before adding the shown class); exit 120ms reverse. Removal by timer, not `transitionend` (unreliable in hidden tabs).
 - TTL default 4000ms. Optional countdown: one **inset 1px hairline** (`left/right 12`, bottom 5, `--thumb` at 0.7 opacity), `transform: scaleX` draining left→right, `linear` over the TTL. It communicates time without becoming a full-width progress bar.
 - Soft-close copy names the terminal in one line: **“<display name> closed” + Undo**. Never suppress generic names such as `zsh`; long names ellipsize before the action.
-- **Do** use a toast + Undo for soft-destructive actions (tab close grace). **Don't** stack more than 3 visible toasts — coalesce; **don't** put more than one action in a toast.
+- **Do** use a toast + Undo for soft-destructive actions (tab close grace). A toast with Undo never leaves before its grace ends (`ttlMs` = the grace); `toast.ts` dismisses a notice only by its TTL, its × or its action, never to make room. There is no visible-toast cap: toasts are rare and one per user action, so a stack grows only when the user repeats an action (closing several tabs in a row), and each card leaves on its own. **One user action = one notice:** several results of one action are merged at the call site into one toast. **Don't** put more than one action in a toast.
 
 ### 3.7 Inputs & selects
 
@@ -808,7 +811,7 @@ The in-flow content group and its fact/navigation rows (`app/src/renderer/sideba
 
 ### 3.16 Toggle switch
 
-- Track 32×18, radius 999, 1px `--hairline` border, background `--fill-subtle`; on: `--accent-fill`, no border. Knob 12px, `--text-0` (on: `--on-accent`, `#fff`), travels 14px at 140ms ease-out. An on-state toggle uses `--accent-fill`; several on toggles on one page conflict with principle 1 and are open as D11.
+- Track 32×18, radius 999, 1px `--hairline` border, background `--fill-subtle`; on: `--accent-fill`, no border. Knob 12px, `--text-0` (on: `--on-accent`, `#fff`), travels 14px at 140ms ease-out. An on-state toggle uses `--accent-fill`. It shows a value, not an action, so several on toggles on one page do not break the one-filled-accent rule (principle 1, §9 ruling 5); the page's primary action keeps its own shape and place (a full-width 32px button against the 32×18 track).
 - `role="switch"` + `aria-checked`; label sits left of the control in a row (12px `--text-0`).
 - **Don't** use a toggle for anything but an immediate boolean — choices go to a select or segmented control.
 
@@ -1032,7 +1035,7 @@ Read-only viewing of any readable file in the same window shell (`data-review-mo
 
 The Chrome extension (`extension/`, SolidJS) has two surfaces: the injected task widget and the toolbar popup.
 
-- **Widget:** a 332px card injected into ClientCare/Contember pages inside a closed shadow root (`extension/src/Widget.tsx`, `extension/src/widget.styles.ts`, mounted by `mount-widget.tsx`). It uses the same token values with a `--vg-` prefix (§2; S2 will generate that block from the one token source), the §2.7 maximum z-index only at the shadow host, and the shared rules: one primary **Start**, quiet **Queue**, and a **More** menu holding Plan/Re-plan and Reject (§3.1 Extension Inbox actions), the accent-filled agent picker and its Workspace segmented (§3.2), 8px dots without halo (§3.5), and the custom model menu instead of a native `<select>` (§3.7 shadow-root exception, §9 ruling 28). Its control height is 28 where §3.1 md is now 32: open as D12. Off-scale weights in the widget are open under D8.
+- **Widget:** a 332px card injected into ClientCare/Contember pages inside a closed shadow root (`extension/src/Widget.tsx`, `extension/src/widget.styles.ts`, mounted by `mount-widget.tsx`). It uses the same token values with a `--vg-` prefix (§2; S2 will generate that block from the one token source), the §2.7 maximum z-index only at the shadow host, and the shared rules: one primary **Start**, quiet **Queue**, and a **More** menu holding Plan/Re-plan and Reject (§3.1 Extension Inbox actions), the accent-filled agent picker and its Workspace segmented (§3.2), 8px dots without halo (§3.5), and the custom model menu instead of a native `<select>` (§3.7 shadow-root exception, §9 ruling 28). Its buttons (`.vg-btn`, the PR link-button `.vg-pr`) are the §3.1 md button: 32 · 0 14 · 13/600 · radius 8 (`--vg-radius-lg`); the segmented agent and Workspace pickers and the model trigger stay 28 like the sidebar's segmented control (§3.2) and fields (§3.7), the same grammar as the Item detail (§9 ruling 88). Off-scale weights in the widget are open under D8.
 - **Popup:** `extension/src/popup.html` + `popup.ts`, an ordinary extension page (native controls are fine there). It still uses its own literal colours rather than Helm tokens: open as D9.
 - **Prompt quick editor:** §3.29.
 - **Story:** **Views / Extension widget / Closed shadow** (the production `mountWidget` in a closed root). **Test:** `app/browser-tests/extension-widget.spec.ts`.
@@ -1155,7 +1158,7 @@ Ship-blocking: a UI change is not done until every item that applies to it is ch
 - [ ] Text meets WCAG AA contrast on its real background in Helm and High contrast: 4.5:1 body/meta, 3:1 large text and non-text UI (§2.9). Check: `tests/design-contrast.test.ts`; today's failures are open as D5.
 - [ ] State is never color-only: every status has words or an accessible label (§3.5, §4). Check: `tests/helm-model.test.ts` (status words), axe over every story (pending S6).
 - [ ] Icons and icon-only buttons have an accessible name; decorative glyphs are `aria-hidden` (§3.1, §3.18 tab numbers). Check: axe (pending S6).
-- [ ] UI text follows `--ui-scale` (§2.2). Check: `tests/design-lint.test.ts` (font-size-unscaled); unscaled sizes open as D13.
+- [ ] UI text follows `--ui-scale` (§2.2). Check: `tests/design-lint.test.ts` (font-size-unscaled, no exceptions).
 - [ ] `forced-colors: active` keeps focus rings, borders and selected states visible. Check: pending S6.
 
 **Operation**
@@ -1197,7 +1200,7 @@ Every design decision already made, numbered, with where it came from and what h
 | 2 | Uppercase | No uppercase text anywhere; `text-transform: uppercase` is removed on sight | 9cbe937 2026-07-16 | §2.2, §5 | `tests/design-lint.test.ts` |
 | 3 | In-flow cards | No bordered cards in flow; grouping is rule + section header + spacing; boxes only for detached surfaces and wells | 9cbe937 2026-07-16 | §1, §3.15 | `tests/helm-flat-group.test.ts` (shared resource group); pending S10 (other in-flow boxes) |
 | 4 | Button borders | No border in any button tone; weight comes from the fill (quiet = `--fill-raised`, hover `--fill-strong`) | 9cbe937 2026-07-16 | §3.1 | `tests/design-lint.test.ts` (button-border rule: button classes, button elements, role=button and button-type inputs in every stylesheet, HTML style block and CSS constant of the app and the widget) |
-| 5 | One primary | One primary button per surface; danger is soft-filled, never opaque or primary; never two filled-accent elements visible at once | d499fd6 2026-07-11; 9cbe937 2026-07-16 (danger soft-filled) | §1, §3.1 | `tests/helm-detail-actions.test.ts`; D11 (on toggles) |
+| 5 | One primary | One primary button per surface; danger is soft-filled, never opaque or primary; never two filled-accent actions visible at once. The rule counts actions (buttons, the commit segment); a state indicator showing a value (an on toggle, §3.16) does not count | d499fd6 2026-07-11; 9cbe937 2026-07-16 (danger soft-filled); Jakub 2026-11-13 (D11 A: on toggles exempt) | §1, §3.1, §3.16 | `tests/helm-detail-actions.test.ts` |
 | 6 | Color tokens | The §2.1 values are canonical; `app/src/theme-presets.ts` `HELM_TOKENS` owns them and every surface mirrors them unchanged | d499fd6 2026-07-11 | §2, §2.1, §2.8 | `tests/helm-appearance.test.ts` (theme layering); pending S2; D7 (Remote palette); D9 (popup colors) |
 | 7 | Soft fills | Tone soft fills are exactly 15% (`color-mix`), never a per-component alpha | d499fd6 2026-07-11 | §2.1, §2.8 | pending S10 |
 | 8 | Status → tone | inbox/queued/cancelled neutral, active/running accent, review warn, done success, failed danger; never remapped per surface | d499fd6 2026-07-11 | §2.1 | `tests/helm-model.test.ts` |
@@ -1205,11 +1208,11 @@ Every design decision already made, numbered, with where it came from and what h
 | 10 | Dark only | No light preset; the Document Review light reading palette is the one scoped, operator-approved exception | b22415b 2026-07-13; 6081eba 2026-10-02 | §2.8, §3.26, Native document review workspace | pending S2; D7 |
 | 11 | Presets | Helm + High contrast; macOS Increase contrast applies High contrast until a theme is picked; no surface ships its own contrast override | b22415b 2026-07-13; eb34454 2026-10-31 | §2.8 | `tests/helm-appearance.test.ts`; D7; D10 |
 | 12 | Terminal font | 9–24px, default 13, via ⌘= / ⌘− / ⌘0 or Appearance | b22415b 2026-07-13 | §2.2, §2.8 | `tests/helm-appearance.test.ts` |
-| 13 | UI scale | Sidebar type multiplies by `--ui-scale` (0.92 / 1 / 1.08); layout metrics and the terminal do not scale | b22415b 2026-07-13 | §2.2 | `tests/design-lint.test.ts` (font-size-unscaled); D13 |
+| 13 | UI scale | Sidebar type multiplies by `--ui-scale` (0.92 / 1 / 1.08), menu shortcut hints included; no fixed sidebar sizes; layout metrics and the terminal do not scale | b22415b 2026-07-13; Jakub 2026-11-13 (D13 A: `.menu-hint` too) | §2.2 | `tests/design-lint.test.ts` (font-size-unscaled) |
 | 14 | Font stacks | `--font-ui` / `--font-mono` defined once on `:root`; never a hand-written stack | `app/src/renderer/tokens.css` `:root`; AGENTS.md "Document Review reading width" | §2.2 | pending S10 |
 | 15 | Spacing | 4/8/12/16/20/24/32 only; one 16px text grid shared with the terminal well | d499fd6 2026-07-11; 9cbe937 2026-07-16 | §2.3 | `tests/design-lint.test.ts` (spacing-off-scale); D8 |
 | 16 | Row states | Hover/selection/current fills of list, nav and terminal rows are square full-width stripes (radius 0), clearing hairlines by 4px; controls stay rounded | a93a07e 2026-07-21; 9ff0e82 2026-07-21 | §2.3, §3.15 | `tests/helm-flat-group.test.ts` |
-| 17 | Radii | 8 / 6 / 4 / 999; never 10, 12 or 14 | d499fd6 2026-07-11 | §2.4 | `tests/design-lint.test.ts` (radius-off-scale); D4; D8 |
+| 17 | Radii | 8 / 6 / 4 / 999 as `--radius-lg` / `--radius-md` / `--radius-sm` on `:root` (before, the tokens were undefined and their corners fell to 0); a 28px field, the tab menu's group-name field included, takes `--radius-md`; never 10, 12 or 14 | d499fd6 2026-07-11; Jakub 2026-11-13 (D4 A2: tokens defined, group-name field 6px) | §2.4 | `tests/design-lint.test.ts` (radius-off-scale); `tests/design-root-tokens.test.ts`; D8 |
 | 18 | Motion | 120 / 140 / 150ms ease-out, transform and opacity only, 8px entrances; ambient animation only for live status | d499fd6 2026-07-11 | §1, §2.5 | `tests/design-lint.test.ts` (raw-duration, raw-easing, incl. Element.animate timing and easing in TS); pending S2 (motion tokens) |
 | 19 | Reduced motion | The global clamp applies on every surface; ambient pulses stop or hold statically | d499fd6 2026-07-11 | §2.5, §4 | `app/browser-tests/agent-dock-arrival.spec.ts`; pending S6 |
 | 20 | Elevation | Exactly two shadows; attached surfaces get none | d499fd6 2026-07-11 | §2.6 | pending S10 |
@@ -1221,7 +1224,7 @@ Every design decision already made, numbered, with where it came from and what h
 | 26 | Chips | 2×8, 11/500 sentence case, text only, one per row, never interactive; Item detail uses a status text menu instead | 9cbe937 2026-07-16 | §3.4 | pending S11 |
 | 27 | Status dots | A dot means live, never lifecycle; no topbar connection dot or other status jewelry | 9cbe937 2026-07-16 (a dot means live); 4777cdc 2026-07-13 (topbar connection dot retired) | §1, §3.5 | pending S11 |
 | 28 | Widget select | No native `<select>` in the widget's closed shadow root; a custom §3.8-style menu | a36116e 2026-07-13; AGENTS.md "inside the widget's closed shadow root" | §3.7, §3.28 | `app/browser-tests/extension-widget.spec.ts` |
-| 29 | Toast | Compact bottom-right notice, 12px inset, `min(320px, 100vw − 32px)`, TTL 4000ms, × dismiss, one action, at most 3 | 483a034 2026-07-22 (supersedes fb2d299 centered notice) | §3.6 | `tests/helm-toast.test.ts` (partial: the 3-toast cap is not implemented, D14) |
+| 29 | Toast | Compact bottom-right notice, 12px inset, `min(320px, 100vw − 32px)`, TTL 4000ms, × dismiss, one action; no visible-toast cap; a toast leaves only by its TTL, × or action, so an Undo toast stays its whole grace; one user action = one notice (merged at the call site) | 483a034 2026-07-22 (supersedes fb2d299 centered notice); Jakub 2026-11-13 (D14 C: cap dropped) | §3.6 | `tests/helm-toast.test.ts` |
 | 30 | Menus | 180–280px, 28px items, a reserved leading icon column, named sections instead of anonymous separators, no submenus, about 8 items | d499fd6 2026-07-11 (panel, items, no submenus); 0c5a105 2026-07-15 (leading column); fab5da1 2026-07-31 (named sections) | §3.8 | `app/browser-tests/work-menu.spec.ts` (partial: sections, label alignment); pending S11 |
 | 31 | Work More | Work / View / Profiles sections; Group by project is one checked item; the toolbar stays project filter + New item + More | fab5da1 2026-07-31; AGENTS.md "Work / View / Profiles" | §3.3, §3.8 | `app/browser-tests/work-menu.spec.ts` |
 | 32 | Sheets | Non-top-layer `<dialog open>` inside the pane, max 400px, three zones, never stacked, never for scrollable content | d499fd6 2026-07-11 | §3.9 | pending S11 |
@@ -1238,7 +1241,7 @@ Every design decision already made, numbered, with where it came from and what h
 | 43 | Okena action | One full-width quiet 32px button below the hero whose dynamic label states the whole effect; no caption | c90d815 2026-07-20 | §3.15 | `tests/helm-model.test.ts` |
 | 44 | Inline run evidence | Activity, log and solve input are inline on detail; the log is always expanded; the Run details, Run setup and Work hub pages are retired | 406b794 2026-07-20; 1a7dcc6 2026-07-20 (log always expanded) | §3.15, §3.20 | `tests/helm-detail-state.test.ts` |
 | 45 | Disclosure | The Section-header owns one shared small quiet Btn (Show / Hide, Change / Done); content snaps, children unmount while closed | 4ad44e3 2026-07-21 | §3.20 | `tests/helm-disclosure.test.ts` |
-| 46 | Toggle | A toggle only for an immediate boolean; choices go to a segmented control or select | d499fd6 2026-07-11 | §3.15, §3.16 | pending S11; D11 |
+| 46 | Toggle | A toggle only for an immediate boolean; choices go to a segmented control or select; on = `--accent-fill` track, exempt from the one-filled-accent rule (§9 ruling 5) | d499fd6 2026-07-11; Jakub 2026-11-13 (D11 A) | §3.15, §3.16 | pending S11 |
 | 47 | Pane scrollbars | Reading and editing panes reserve a stable gutter; row-heavy page/list scrollers and the background popover use the overlay scrollbar with no gutter | 9ff0e82 2026-07-21 | §3.17 | `tests/helm-scrollbar-gutter.test.ts` |
 | 48 | Tab group band | One continuous 28px band (15 / 22 / 30%), outer corners only, no separate highlight, no visible chevron | e7a53f0 2026-07-24 (full band); 6954a28 2026-07-28 | §3.18 | `tests/helm-tab-groups-renderer.test.ts` (partial: zero gap, outer corners); pending S11 |
 | 49 | Tab numbers | ⌘1–⌘9 select visible tabs in visual order, collapsed members skipped; a dim leading digit on every numbered tab (review picks N1 + B1) | Jakub 2026-11-02; c076d17 2026-11-02 | §3.18 | `tests/helm-tab-numbers.test.ts`, `app/browser-tests/tab-numbers.spec.ts` |
@@ -1279,6 +1282,8 @@ Every design decision already made, numbered, with where it came from and what h
 | 84 | Hover | Hover changes fills only; it never reveals functionality keyboard or touch users cannot reach | d499fd6 2026-07-11 | §1, §4 | pending S6 |
 | 85 | Hit targets | At least 24×24, 28 standard; drag hairlines get an invisible ≥8px hit area | d499fd6 2026-07-11 | §4 | pending S6 |
 | 86 | Copy voice | Sentence case, active voice, state then direction, "…" only when more input follows, relative times under 24h | d499fd6 2026-07-11 | §5 | `tests/design-lint.test.ts` (uppercase); pending S10 (the rest of the voice) |
+| 87 | Accent text | `--accent-text` is `var(--accent)` on `:root`, the colour of text for a live state that holds the keys (shortcut recording); never its own value | Jakub 2026-11-13 (D4 A) | §2.1 | `tests/design-root-tokens.test.ts`; `tests/design-contrast.test.ts` |
+| 88 | Widget controls | The extension widget's buttons (`.vg-btn`, `.vg-pr`) are the §3.1 md button (32 · 0 14 · 13/600 · radius 8); its segmented pickers and model trigger stay 28 (§3.2, §3.7); no widget-only button size | Jakub 2026-11-13 (D12 C) | §3.1, §3.28 | `tests/design-widget-controls.test.ts` |
 
 ---
 
@@ -1293,8 +1298,8 @@ Which check holds each rule family, and its state. **enforced** = a check in the
 | Soft fills at 15%, the two elevation shadows, font stacks only through `--font-ui`/`--font-mono`, glyph chips, copy voice | §2.1, §2.2, §2.6, §5 | lint rules not written yet | pending S10 |
 | Storybook coverage of §3 families and views | §7 | `tests/helm-storybook-coverage.test.ts` | enforced |
 | Token values from one source (CSS `:root`, extension `--vg-`, Remote, native window backgrounds) | §2.1, §2.8, §3.28, §3.30 | `app/src/design/` tokens + generated CSS check | pending S2 |
-| Undefined tokens used in CSS | §2.1 | token lint | D4 |
-| Literal colors, off-scale spacing/radii/sizes/weights, letter-spacing, uppercase, unscaled sidebar type, durations and easings | §2.1–§2.5, §5 | `tests/design-lint.test.ts` (the scanner in app/src/design/lint.ts over every production stylesheet, HTML style and inline TS/TSX style in app/ and extension/; ratchet baseline app/src/design/lint-allowlist.ts; npm run lint:design prints counts plus any new or stale finding, npm run lint:design -- --all every finding) | enforced; D8; D13 |
+| Undefined tokens used in CSS | §2.1, §2.4 | `tests/design-root-tokens.test.ts` (the radius tokens and the accent-text alias); the check that every custom property used is defined comes with the token pipeline | enforced (radii, accent text); pending S2 (motion-state, used with a 140ms fallback, and the general check) |
+| Literal colors, off-scale spacing/radii/sizes/weights, letter-spacing, uppercase, unscaled sidebar type, durations and easings | §2.1–§2.5, §5 | `tests/design-lint.test.ts` (the scanner in app/src/design/lint.ts over every production stylesheet, HTML style and inline TS/TSX style in app/ and extension/; ratchet baseline app/src/design/lint-allowlist.ts; npm run lint:design prints counts plus any new or stale finding, npm run lint:design -- --all every finding) | enforced; D8 |
 | Buttons draw no border in any tone | §3.1 | `tests/design-lint.test.ts` (button-border rule: button classes, button elements, role=button and button-type inputs in the app and the widget) | enforced |
 | A shared primitive's base rules only in its owner file (`button.css` for buttons, `sidebar/sidebar.css` for segmented, list row, chips, fields, menus, action rows, toggle and icon button, `sidebar/detail-redesign.css` for disclosure); surface modifiers (`.agent-dock-key.btn`) and descendant overrides stay with their surface | §3 | `tests/design-lint.test.ts` (primitive-outside-owner; the PRIMITIVES table in app/src/design/lint.ts) | enforced |
 | Measured contrast of every drawn token pair | §2.9 | `tests/design-contrast.test.ts` | enforced; D5 |
@@ -1304,8 +1309,8 @@ Which check holds each rule family, and its state. **enforced** = a check in the
 | Shared primitives instead of local button/menu/field chrome | §3.1, §3.8 | component-reach check (markup that recreates `.btn`, menu or field chrome without `Btn`/`MenuButton`/`Field`) | pending S10 |
 | Every production icon drawn by the icon module with its source; Heroicons notices current; the hand-drawn set closed | §3.18, §9 ruling 54 | `tests/design-icons.test.ts`, `tests/design-lint.test.ts` (inline-svg: any svg markup, SVG data URI or createElementNS svg outside app/src/renderer/icons/) | enforced; D6 (hand-drawn glyphs) |
 | Which surfaces follow presets, user themes and UI scale | §2.8, §3.23, §3.26 | appearance reach | D7; D10 |
-| One filled accent per surface (on toggles) | §1, §3.16 | `tests/helm-detail-actions.test.ts` (detail) | enforced (Item detail); D11 (on toggles) |
-| Extension control height | §3.1, §3.28 | design lint | D12 |
+| One filled accent action per surface (state indicators such as on toggles exempt, §9 ruling 5) | §1, §3.16 | `tests/helm-detail-actions.test.ts` (detail) | enforced (Item detail); pending S11 (other surfaces) |
+| Extension control height | §3.1, §3.28 | `tests/design-widget-controls.test.ts` | enforced |
 | Status → tone, list row, Okena action | §2.1, §3.3, §3.15 | `tests/helm-model.test.ts` | enforced |
 | Toast, banners, action bar, danger placement | §3.6, §3.11, §3.12 | `tests/helm-toast.test.ts`, `tests/helm-banner.test.ts`, `tests/helm-detail-actions.test.ts`, `tests/helm-detail-state.test.ts` | enforced |
 | Flat groups, row stripes, disclosure, scrollbars | §2.3, §3.15, §3.17, §3.20 | `tests/helm-flat-group.test.ts`, `tests/helm-disclosure.test.ts`, `tests/helm-scrollbar-gutter.test.ts` | enforced |
@@ -1385,7 +1390,7 @@ Values that existed in code before this document, and the canonical pick. Migrat
 | widget motion | `150ms ease` | 140ms state / 150ms enter, `ease-out` | §2.5 |
 | widget label style | 11/700 uppercase 0.04em | Label 12/500 sentence case (§2.2); chips 11/500 sentence case (§3.4) | Superseded by the 2026-07 redesign (no uppercase anywhere, §9 ruling 2) |
 | widget status dot | 9px + halo ring | 8px, no halo | Dots never glow (§3.5); the connection dot that once owned a halo is retired |
-| widget buttons | height 30 | 28 | Dense 332px card; §3.1 md is now 32, so whether the widget follows is open as D12 |
+| widget buttons | height 30, then 28 | 32, §3.1 md (0 14 · 13/600 · radius 8) | The widget speaks the sidebar's grammar: md buttons 32, segmented and fields 28 (§9 ruling 88) |
 | widget focus | border-color change only on buttons | 2px accent outline ring | Visible focus everywhere; fields keep accent border |
 | widget font stack | no SF Pro Text entry; `ui-monospace` first | §2.2 stacks | Single canonical stacks |
 | helm `panes.css` divider hover | `rgba(255,255,255,0.18)` | `--hairline-strong 0.16` | Fold into the strong-line token |

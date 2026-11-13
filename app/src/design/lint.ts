@@ -2001,7 +2001,7 @@ export function defaultReason(f: FindingKey): string {
 				return '§9 ruling 58 Remote web 16px form text'
 			return 'D8 off-scale values'
 		case 'font-size-unscaled':
-			return 'D13 unscaled sidebar type'
+			return '§9 ruling 13 (no fixed sidebar sizes: write calc(<px> * var(--ui-scale))): needs a fix'
 		case 'letter-spacing':
 			return 'D8 off-scale values (letter-spacing overrides)'
 		case 'font-weight':

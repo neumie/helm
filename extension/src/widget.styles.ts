@@ -405,14 +405,14 @@ export const WIDGET_STYLES = `
 		align-items: center;
 		gap: 8px;
 		align-self: flex-start;
-		height: 28px;
-		padding: 0 12px;
+		height: 32px;
+		padding: 0 14px;
 		background: var(--vg-accent-soft);
-		border-radius: var(--vg-radius-md);
+		border-radius: var(--vg-radius-lg);
 		color: var(--vg-accent);
 		text-decoration: none;
-		font-size: 12px;
-		font-weight: 500;
+		font-size: 13px;
+		font-weight: 600;
 		transition: background-color 140ms ease-out;
 	}
 	.vg-pr:hover { background: color-mix(in srgb, var(--vg-accent) 22%, transparent); }
@@ -448,14 +448,14 @@ export const WIDGET_STYLES = `
 
 	.vg-card__actions { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--vg-hairline); }
 
-	/* Buttons (§3.1): no borders in any tone — weight comes from the fill. */
+	/* Buttons (§3.1 md, §9 ruling 28): no borders in any tone — weight comes from the fill. */
 	.vg-btn {
-		height: 28px;
-		padding: 0 12px;
+		height: 32px;
+		padding: 0 14px;
 		border: none;
-		border-radius: var(--vg-radius-md);
+		border-radius: var(--vg-radius-lg);
 		font-family: var(--vg-font);
-		font-size: 12px;
+		font-size: 13px;
 		font-weight: 600;
 		cursor: pointer;
 		transition: background-color 140ms ease-out, color 140ms ease-out;

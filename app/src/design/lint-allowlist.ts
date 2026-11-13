@@ -535,9 +535,11 @@ body | padding | 48px 24px | D7 Remote offline page (served by remote-sw.js when
 h1 | margin | 0 0 14px 0 | D9 extension popup (moves onto Helm tokens)
 input | padding | 6px 8px | D9 extension popup (moves onto Helm tokens)
 ### extension/src/widget.styles.ts
+.vg-btn | padding | 0 14px | §9 ruling 88 widget buttons are the §3.1 md button (0 14 as .btn; the 14 itself is D8 off-scale values)
 .vg-chip | padding | 2px 8px | §9 ruling 26 chip padding 2×8
 .vg-error | padding | 10px 12px | D8 off-scale values
 .vg-model__trigger | padding | 0 10px | D8 off-scale values
+.vg-pr | padding | 0 14px | §9 ruling 88 widget buttons are the §3.1 md button (0 14 as .btn; the 14 itself is D8 off-scale values)
 .vg-run-context | padding-top | 10px | D8 off-scale values
 .vg-run-context__header | margin-bottom | 6px | D8 off-scale values
 .vg-run-menu input | padding | 6px | D8 off-scale values
@@ -586,10 +588,6 @@ h1 | font-size | 14px | D9 extension popup (moves onto Helm tokens)
 ### extension/src/widget.styles.ts
 .vg-close | font-size | 16px | D8 off-scale values
 .vg-error__dismiss | font-size | 16px | D8 off-scale values
-
-## font-size-unscaled
-### app/src/renderer/sidebar/sidebar.css
-.menu-item .menu-hint | font-size | 11px | D13 unscaled sidebar type
 
 ## letter-spacing
 ### app/src/renderer/agent-dock/agent-dock.css
