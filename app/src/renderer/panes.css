@@ -21,7 +21,7 @@
 	grid-column: 2;
 	position: relative;
 	background: var(--hairline);
-	transition: background-color 120ms ease-out;
+	transition: background-color var(--motion-exit) var(--ease-out);
 }
 
 /* 8px hit-area straddling the 1px hairline */

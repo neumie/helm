@@ -114,7 +114,7 @@ export function showToast(options: ToastOptions): ToastHandle {
 			if (dismissed) return
 			el.classList.add('shown')
 			if (countdownEl) {
-				countdownEl.style.transition = `transform ${ttl}ms linear`
+				countdownEl.style.transition = `transform ${ttl}ms var(--ease-linear)`
 				countdownEl.style.transform = 'scaleX(0)'
 			}
 		})

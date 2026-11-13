@@ -2,6 +2,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
+import { EASINGS, MOTION_MS } from '../design-tokens.generated'
 import { shouldOpenTerminalLink } from '../external-url'
 import type {
 	GraceClose,
@@ -1820,8 +1821,8 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 	function animateStripReflow(element: HTMLElement, delta: number): void {
 		stripReflowAnimations.get(element)?.cancel()
 		const animation = element.animate([{ transform: `translateX(${delta}px)` }, { transform: 'translateX(0)' }], {
-			duration: 160,
-			easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
+			duration: MOTION_MS.dragFlip,
+			easing: EASINGS.drag,
 		})
 		stripReflowAnimations.set(element, animation)
 		animation.addEventListener('finish', () => {
@@ -2041,7 +2042,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 						opacity: intoBackground ? 0 : 1,
 					},
 				],
-				{ duration: intoBackground ? 140 : 180, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
+				{ duration: intoBackground ? MOTION_MS.dragPark : MOTION_MS.dragSettle, easing: EASINGS.drag },
 			)
 			animation.addEventListener('finish', cleanup, { once: true })
 			animation.addEventListener('cancel', cleanup, { once: true })
@@ -2365,7 +2366,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 					opacity: restored ? 1 : 0,
 				},
 			],
-			{ duration: restored ? 180 : 140, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
+			{ duration: restored ? MOTION_MS.dragSettle : MOTION_MS.dragPark, easing: EASINGS.drag },
 		)
 		animation.addEventListener('finish', cleanup, { once: true })
 		animation.addEventListener('cancel', cleanup, { once: true })
@@ -2762,7 +2763,7 @@ export function mountTerminalWorkspace(options: TerminalWorkspaceMountOptions): 
 					opacity: intoBackground ? 0 : 1,
 				},
 			],
-			{ duration: intoBackground ? 140 : 180, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
+			{ duration: intoBackground ? MOTION_MS.dragPark : MOTION_MS.dragSettle, easing: EASINGS.drag },
 		)
 		animation.addEventListener('finish', cleanup, { once: true })
 		animation.addEventListener('cancel', cleanup, { once: true })

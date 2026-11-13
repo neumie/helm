@@ -730,7 +730,7 @@
 	cursor: pointer;
 	opacity: 0;
 	pointer-events: none;
-	transition: opacity 120ms ease-out;
+	transition: opacity var(--motion-exit) var(--ease-out);
 }
 .review-screenshot-remove svg {
 	width: 12px;
@@ -817,7 +817,7 @@
 	background: var(--chrome);
 	border-radius: 8px;
 	box-shadow: var(--shadow-2);
-	z-index: 3;
+	z-index: var(--z-local-3);
 }
 .review-banner {
 	padding: 12px 16px;

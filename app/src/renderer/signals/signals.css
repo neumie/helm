@@ -182,7 +182,7 @@
 .signals-band {
 	position: sticky;
 	top: 0;
-	z-index: 1;
+	z-index: var(--z-local-1);
 	display: grid;
 	grid-template-columns: 12px minmax(0, 1fr) auto;
 	align-items: center;
@@ -282,7 +282,7 @@
 
 @media (prefers-reduced-motion: no-preference) {
 	.signals-resting .signals-braille-dot {
-		animation: signals-calm-wave 4.8s ease-in-out infinite;
+		animation: signals-calm-wave var(--motion-resting) var(--ease-ambient) infinite;
 	}
 }
 
@@ -333,7 +333,7 @@
 	padding: 4px 0;
 	white-space: nowrap;
 	cursor: default;
-	transition: background-color 140ms ease-out;
+	transition: background-color var(--motion-state) var(--ease-out);
 }
 
 .signals-tr > * {
@@ -532,7 +532,7 @@
 	color: var(--dock-dim);
 	text-align: left;
 	cursor: pointer;
-	transition: color 140ms ease-out;
+	transition: color var(--motion-state) var(--ease-out);
 }
 
 .signals-list-btn:hover {

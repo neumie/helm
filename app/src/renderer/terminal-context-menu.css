@@ -3,7 +3,7 @@
 .menu-panel.menu-fixed {
 	position: fixed;
 	top: auto;
-	z-index: 40;
+	z-index: var(--z-menu);
 }
 
 /* The group-name form reuses the §3.7 28px field grammar (radius md, §9

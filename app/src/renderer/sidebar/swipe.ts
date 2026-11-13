@@ -18,6 +18,7 @@
 //     release/quiescence boundary; thresholds choose a target only then;
 //   - after settle, a REFRACTORY gap swallows/restarts on back-horizontal tail
 //     events, so one physical gesture can never pop a second page.
+import { EASINGS } from '../../design-tokens.generated'
 
 // --- tuning constants (documented in design-system.md §3.10) --------------------
 
@@ -57,9 +58,9 @@ export const SWIPE_COMMIT_MIN_MS = 90
 /** Maximum spring-back duration; short drags return faster. */
 export const SWIPE_SPRING_BACK_MS = 240
 /** Apple-style deceleration: fast response, long soft tail, no overshoot. */
-export const SWIPE_COMMIT_EASING = 'cubic-bezier(0.16, 1, 0.3, 1)'
+export const SWIPE_COMMIT_EASING = EASINGS.swipeCommit
 /** Soft iOS-style return without overshooting either endpoint. */
-export const SWIPE_SPRING_EASING = 'cubic-bezier(0.32, 0.72, 0, 1)'
+export const SWIPE_SPRING_EASING = EASINGS.swipeSpring
 
 export function swipeCommitDuration(remainingPx: number, paneWidth: number, velocityPxMs: number): number {
 	const width = Math.max(1, paneWidth)

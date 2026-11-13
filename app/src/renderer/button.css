@@ -15,7 +15,7 @@
 	cursor: pointer;
 	user-select: none;
 	white-space: nowrap;
-	transition: background-color 140ms ease-out, color 140ms ease-out;
+	transition: background-color var(--motion-state) var(--ease-out), color var(--motion-state) var(--ease-out);
 }
 
 .btn-sm {

@@ -44,14 +44,14 @@
 .agent-dock::before {
 	content: "";
 	position: absolute;
-	z-index: 1;
+	z-index: var(--z-local-1);
 	top: 0;
 	right: 0;
 	left: 0;
 	height: 1px;
 	background: var(--hairline);
 	pointer-events: none;
-	transition: background-color 140ms ease-out;
+	transition: background-color var(--motion-state) var(--ease-out);
 }
 
 .agent-dock[data-position="top"]::before {
@@ -218,7 +218,7 @@
 	background: transparent;
 	cursor: pointer;
 	user-select: none;
-	transition: background-color 140ms ease-out;
+	transition: background-color var(--motion-state) var(--ease-out);
 }
 
 .agent-dock-entry:hover,
@@ -289,7 +289,7 @@
 	overflow: hidden;
 	text-overflow: ellipsis;
 	color: var(--text-1);
-	transition: color 140ms ease-out;
+	transition: color var(--motion-state) var(--ease-out);
 }
 
 .agent-dock-entry[data-open="true"] .agent-dock-entry-name {
@@ -334,16 +334,16 @@
 
 @media (prefers-reduced-motion: no-preference) {
 	.agent-dock-row [data-arrival] {
-		animation: agent-dock-arrival-fill 1.4s ease-out 1;
+		animation: agent-dock-arrival-fill var(--motion-arrival) var(--ease-out) 1;
 	}
 
 	/* The edge takes the most urgent arrival: the ask rule comes last, so it wins over a turn. */
 	.agent-dock:has(.agent-dock-row [data-arrival="turn"])::before {
-		animation: agent-dock-arrival-edge-accent 1.4s ease-out 1;
+		animation: agent-dock-arrival-edge-accent var(--motion-arrival) var(--ease-out) 1;
 	}
 
 	.agent-dock:has(.agent-dock-row [data-arrival]:not([data-arrival="turn"]))::before {
-		animation: agent-dock-arrival-edge-warn 1.4s ease-out 1;
+		animation: agent-dock-arrival-edge-warn var(--motion-arrival) var(--ease-out) 1;
 	}
 }
 
@@ -432,7 +432,7 @@
 
 .agent-dock-agents-n {
 	color: var(--text-1);
-	transition: color 140ms ease-out;
+	transition: color var(--motion-state) var(--ease-out);
 }
 
 .agent-dock-agents-entry:is([data-open="true"], :focus) .agent-dock-agents-n {
@@ -515,7 +515,7 @@
  * Later than the arrival rules, so a hovered edge wins over an arrival's (same specificity). */
 .agent-dock-resize {
 	position: absolute;
-	z-index: 3;
+	z-index: var(--z-local-3);
 	top: -3px;
 	right: 0;
 	left: 0;
@@ -618,7 +618,7 @@
 	background: transparent;
 	text-align: center;
 	cursor: pointer;
-	transition: background-color 140ms ease-out, color 140ms ease-out;
+	transition: background-color var(--motion-state) var(--ease-out), color var(--motion-state) var(--ease-out);
 }
 
 .agent-dock-title-btn:hover:not(:disabled) {
@@ -664,7 +664,7 @@
 	text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
 	text-underline-offset: 3px;
 	cursor: pointer;
-	transition: color 140ms ease-out, text-decoration-color 140ms ease-out;
+	transition: color var(--motion-state) var(--ease-out), text-decoration-color var(--motion-state) var(--ease-out);
 }
 
 .agent-dock-reveal-link:hover:not(:disabled) {
@@ -821,7 +821,7 @@
 	background: transparent;
 	color: var(--dock-dim);
 	cursor: pointer;
-	transition: color 140ms ease-out;
+	transition: color var(--motion-state) var(--ease-out);
 }
 
 .agent-dock-group-option:hover {
@@ -973,7 +973,7 @@
 	background: transparent;
 	color: var(--dock-dim);
 	cursor: pointer;
-	transition: color 140ms ease-out;
+	transition: color var(--motion-state) var(--ease-out);
 }
 
 .agent-dock-qtab:hover {
@@ -1091,7 +1091,7 @@
 
 .agent-dock-choice {
 	color: var(--text-1);
-	transition: background-color 140ms ease-out;
+	transition: background-color var(--motion-state) var(--ease-out);
 }
 
 /* The number sits after the description in the grid but first in the DOM: keep every cell on the row's one line. */
@@ -1199,7 +1199,7 @@
 	padding: 4px 0;
 	border-top: 1px solid var(--hairline);
 	border-bottom: 1px solid var(--hairline);
-	transition: border-color 140ms ease-out;
+	transition: border-color var(--motion-state) var(--ease-out);
 }
 
 .agent-dock-prompt:focus-within {
@@ -1584,10 +1584,10 @@
 .agent-dock-agent::before {
 	content: "";
 	position: absolute;
-	z-index: -1;
+	z-index: var(--z-under);
 	inset: 0 -8px;
 	border-radius: 6px;
-	transition: background-color 140ms ease-out;
+	transition: background-color var(--motion-state) var(--ease-out);
 }
 
 .agent-dock-agent:hover::before {
@@ -1638,7 +1638,7 @@
 
 .agent-dock-agent-glyph[data-tone="working"] {
 	color: var(--text-0);
-	animation: agent-dock-pulse 1.6s ease-in-out infinite;
+	animation: agent-dock-pulse var(--motion-pulse) var(--ease-ambient) infinite;
 }
 
 .agent-dock-agent-glyph:is([data-tone="background"], [data-tone="sending"]) {

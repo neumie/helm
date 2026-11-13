@@ -71,7 +71,7 @@
 	color: color-mix(in srgb, var(--group-color) 55%, var(--text-1));
 	font-family: inherit;
 	cursor: pointer;
-	transition: background-color 140ms ease-out, color 140ms ease-out;
+	transition: background-color var(--motion-state) var(--ease-out), color var(--motion-state) var(--ease-out);
 	-webkit-app-region: no-drag;
 }
 
@@ -173,7 +173,8 @@
 	white-space: nowrap;
 	cursor: default;
 	user-select: none;
-	transition: opacity 140ms ease-out, background-color 140ms ease-out, color 140ms ease-out;
+	transition: opacity var(--motion-state) var(--ease-out), background-color var(--motion-state) var(--ease-out), color
+		var(--motion-state) var(--ease-out);
 }
 
 /* Author display rules override the HTML hidden state unless this explicit
@@ -201,7 +202,7 @@ body.group-dragging .tab-group-toggle {
 	position: fixed;
 	top: 0;
 	left: 0;
-	z-index: 60;
+	z-index: var(--z-sheet);
 	display: flex;
 	flex: none;
 	height: 28px;
@@ -220,7 +221,7 @@ body.group-dragging .tab-group-toggle {
 	position: fixed;
 	top: 0;
 	left: 0;
-	z-index: 60;
+	z-index: var(--z-sheet);
 	pointer-events: none;
 	background: var(--fill-raised);
 	box-shadow: inset 0 0 0 1px var(--hairline-strong), var(--shadow-1);
@@ -325,25 +326,25 @@ body.group-dragging .tab-group-toggle {
 	border-radius: 999px;
 	background: var(--text-0);
 	opacity: 0.1;
-	animation: activity-indicator-clockwise 1s linear infinite;
+	animation: activity-indicator-clockwise var(--motion-activity) var(--ease-linear) infinite;
 }
 
 /* Clockwise: top-left → top-right → middle-right → bottom-right →
  * bottom-left → middle-left. Negative delays begin on a complete cycle. */
 .activity-indicator-dot:nth-child(2) {
-	animation-delay: -833ms;
+	animation-delay: calc(var(--motion-activity) * -0.833);
 }
 .activity-indicator-dot:nth-child(3) {
-	animation-delay: -167ms;
+	animation-delay: calc(var(--motion-activity) * -0.167);
 }
 .activity-indicator-dot:nth-child(4) {
-	animation-delay: -667ms;
+	animation-delay: calc(var(--motion-activity) * -0.667);
 }
 .activity-indicator-dot:nth-child(5) {
-	animation-delay: -333ms;
+	animation-delay: calc(var(--motion-activity) * -0.333);
 }
 .activity-indicator-dot:nth-child(6) {
-	animation-delay: -500ms;
+	animation-delay: calc(var(--motion-activity) * -0.5);
 }
 
 @keyframes activity-indicator-clockwise {
@@ -369,7 +370,7 @@ body.group-dragging .tab-group-toggle {
  * pulses together in warning amber, distinct from completion's diagonal wave. */
 .activity-indicator[data-variant="waiting"] .activity-indicator-dot {
 	background: var(--warn);
-	animation: activity-indicator-waiting 0.9s ease-in-out infinite;
+	animation: activity-indicator-waiting var(--motion-activity-waiting) var(--ease-ambient) infinite;
 }
 
 @keyframes activity-indicator-waiting {
@@ -385,18 +386,18 @@ body.group-dragging .tab-group-toggle {
 /* Completion becomes a slower diagonal color-wave: top-left leads, equal
  * diagonals share a phase, and bottom-right closes the gray→accent gradient. */
 .activity-indicator[data-variant="attention"] .activity-indicator-dot {
-	animation: activity-indicator-attention-color 1.8s ease-in-out infinite;
+	animation: activity-indicator-attention-color var(--motion-activity-breathe) var(--ease-ambient) infinite;
 }
 .activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(1) {
-	animation-delay: -0.9s;
+	animation-delay: calc(var(--motion-activity-breathe) / -2);
 }
 .activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(2),
 .activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(3) {
-	animation-delay: -0.6s;
+	animation-delay: calc(var(--motion-activity-breathe) / -3);
 }
 .activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(4),
 .activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(5) {
-	animation-delay: -0.3s;
+	animation-delay: calc(var(--motion-activity-breathe) / -6);
 }
 .activity-indicator[data-variant="attention"] .activity-indicator-dot:nth-child(6) {
 	animation-delay: 0s;
@@ -417,7 +418,7 @@ body.group-dragging .tab-group-toggle {
 /* Optional visible copy breathes independently; the dots keep their own
  * directional motion and never inherit this restrained text treatment. */
 .activity-indicator-label {
-	animation: activity-indicator-label-breathe 1.8s ease-in-out infinite;
+	animation: activity-indicator-label-breathe var(--motion-activity-breathe) var(--ease-ambient) infinite;
 }
 
 @keyframes activity-indicator-label-breathe {
@@ -474,7 +475,7 @@ body.group-dragging .tab-group-toggle {
 	line-height: 1;
 	cursor: pointer;
 	opacity: 0;
-	transition: opacity 140ms ease-out, background-color 140ms ease-out;
+	transition: opacity var(--motion-state) var(--ease-out), background-color var(--motion-state) var(--ease-out);
 }
 
 .tab:hover .tab-close,
@@ -502,7 +503,7 @@ body.group-dragging .tab-group-toggle {
 	line-height: 1;
 	cursor: pointer;
 	-webkit-app-region: no-drag;
-	transition: background-color 140ms ease-out, color 140ms ease-out;
+	transition: background-color var(--motion-state) var(--ease-out), color var(--motion-state) var(--ease-out);
 }
 
 #new-tab:hover {

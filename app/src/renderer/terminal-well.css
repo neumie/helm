@@ -68,7 +68,7 @@
 
 @media (prefers-reduced-motion: no-preference) {
 	.term-holder[data-reveal]::after {
-		animation: term-reveal-pulse 1.4s ease-out 1 forwards;
+		animation: term-reveal-pulse var(--motion-arrival) var(--ease-out) 1 forwards;
 	}
 }
 
@@ -157,7 +157,7 @@
 	right: 0;
 	bottom: 0;
 	width: 12px;
-	z-index: 2;
+	z-index: var(--z-local-2);
 }
 
 .term-scrollbar[hidden] {
@@ -175,7 +175,7 @@
 	width: 7px;
 	border-radius: 999px;
 	background: var(--term-scroll-thumb);
-	transition: background-color 140ms ease-out, width 140ms ease-out;
+	transition: background-color var(--motion-state) var(--ease-out), width var(--motion-state) var(--ease-out);
 }
 
 .term-scrollbar:hover .term-scrollbar-thumb,

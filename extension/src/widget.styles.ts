@@ -79,7 +79,7 @@ export const WIDGET_STYLES = `
 		position: fixed;
 		bottom: 20px;
 		left: 20px;
-		z-index: 2147483647;
+		z-index: var(--vg-z-widget-host);
 		display: inline-flex;
 		align-items: center;
 		gap: 8px;
@@ -93,7 +93,7 @@ export const WIDGET_STYLES = `
 		font-family: var(--vg-font);
 		letter-spacing: -0.01em;
 		-webkit-font-smoothing: antialiased;
-		transition: background-color 140ms ease-out, border-color 140ms ease-out, transform 140ms ease-out;
+		transition: background-color var(--vg-motion-state) var(--vg-ease-out), border-color var(--vg-motion-state) var(--vg-ease-out), transform var(--vg-motion-state) var(--vg-ease-out);
 	}
 	/* The pill paints over a foreign page, so hover fills mix into the opaque
 	   chrome instead of layering a translucent fill over the page. */
@@ -114,7 +114,7 @@ export const WIDGET_STYLES = `
 
 	/* ---------------- status dot (§3.5 — 8px, no halo) ---------------- */
 	.vg-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-	.vg-dot--pulse { animation: vg-pulse 1.6s ease-in-out infinite; }
+	.vg-dot--pulse { animation: vg-pulse var(--vg-motion-pulse) var(--vg-ease-ambient) infinite; }
 	@keyframes vg-pulse {
 		0%, 100% { opacity: 1; }
 		50% { opacity: 0.35; }
@@ -125,7 +125,7 @@ export const WIDGET_STYLES = `
 		position: fixed;
 		bottom: 20px;
 		left: 20px;
-		z-index: 2147483647;
+		z-index: var(--vg-z-widget-host);
 		width: min(332px, calc(100vw - 40px));
 		background: var(--vg-pane);
 		border: 1px solid var(--vg-hairline);
@@ -135,7 +135,7 @@ export const WIDGET_STYLES = `
 		letter-spacing: -0.01em;
 		-webkit-font-smoothing: antialiased;
 		overflow: visible;
-		animation: vg-rise 150ms ease-out;
+		animation: vg-rise var(--vg-motion-enter) var(--vg-ease-out);
 	}
 	@keyframes vg-rise {
 		from { opacity: 0; transform: translateY(8px); }
@@ -182,7 +182,7 @@ export const WIDGET_STYLES = `
 		background: none;
 		padding: 0;
 		font-family: var(--vg-font);
-		transition: background-color 140ms ease-out, color 140ms ease-out;
+		transition: background-color var(--vg-motion-state) var(--vg-ease-out), color var(--vg-motion-state) var(--vg-ease-out);
 	}
 	.vg-close:hover { background: var(--vg-fill-subtle); color: var(--vg-text-0); }
 
@@ -317,7 +317,7 @@ export const WIDGET_STYLES = `
 		font-weight: 600;
 		cursor: pointer;
 		outline: none;
-		transition: border-color 140ms ease-out;
+		transition: border-color var(--vg-motion-state) var(--vg-ease-out);
 	}
 	.vg-model__trigger:hover { border-color: var(--vg-hairline-strong); }
 	.vg-model__trigger:focus-visible { border-color: var(--vg-accent); }
@@ -328,13 +328,13 @@ export const WIDGET_STYLES = `
 		flex-shrink: 0;
 		display: inline-flex;
 		color: var(--vg-text-2);
-		transition: transform 120ms ease-out;
+		transition: transform var(--vg-motion-exit) var(--vg-ease-out);
 	}
 	.vg-model__trigger.is-open .vg-model__chevron { transform: rotate(180deg); }
 	.vg-model__menu {
 		position: absolute;
 		right: 0;
-		z-index: 40;
+		z-index: var(--vg-z-menu);
 		min-width: 100%;
 		width: max-content;
 		max-width: 240px;
@@ -346,8 +346,8 @@ export const WIDGET_STYLES = `
 		overflow-y: auto;
 		overscroll-behavior: contain;
 	}
-	.vg-model__menu--down { top: calc(100% + 4px); animation: vg-menu-down 120ms ease-out; }
-	.vg-model__menu--up { bottom: calc(100% + 4px); animation: vg-menu-up 120ms ease-out; }
+	.vg-model__menu--down { top: calc(100% + 4px); animation: vg-menu-down var(--vg-motion-exit) var(--vg-ease-out); }
+	.vg-model__menu--up { bottom: calc(100% + 4px); animation: vg-menu-up var(--vg-motion-exit) var(--vg-ease-out); }
 	@keyframes vg-menu-down {
 		from { opacity: 0; transform: translateY(4px); }
 		to { opacity: 1; transform: translateY(0); }
@@ -396,7 +396,7 @@ export const WIDGET_STYLES = `
 		font-size: 12px;
 		font-weight: 600;
 		cursor: pointer;
-		transition: background-color 140ms ease-out, color 140ms ease-out;
+		transition: background-color var(--vg-motion-state) var(--vg-ease-out), color var(--vg-motion-state) var(--vg-ease-out);
 	}
 	/* The one sanctioned accent-filled segment: a true either/or commit (§3.2). */
 	.vg-agent__option.is-active {
@@ -421,7 +421,7 @@ export const WIDGET_STYLES = `
 		text-decoration: none;
 		font-size: 13px;
 		font-weight: 600;
-		transition: background-color 140ms ease-out;
+		transition: background-color var(--vg-motion-state) var(--vg-ease-out);
 	}
 	.vg-pr:hover { background: color-mix(in srgb, var(--vg-accent) 22%, transparent); }
 
@@ -466,7 +466,7 @@ export const WIDGET_STYLES = `
 		font-size: 13px;
 		font-weight: 600;
 		cursor: pointer;
-		transition: background-color 140ms ease-out, color 140ms ease-out;
+		transition: background-color var(--vg-motion-state) var(--vg-ease-out), color var(--vg-motion-state) var(--vg-ease-out);
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;

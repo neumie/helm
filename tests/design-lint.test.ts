@@ -68,15 +68,16 @@ test('every baseline reason names an existing open decision, ruling or plan stag
  */
 const BASELINE_CAPS: Record<(typeof lint.RULES)[number], number> = {
 	// 10: §9 ruling 103 moved the extension popup onto Helm tokens (2026-11-13).
-	'raw-color': 10,
+	// 9: S2 gave the PDF paper white its token, --paper.
+	'raw-color': 9,
 	// 36: §9 ruling 94 adds the Review light scope's --neutral and its recomputed --neutral-soft (2026-11-13).
 	// 29: §9 ruling 96 removed Remote's seven surface-token overrides (2026-11-13).
 	// 25: S2 generates the Remote offline page's :root, a token source now.
 	'token-definition': 25,
-	'raw-z-index': 45,
-	// 97: --motion-state is a token now, so the viewer's 140ms fallback is no finding.
-	'raw-duration': 97,
-	'raw-easing': 89,
+	// 5 / 7 / 7: S2 put every z-index and motion literal a token holds on that token; the rest is D19.
+	'raw-z-index': 5,
+	'raw-duration': 7,
+	'raw-easing': 7,
 	// 8 / 58 / 20: §9 rulings 15, 98, 100 and 101 (D8 picks) fixed or ruled the rest (2026-11-13).
 	// 7 / 55 / 19: §9 ruling 103 put the extension popup on the scale (2026-11-13).
 	'radius-off-scale': 7,

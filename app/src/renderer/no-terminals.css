@@ -6,7 +6,7 @@
 	grid-column: 1;
 	position: absolute;
 	inset: 0;
-	z-index: 2;
+	z-index: var(--z-local-2);
 	display: flex;
 	align-items: center;
 	justify-content: center;
