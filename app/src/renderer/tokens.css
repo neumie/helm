@@ -89,6 +89,11 @@
 	--radius-lg: 8px;
 	--radius-md: 6px;
 	--radius-sm: 4px;
+	/* Helm Remote phone radii (§2.4, §9 ruling 100): rows, fields and menu items; bubble and floating
+	 * surfaces; the composer capsule at half its 56px rest height. Remote only. */
+	--radius-touch: 12px;
+	--radius-float: 18px;
+	--radius-capsule: 28px;
 	/* Layout + type scale knobs (not theme tokens) */
 	--left-width: 340px;
 	--ui-scale: 1;

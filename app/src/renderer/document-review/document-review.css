@@ -952,7 +952,7 @@
 	place-items: center;
 	height: 18px;
 	font-size: calc(11px * var(--ui-scale));
-	font-weight: 700;
+	font-weight: 600;
 	line-height: 1;
 	color: var(--danger);
 }

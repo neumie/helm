@@ -72,12 +72,12 @@
 
 /* Count badge: chip spec (§3.4), neutral tone — a state readout, not a button. */
 .bg-count {
-	padding: 2px 7px;
+	padding: 2px 8px;
 	border-radius: 999px;
 	background: var(--neutral-soft);
 	color: var(--neutral);
-	font-size: 10px;
-	font-weight: 700;
+	font-size: 11px;
+	font-weight: 600;
 	line-height: 1.4;
 	font-variant-numeric: tabular-nums;
 }

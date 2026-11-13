@@ -355,24 +355,15 @@ countdownEl.style in showToast | transition | transform var(--expr)ms linear | S
 
 ## radius-off-scale
 ### app/src/renderer/agent-dock/agent-dock.css
-.agent-dock-agents-seg | border-radius | 1.5px | D8 off-scale values
-.agent-dock-choices[data-multi="true"] .agent-dock-choice-cursor | border-radius | 3px | D8 off-scale values
-### app/src/renderer/remote/remote.css
-.remote-compose-surface | border-radius | 28px | D8 off-scale values
-.remote-composer-actions .menu-item | border-radius | 12px | D8 off-scale values
-.remote-composer-actions .menu-panel | border-radius | 18px | D8 off-scale values
-.remote-information-body dl | border-radius | 12px | D8 off-scale values
-.remote-message[data-role="user"] .remote-user-text | border-radius | 18px | D8 off-scale values
-.remote-navigation-item | border-radius | 12px | D8 off-scale values
-.remote-sheet | border-radius | 24px | D8 off-scale values
-.remote-workspace input:not([type="radio"]):not([type="checkbox"]), .remote-workspace select, .remote-workspace textarea, .remote-login input | border-radius | 10px | D8 off-scale values
+.agent-dock-agents-seg | border-radius | 1.5px | D17 off-scale values the scale picks did not settle (radii under 4px)
+.agent-dock-choices[data-multi="true"] .agent-dock-choice-cursor | border-radius | 3px | D17 off-scale values the scale picks did not settle (radii under 4px)
 ### app/src/renderer/sidebar/sidebar.css
-.color-input::-webkit-color-swatch | border-radius | 3px | D8 off-scale values
-.new-item-prompt-field::before | border-radius | 1px | D8 off-scale values
-.segmented-index .segment-active .segment-body::after | border-radius | 1px | D8 off-scale values
+.color-input::-webkit-color-swatch | border-radius | 3px | D17 off-scale values the scale picks did not settle (radii under 4px)
+.new-item-prompt-field::before | border-radius | 1px | D17 off-scale values the scale picks did not settle (radii under 4px)
+.segmented-index .segment-active .segment-body::after | border-radius | 1px | D17 off-scale values the scale picks did not settle (radii under 4px)
 ### app/src/renderer/viewer/viewer.css
-.viewer-code .cm-editor .cm-searchMatch | border-radius | 2px | D8 off-scale values
-.viewer-pdf-paper | border-radius | 2px | D8 off-scale values
+.viewer-code .cm-editor .cm-searchMatch | border-radius | 2px | D17 off-scale values the scale picks did not settle (radii under 4px)
+.viewer-pdf-paper | border-radius | 2px | D17 off-scale values the scale picks did not settle (radii under 4px)
 ### extension/src/popup.html
 input | border-radius | 3px | D9 extension popup (moves onto Helm tokens)
 
@@ -380,225 +371,109 @@ input | border-radius | 3px | D9 extension popup (moves onto Helm tokens)
 ### app/assets/remote/remote-sw.js
 body | padding | 48px 24px | D16 Remote offline page type and spacing (served by remote-sw.js; cannot load tokens.css)
 ### app/src/renderer/agent-dock/agent-dock.css
-.agent-dock-agent-age | padding-left | 6px | D8 off-scale values
-.agent-dock-agents-bar | gap | 2px | D8 off-scale values
-.agent-dock-agents-bar | margin-left | 5px | D8 off-scale values
-.agent-dock-entry-line | gap | 6px | D8 off-scale values
-.agent-dock-md :is(ul, ol) | padding-left | 18px | D8 off-scale values
-.agent-dock-md blockquote | padding-left | 18px | D8 off-scale values
-.agent-dock-md li | padding-left | 2px | D8 off-scale values
-.agent-dock-md li + li, .agent-dock-md li > :is(ul, ol), .agent-dock-md li > p + * | margin-top | 2px | D8 off-scale values
-.agent-dock-md p + :is(ul, ol) | margin-top | 2px | D8 off-scale values
-.agent-dock-source | gap | 6px | D8 off-scale values
-.agent-dock-source + .agent-dock-source::before | margin-right | 2px | D8 off-scale values
+.agent-dock-agents-bar | gap | 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.agent-dock-md :is(ul, ol) | padding-left | 18px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.agent-dock-md blockquote | padding-left | 18px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.agent-dock-md li | padding-left | 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.agent-dock-md li + li, .agent-dock-md li > :is(ul, ol), .agent-dock-md li > p + * | margin-top | 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.agent-dock-md p + :is(ul, ol) | margin-top | 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.agent-dock-source + .agent-dock-source::before | margin-right | 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
 ### app/src/renderer/background-terminals.css
-#bg-toggle | gap | 6px | D8 off-scale values
-#bg-toggle:has(> .bg-current:not([hidden])):not(.drag-ready, .drag-over) | padding | 0 8px 0 10px | D8 off-scale values
-.bg-count | padding | 2px 7px | D8 off-scale values
+.bg-count | padding | 2px 8px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
 ### app/src/renderer/button.css
-.btn | gap | 6px | D8 off-scale values
-.btn | padding | 0 14px | D8 off-scale values
-.btn-sm | padding | 0 10px | D8 off-scale values
+.btn | padding | 0 14px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
 ### app/src/renderer/document-review/document-review.css
-.review-header | padding | 8px 16px 8px 90px | D8 off-scale values
-.review-header-controls > .btn | gap | 6px | D8 off-scale values
-.review-image-note | padding | 8px 10px | D8 off-scale values
-.review-reading | padding | 20px 40px 80px 32px | D8 off-scale values
-.review-screenshots | margin | 0 0 10px | D8 off-scale values
-.review-screenshots | padding | 2px | D8 off-scale values
-.review-send-refused | column-gap | 6px | D8 off-scale values
-@media (max-width: 900px) .review-header | padding-left | 90px | D8 off-scale values
-@media (max-width: 900px) .review-reading | padding-inline | 24px 40px | D8 off-scale values
-### app/src/renderer/no-terminals.css
-.no-terms-detail | margin-top | 6px | D8 off-scale values
-.no-terms-detail kbd | padding | 1px 5px | D8 off-scale values
+.review-header | padding | 8px 16px 8px 90px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.review-reading | padding | 20px 40px 80px 32px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.review-screenshots | padding | 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+@media (max-width: 900px) .review-header | padding-left | 90px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+@media (max-width: 900px) .review-reading | padding-inline | 24px 40px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
 ### app/src/renderer/remote/remote.css
-.remote-chat > .remote-header | margin-bottom | calc(-44px - env(safe-area-inset-top, 0px)) | D8 off-scale values
-.remote-chat > .remote-header + .remote-reading-stage > .remote-reading-area > .remote-transcript | padding-top | calc(68px + env(safe-area-inset-top, 0px)) | D8 off-scale values
-.remote-chat > .remote-header + :is(.remote-notice, .remote-history) | margin-top | calc(44px + env(safe-area-inset-top, 0px)) | D8 off-scale values
-.remote-composer-actions | padding | 6px | D8 off-scale values
-.remote-composer-actions .menu-panel | padding | 6px | D8 off-scale values
-.remote-information h3 | padding-left | 2px | D8 off-scale values
-.remote-information-body dl > div | padding | 11px 16px | D8 off-scale values
-.remote-markdown code | padding | 2px 4px | D8 off-scale values
-.remote-markdown p | margin | 0 0 10px | D8 off-scale values
-.remote-message | padding | 10px 0 | D8 off-scale values
-.remote-message[data-role="user"] .remote-user-text | padding | 8px 14px | D8 off-scale values
-.remote-navigation-header | padding | 6px 16px | D8 off-scale values
-.remote-scope-filter select | padding | 6px 8px !important | D8 off-scale values
-.remote-session-info-detail | gap | 6px | D8 off-scale values
-.remote-sheet | padding | 18px 0 max(12px, env(safe-area-inset-bottom, 0px)) | D8 off-scale values
-.remote-sheet-title | padding | 10px 20px 12px | D8 off-scale values
-.remote-transcript | padding | 24px 16px calc(28px + var(--remote-composer-overlap, 76px)) | D8 off-scale values
-.remote-usage-plan | padding | 1px 6px | D8 off-scale values
-.remote-workspace .remote-compose-open textarea | padding | 8px 12px 2px | D8 off-scale values
-.remote-workspace .remote-compose-surface textarea | padding | 10px 6px | D8 off-scale values
+.remote-chat > .remote-header | margin-bottom | calc(-44px - env(safe-area-inset-top, 0px)) | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.remote-chat > .remote-header + .remote-reading-stage > .remote-reading-area > .remote-transcript | padding-top | calc(68px + env(safe-area-inset-top, 0px)) | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.remote-chat > .remote-header + :is(.remote-notice, .remote-history) | margin-top | calc(44px + env(safe-area-inset-top, 0px)) | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.remote-information h3 | padding-left | 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.remote-markdown code | padding | 2px 4px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.remote-message[data-role="user"] .remote-user-text | padding | 8px 14px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.remote-sheet | padding | 18px 0 max(12px, env(safe-area-inset-bottom, 0px)) | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.remote-transcript | padding | 24px 16px calc(28px + var(--remote-composer-overlap, 76px)) | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.remote-workspace .remote-compose-open textarea | padding | 8px 12px 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
 ### app/src/renderer/run-context/run-context-editor.css
-.run-context-banner | padding | 10px 24px | D8 off-scale values
-.run-context-banner > div | gap | 2px | D8 off-scale values
-.run-context-dialog | padding | 22px 24px | D8 off-scale values
-.run-context-dialog p, .run-context-start-state p | margin | 8px 0 22px | D8 off-scale values
-.run-context-editor | padding | 28px max(36px, calc((100% - 760px) / 2)) | D8 off-scale values
-.run-context-header | padding | 0 16px 0 84px | D8 off-scale values
-.run-context-kicker | margin-bottom | 2px | D8 off-scale values
-.run-context-notice | padding | 9px 24px | D8 off-scale values
-.run-context-save-state | gap | 7px | D8 off-scale values
-.run-context-source dl > div | gap | 2px | D8 off-scale values
-.run-context-source dl, .run-context-source ul | gap | 10px | D8 off-scale values
-.run-context-source h2 | margin | 0 0 10px | D8 off-scale values
-### app/src/renderer/sidebar/detail-redesign.css
-.activity-history | gap | 10px | D8 off-scale values
-.activity-list | gap | 5px | D8 off-scale values
-.command-status | gap | 7px | D8 off-scale values
-.detail-hero | gap | 5px | D8 off-scale values
-[data-detail-state] .card | gap | 10px | D8 off-scale values
-### app/src/renderer/sidebar/scheduled-runs.css
-.scheduled-history-row | padding | 10px 0 | D8 off-scale values
+.run-context-banner > div | gap | 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.run-context-dialog | padding | 22px 24px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.run-context-dialog p, .run-context-start-state p | margin | 8px 0 22px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.run-context-editor | padding | 28px max(36px, calc((100% - 760px) / 2)) | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.run-context-header | padding | 0 16px 0 84px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.run-context-kicker | margin-bottom | 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.run-context-source dl > div | gap | 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
 ### app/src/renderer/sidebar/sidebar.css
-.banner | padding | 10px 12px | D8 off-scale values
-.card | gap | 10px | D8 off-scale values
-.card-flush .card-head | margin-bottom | 6px | D8 off-scale values
 .chip | padding | 2px 8px | §9 ruling 26 chip padding 2×8
-.color-input::-webkit-color-swatch-wrapper | padding | 3px | D8 off-scale values
-.empty-detail | margin-top | 6px | D8 off-scale values
-.input | padding | 0 10px | D8 off-scale values
-.intent-questions | gap | 6px | D8 off-scale values
-.item-project-group + .item-project-group | margin-top | 6px | D8 off-scale values
-.item-row-actions | gap | 2px | D8 off-scale values
-.item-row-shell-actions .item-row | padding-right | 84px | D8 off-scale values
-.item-row-status | gap | 5px | D8 off-scale values
-.list-scroll | padding | 6px 0 16px | D8 off-scale values
-.list-toolbar | padding | 10px 8px 0 | D8 off-scale values
-.log-well | padding | 10px 12px | D8 off-scale values
+.color-input::-webkit-color-swatch-wrapper | padding | 3px | D17 off-scale values the scale picks did not settle (the 3px padding is tied to the swatch's 3px inner radius, §3.7)
+.item-row-actions | gap | 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.item-row-shell-actions .item-row | padding-right | 84px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
 .menu-trigger-badge | padding | 2px 8px | §9 ruling 26 chip padding 2×8
-.plan-well | padding | 10px 12px | D8 off-scale values
-.remote-device-state | margin-top | 2px | D8 off-scale values
-.run-caption | margin-top | 6px | D8 off-scale values
-.security-note | padding | 10px 12px | D8 off-scale values
-.segmented-index .segment-body | gap | 6px | D8 off-scale values
-.select | padding-right | 28px | D8 off-scale values
-.sheet-heading | padding-top | 2px | D8 off-scale values
-.shortcut-alias button | padding | 0 6px | D8 off-scale values
-.shortcut-scope | margin | 14px 0 0 | D8 off-scale values
-.shortcut-title | gap | 2px | D8 off-scale values
-.task-image-caption | padding | 8px 10px | D8 off-scale values
-.textarea | padding | 8px 10px | D8 off-scale values
+.remote-device-state | margin-top | 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.select | padding-right | 28px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.sheet-heading | padding-top | 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.shortcut-scope | margin | 14px 0 0 | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.shortcut-title | gap | 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
 ### app/src/renderer/signals/signals.css
-.signals-braille | margin-bottom | 14px | D8 off-scale values
-.signals-braille-cell | gap | 5px | D8 off-scale values
-.signals-braille-mark .signals-braille-cell | gap | 2px | D8 off-scale values
-.signals-choice-label .signals-glyph | margin-right | 6px | D8 off-scale values
-.signals-choice-label.signals-ask-link | padding-block | 5px | D8 off-scale values
-.signals-foot | padding | 8px 16px 10px | D8 off-scale values
-.signals-foot-hints | gap | 2px 14px | D8 off-scale values
-.signals-resting | gap | 6px | D8 off-scale values
-.signals-section + .signals-section | margin-top | 28px | D8 off-scale values
-.signals-section .signals-tr | scroll-margin-top | 28px | D8 off-scale values
+.signals-braille | margin-bottom | 14px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.signals-braille-mark .signals-braille-cell | gap | 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.signals-foot-hints | gap | 2px 14px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.signals-section + .signals-section | margin-top | 28px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.signals-section .signals-tr | scroll-margin-top | 28px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
 ### app/src/renderer/terminal-tabs.css
-#tabs | margin-left | -6px | D8 off-scale values
-#tabs | padding-left | 6px | D8 off-scale values
-.activity-indicator | gap | 2px | D8 off-scale values
-.tab | padding | 0 6px 0 10px | D8 off-scale values
-.tab-group-summary | gap | 5px | D8 off-scale values
-.tab-rename | padding | 0 6px | D8 off-scale values
-.tab-running | margin-right | 2px | D8 off-scale values
+.activity-indicator | gap | 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.tab-running | margin-right | 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
 ### app/src/renderer/terminal-well.css
-.term-holder | padding | 14px 0 14px 16px | D8 off-scale values
-### app/src/renderer/toast.css
-#toasts | gap | 6px | D8 off-scale values
-.toast | gap | 10px | D8 off-scale values
-.toast | padding | 11px 12px 13px | D8 off-scale values
-.toast-action | margin | -3px 0 0 0 | D8 off-scale values
-.toast-dismiss | margin | -3px -6px 0 -6px | D8 off-scale values
+.term-holder | padding | 14px 0 14px 16px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
 ### app/src/renderer/topbar.css
-.topbar-left | padding-left | 84px | D8 off-scale values
-.topbar-right | padding | 0 10px 0 6px | D8 off-scale values
+.topbar-left | padding-left | 84px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
 ### app/src/renderer/viewer/viewer.css
-.viewer-code .cm-editor .cm-panel .cm-textfield, .viewer-search-field | padding | 0 10px | D8 off-scale values
-.viewer-code .cm-editor .cm-panel.cm-search | padding | 8px 48px 8px 16px | D8 off-scale values
-.viewer-pdf-outline-item | padding | 7px 12px 7px 16px | D8 off-scale values
-.viewer-pdf-password | margin | 48px auto | D8 off-scale values
-.viewer-tree-colon | margin-inline-start | -6px | D8 off-scale values
-.viewer-tree-row | gap | 6px | D8 off-scale values
+.viewer-code .cm-editor .cm-panel.cm-search | padding | 8px 48px 8px 16px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
+.viewer-pdf-password | margin | 48px auto | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
 ### extension/src/popup.html
 .models .group | margin | 8px 0 2px | D9 extension popup (moves onto Helm tokens)
-.models .row | gap | 6px | D9 extension popup (moves onto Helm tokens)
 .models .row | padding | 2px 0 | D9 extension popup (moves onto Helm tokens)
-.status | margin-top | 10px | D9 extension popup (moves onto Helm tokens)
 h1 | margin | 0 0 14px 0 | D9 extension popup (moves onto Helm tokens)
-input | padding | 6px 8px | D9 extension popup (moves onto Helm tokens)
 ### extension/src/widget.styles.ts
-.vg-btn | padding | 0 14px | §9 ruling 88 widget buttons are the §3.1 md button (0 14 as .btn; the 14 itself is D8 off-scale values)
+.vg-btn | padding | 0 14px | §9 ruling 88 widget buttons are the §3.1 md button (0 14 as .btn; the 14 itself is D17, a component dimension the scale picks did not settle)
 .vg-chip | padding | 2px 8px | §9 ruling 26 chip padding 2×8
-.vg-error | padding | 10px 12px | D8 off-scale values
-.vg-model__trigger | padding | 0 10px | D8 off-scale values
-.vg-pr | padding | 0 14px | §9 ruling 88 widget buttons are the §3.1 md button (0 14 as .btn; the 14 itself is D8 off-scale values)
-.vg-run-context | padding-top | 10px | D8 off-scale values
-.vg-run-context__header | margin-bottom | 6px | D8 off-scale values
-.vg-run-menu input | padding | 6px | D8 off-scale values
+.vg-pr | padding | 0 14px | §9 ruling 88 widget buttons are the §3.1 md button (0 14 as .btn; the 14 itself is D17, a component dimension the scale picks did not settle)
 
 ## font-size-off-scale
 ### app/assets/remote/remote-sw.js
 body | font | 16px/1.6 -apple-system,BlinkMacSystemFont,sans-serif | D16 Remote offline page type and spacing (served by remote-sw.js; cannot load tokens.css)
 h1 | font-size | 24px | D16 Remote offline page type and spacing (served by remote-sw.js; cannot load tokens.css)
 ### app/src/renderer/agent-dock/agent-dock.css
-.agent-dock-message-mark | font-size | calc(9px * var(--ui-scale)) | D8 off-scale values
+.agent-dock-message-mark | font-size | calc(9px * var(--ui-scale)) | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
 ### app/src/renderer/background-terminals.css
-.bg-action-glyph | font-size | 16px | D8 off-scale values
-.bg-count | font-size | 10px | D8 off-scale values
-.bg-kill-glyph | font-size | 14px | D8 off-scale values
+.bg-action-glyph | font-size | 16px | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
+.bg-kill-glyph | font-size | 14px | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
 ### app/src/renderer/reading-width.css
-[data-reading-width] :not(pre) > code | font-size | 0.92em | D8 off-scale values
+[data-reading-width] :not(pre) > code | font-size | 0.92em | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
 ### app/src/renderer/remote/remote.css
-.remote-composer-actions .menu-item | font-size | calc(14px * var(--ui-scale, 1)) | D8 off-scale values
-.remote-markdown code | font-size | 0.92em | D8 off-scale values
-.remote-markdown h3 | font-size | calc(20px * var(--ui-scale, 1)) | D8 off-scale values
-.remote-message | font-size | calc(16px * var(--ui-scale, 1)) | D8 off-scale values
-.remote-navigation-conversation-title | font-size | calc(14px * var(--ui-scale, 1)) | D8 off-scale values
-.remote-navigation-item | font-size | calc(16px * var(--ui-scale, 1)) | D8 off-scale values
-.remote-session-title | font-size | calc(16px * var(--ui-scale, 1)) | D8 off-scale values
-.remote-sheet-option | font-size | calc(16px * var(--ui-scale, 1)) | D8 off-scale values
-.remote-sheet-title | font-size | calc(16px * var(--ui-scale, 1)) | D8 off-scale values
-@media (max-width: 799px) .remote-workspace input:not([type="radio"]):not([type="checkbox"]), .remote-workspace select, .remote-workspace textarea, .remote-login input | font-size | 16px | §9 ruling 58 Remote web 16px form text
+.remote-markdown code | font-size | 0.92em | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
 ### app/src/renderer/run-context/run-context-editor.css
-.run-context-dialog h2, .run-context-start-state h1 | font-size | calc(15px * var(--ui-scale)) | D8 off-scale values
-.run-context-editor .bn-editor | font-size | calc(14px * var(--ui-scale)) | D8 off-scale values
-.run-context-heading h1 | font-size | calc(14px * var(--ui-scale)) | D8 off-scale values
-.run-context-kicker | font-size | calc(10px * var(--ui-scale)) | D8 off-scale values
-.run-context-source dt | font-size | calc(10px * var(--ui-scale)) | D8 off-scale values
+.run-context-dialog h2, .run-context-start-state h1 | font-size | calc(15px * var(--ui-scale)) | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
+.run-context-editor .bn-editor | font-size | calc(14px * var(--ui-scale)) | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
+.run-context-heading h1 | font-size | calc(14px * var(--ui-scale)) | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
+.run-context-kicker | font-size | calc(10px * var(--ui-scale)) | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
+.run-context-source dt | font-size | calc(10px * var(--ui-scale)) | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
 ### app/src/renderer/sidebar/sidebar.css
-.item-project-group-head > span:last-child | font-size | calc(10px * var(--ui-scale)) | D8 off-scale values
-.menu-item-color | font-size | calc(14px * var(--ui-scale)) | D8 off-scale values
-.question-mark | font-size | calc(10px * var(--ui-scale)) | D8 off-scale values
+.item-project-group-head > span:last-child | font-size | calc(10px * var(--ui-scale)) | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
+.menu-item-color | font-size | calc(14px * var(--ui-scale)) | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
 ### app/src/renderer/terminal-tabs.css
-#new-tab | font-size | 16px | D8 off-scale values
-.tab-group-count | font-size | calc(10px * var(--ui-scale)) | D8 off-scale values
+#new-tab | font-size | 16px | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
 ### app/src/renderer/viewer/viewer.css
-.viewer-grid-letter, .viewer-grid-number | font-size | 0.92em | D8 off-scale values
-.viewer-pdf-password-title | font-size | calc(14px * var(--ui-scale)) | D8 off-scale values
+.viewer-grid-letter, .viewer-grid-number | font-size | 0.92em | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
+.viewer-pdf-password-title | font-size | calc(14px * var(--ui-scale)) | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
 ### extension/src/popup.html
 h1 | font-size | 14px | D9 extension popup (moves onto Helm tokens)
 ### extension/src/widget.styles.ts
-.vg-close | font-size | 16px | D8 off-scale values
-.vg-error__dismiss | font-size | 16px | D8 off-scale values
-
-## letter-spacing
-### app/src/renderer/agent-dock/agent-dock.css
-.agent-dock-hint kbd[data-face="symbols"] | letter-spacing | 0.04em | D8 off-scale values (letter-spacing overrides)
-.agent-dock-kbd | letter-spacing | 0.04em | D8 off-scale values (letter-spacing overrides)
-.agent-dock-title-hint kbd[data-face="symbols"] | letter-spacing | 0.04em | D8 off-scale values (letter-spacing overrides)
-### app/src/renderer/sidebar/sidebar.css
-.remote-code | letter-spacing | 0.08em | D8 off-scale values (letter-spacing overrides)
-
-## font-weight
-### app/src/renderer/background-terminals.css
-.bg-count | font-weight | 700 | D8 off-scale values (weights 650/700)
-### app/src/renderer/document-review/document-review.css
-.review-send-refused-glyph | font-weight | 700 | D8 off-scale values (weights 650/700)
-### app/src/renderer/sidebar/sidebar.css
-.question-mark | font-weight | 700 | D8 off-scale values (weights 650/700)
-### extension/src/widget.styles.ts
-.vg-model__trigger | font-weight | 650 | D8 off-scale values (weights 650/700)
+.vg-close | font-size | 16px | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
+.vg-error__dismiss | font-size | 16px | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
 
 ## inline-svg
 ### app/src/renderer/index.html

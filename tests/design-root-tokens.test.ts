@@ -1,5 +1,5 @@
-// §2.4 radius tokens and the `--accent-text` alias are defined on `:root` (§9 ruling 17, §9 ruling 87; D4 A2 + A,
-// Jakub 2026-11-13). Before, every `var(--radius-*)` without a fallback was invalid and its corner fell to 0, and
+// §2.4 radius tokens (desktop and Remote's phone steps) and the `--accent-text` alias are defined on `:root`
+// (§9 rulings 17, 87 and 100; D4 A2 + A, D8 Remote radii B, Jakub 2026-11-13). Before, every `var(--radius-*)` without a fallback was invalid and its corner fell to 0, and
 // `.shortcut-recording` inherited its parent's colour.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -21,6 +21,16 @@ test('the §2.4 radius tokens are defined on :root with the spec values', () => 
 	assert.match(root, /--radius-lg:\s*8px;/)
 	assert.match(root, /--radius-md:\s*6px;/)
 	assert.match(root, /--radius-sm:\s*4px;/)
+})
+
+test('Helm Remote phone radii are :root tokens with the §9 ruling 100 values, used by remote.css', () => {
+	assert.match(root, /--radius-touch:\s*12px;/)
+	assert.match(root, /--radius-float:\s*18px;/)
+	assert.match(root, /--radius-capsule:\s*28px;/)
+	const remote = read('app/src/renderer/remote/remote.css')
+	assert.match(rule(remote, '.remote-sheet'), /border-radius:\s*var\(--radius-float\)/)
+	assert.match(rule(remote, '.remote-compose-surface'), /border-radius:\s*var\(--radius-capsule\)/)
+	assert.match(rule(remote, '.remote-information-body dl'), /border-radius:\s*var\(--radius-touch\)/)
 })
 
 test('--accent-text is an alias of the accent, so it follows every preset and theme', () => {

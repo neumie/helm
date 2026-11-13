@@ -265,7 +265,7 @@
 	display: grid;
 	grid-template-columns: repeat(2, 5px);
 	grid-auto-rows: 5px;
-	gap: 5px;
+	gap: 4px;
 }
 
 .signals-braille-dot {
@@ -723,7 +723,7 @@
 	font-size: var(--dock-fs);
 	line-height: var(--dock-lh);
 	color: var(--text-1);
-	padding-block: 5px;
+	padding-block: 4px;
 }
 
 /* Jakub's answer is his own prose, not a literal prompt: the UI face at reading size. */

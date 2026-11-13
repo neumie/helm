@@ -222,19 +222,28 @@ export interface PrimitiveVocabulary {
 // Scales from docs/design-system.md.
 
 /**
- * §2.3: 4px base scale; 0 is no space and 1px a hairline compensation (a line, not a space). Checked on
- * margin, padding, scroll-margin/-padding and gap, in px and rem (16px; em/% are relative to content).
- * Positions are not spaces: physical top/right/bottom/left and their `inset` shorthands are not checked.
+ * §2.3: 4px base scale; 0 is no space and 1px a hairline compensation (a line, not a space). 6 and 10 are the
+ * in-component steps (§9 ruling 15: inside a component only, never between sections or from an edge; that
+ * placement is a review rule, the scanner cannot see it). Checked on margin, padding, scroll-margin/-padding
+ * and gap, in px and rem (16px; em/% are relative to content). Positions are not spaces: physical
+ * top/right/bottom/left and their `inset` shorthands are not checked.
  */
-export const SPACING_PX = new Set([0, 1, 4, 8, 12, 16, 20, 24, 32])
+export const SPACING_PX = new Set([0, 1, 4, 6, 8, 10, 12, 16, 20, 24, 32])
 /** §2.3: "2px only as inner padding of segmented tracks"; padding on these selectors may be 2px. */
 export const SEGMENTED_SELECTOR = /segmented|-seg\b|__seg\b/
 /** §2.4: 4 / 6 / 8 and full (999); 50% is the circle form of full. */
 export const RADIUS_PX = new Set([0, 4, 6, 8, 999])
 export const RADIUS_PERCENT = new Set([0, 50])
+/**
+ * §2.4, §9 ruling 100: Helm Remote's phone radii (12 touch, 18 float, 28 capsule) exist only as these tokens and
+ * only in Remote's stylesheets; a literal 12/18/28 is still off-scale everywhere, and a desktop rule that names
+ * one of these tokens is reported too.
+ */
+export const REMOTE_RADIUS_TOKENS = ['--radius-touch', '--radius-float', '--radius-capsule'] as const
+export const REMOTE_DIR = 'app/src/renderer/remote/'
 /** §2.2: the type ladder (17 hero, 13 body/emphasis, 12 secondary/section/label/button, 11 meta/chip/mono). */
 export const FONT_SIZE_PX = new Set([11, 12, 13, 17])
-/** §2.2 "Never bold below 600 or above 700" read with the plan's rule: weights 400/500/600 only. */
+/** §2.2, §9 ruling 99: the written weights are 400/500/600 only (no 650, no 700). */
 export const FONT_WEIGHTS = new Set([400, 500, 600])
 /**
  * §2.2: "Base letter-spacing is -0.01em everywhere". Restating the base is not an override: buttons and
@@ -242,11 +251,20 @@ export const FONT_WEIGHTS = new Set([400, 500, 600])
  */
 export const BASE_LETTER_SPACING = '-0.01em'
 /**
+ * §2.2, §9 ruling 102: the one spaced step, +0.04em, only for key symbols and codes meant to be copied; the
+ * scanner reads that from the selector (a `kbd` element or a `-kbd` / `-code` class). Monospace uses `normal`.
+ */
+export const KEY_LETTER_SPACING = '0.04em'
+export const KEY_OR_CODE_SELECTOR = /(^|[\s>+~(,])kbd\b|-kbd\b|-code\b/
+/**
  * Type sizes a surface's own section of the spec sets beside the §2.2 ladder. Document Review's reading
  * scope: "15px/1.7 body, 28px/1.25 h1, 21px/1.35 h2" (docs/design-system.md, Native document review workspace).
  */
 export const SURFACE_FONT_SIZE_PX: readonly { dir: string; px: readonly number[] }[] = [
 	{ dir: 'app/src/renderer/document-review/', px: [15, 21, 28] },
+	// Helm Remote (§9 ruling 101): 16 is the phone reading step (messages, titles, navigation, sheet, and the
+	// iOS no-zoom form text of §9 ruling 58); Markdown h3 takes the Document Review heading step 21.
+	{ dir: REMOTE_DIR, px: [16, 21] },
 ]
 
 const TIMING_KEYWORDS = new Set(['ease', 'ease-in', 'ease-out', 'ease-in-out', 'linear', 'step-start', 'step-end'])
@@ -716,7 +734,8 @@ export function lintDeclaration(property: string, value: string, ctx: Declaratio
 			if (n.unit === '%') return !RADIUS_PERCENT.has(n.n)
 			return true
 		})
-		if (off) rules.add('radius-off-scale')
+		const remoteToken = !ctx.file.startsWith(REMOTE_DIR) && REMOTE_RADIUS_TOKENS.some(name => usesVar(nodes, name))
+		if (off || remoteToken) rules.add('radius-off-scale')
 	}
 
 	if (
@@ -780,9 +799,12 @@ export function lintDeclaration(property: string, value: string, ctx: Declaratio
 	if (prop === 'text-transform' && literals(w => w.toLowerCase() === 'uppercase')) rules.add('uppercase')
 
 	if (prop === 'letter-spacing') {
-		const off = literals(
-			w => !['normal', 'inherit', 'initial', 'unset', 'revert', '0', BASE_LETTER_SPACING].includes(w.toLowerCase()),
-		)
+		const keyOrCode = KEY_OR_CODE_SELECTOR.test(ctx.selector)
+		const off = literals(w => {
+			const lower = w.toLowerCase()
+			if (['normal', 'inherit', 'initial', 'unset', 'revert', '0', BASE_LETTER_SPACING].includes(lower)) return false
+			return !(keyOrCode && lower === KEY_LETTER_SPACING)
+		})
 		if (off) rules.add('letter-spacing')
 	}
 
@@ -1994,17 +2016,17 @@ export function defaultReason(f: FindingKey): string {
 		case 'spacing-off-scale':
 			if (/(^|[\s.,])\.?(chip|vg-chip|menu-trigger-badge)\b/.test(f.selector) && /\b2px 8px\b/.test(f.value))
 				return '§9 ruling 26 chip padding 2×8'
-			return 'D8 off-scale values'
+			return 'D17 off-scale values the scale picks did not settle (2px steps and component dimensions)'
 		case 'font-size-off-scale':
-			if (isRemote(f.file) && f.value === '16px' && /\binput\b/.test(f.selector))
-				return '§9 ruling 58 Remote web 16px form text'
-			return 'D8 off-scale values'
+			return 'D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)'
 		case 'font-size-unscaled':
 			return '§9 ruling 13 (no fixed sidebar sizes: write calc(<px> * var(--ui-scale))): needs a fix'
 		case 'letter-spacing':
-			return 'D8 off-scale values (letter-spacing overrides)'
+			return '§9 ruling 102 (one spaced step, +0.04em, only for key symbols and codes): needs a fix'
 		case 'font-weight':
-			return 'D8 off-scale values (weights 650/700)'
+			return '§9 ruling 99 (written weights 400/500/600 only): needs a fix'
+		case 'radius-off-scale':
+			return 'D17 off-scale values the scale picks did not settle (radii under 4px)'
 		case 'inline-svg':
 			return '§9 ruling 95 icon set (draw it in the icon module, or list a real exception in ICONS_OUTSIDE_MODULE)'
 		case 'primitive-outside-owner':
@@ -2013,7 +2035,7 @@ export function defaultReason(f: FindingKey): string {
 		case 'button-border':
 			return '§9 ruling 4 (no border on any button): needs a pick or a fix'
 		default:
-			return 'D8 off-scale values'
+			return 'D17 off-scale values the scale picks did not settle'
 	}
 }
 

@@ -172,7 +172,7 @@ body.remote-page {
 	 * a transparent line so focus can colour it without moving anything a pixel.
 	 */
 	border: 1px solid transparent;
-	border-radius: 10px;
+	border-radius: var(--radius-touch);
 	padding: 8px 12px;
 	outline: none;
 }
@@ -460,7 +460,7 @@ body.remote-page {
 .remote-message[data-role="user"] .remote-user-text {
 	max-width: 76%;
 	padding: 8px 14px;
-	border-radius: 18px;
+	border-radius: var(--radius-float);
 	background: var(--remote-bubble);
 	text-align: left;
 }
@@ -507,7 +507,7 @@ body.remote-page {
 	margin: 20px 0 8px;
 }
 .remote-markdown h3 {
-	font-size: calc(20px * var(--ui-scale, 1));
+	font-size: calc(21px * var(--ui-scale, 1));
 }
 .remote-markdown ul,
 .remote-markdown ol {
@@ -665,7 +665,7 @@ body.remote-page {
 	position: relative;
 	isolation: isolate;
 	flex-shrink: 0;
-	border-radius: 28px;
+	border-radius: var(--radius-capsule);
 	overflow: visible;
 }
 .remote-compose-surface::before {
@@ -848,7 +848,7 @@ body.remote-page {
 	width: min(240px, calc(100vw - 80px));
 	padding: 6px;
 	border-color: var(--hairline-strong);
-	border-radius: 18px;
+	border-radius: var(--radius-float);
 	box-shadow: 0 16px 44px rgb(0 0 0 / 48%);
 	transform-origin: bottom right;
 	animation: remote-popover-in 140ms ease-out both;
@@ -863,8 +863,8 @@ body.remote-page {
 	height: auto;
 	min-height: 44px;
 	padding: 0 12px;
-	border-radius: 12px;
-	font-size: calc(14px * var(--ui-scale, 1));
+	border-radius: var(--radius-touch);
+	font-size: calc(13px * var(--ui-scale, 1));
 }
 .remote-question-actions .remote-composer-actions {
 	justify-content: flex-end;
@@ -1251,7 +1251,7 @@ body.remote-page {
 .remote-information-body dl {
 	margin: 0;
 	/* The group is told by its own surface, not by a drawn card edge. */
-	border-radius: 12px;
+	border-radius: var(--radius-touch);
 	background: var(--fill-subtle);
 	overflow: hidden;
 }
@@ -1261,7 +1261,7 @@ body.remote-page {
 	justify-content: space-between;
 	gap: 16px;
 	min-height: 44px;
-	padding: 11px 16px;
+	padding: 12px 16px;
 }
 .remote-information-body dl > div + div {
 	border-top: 1px solid var(--hairline);
@@ -1411,7 +1411,7 @@ body.remote-page {
 .remote-navigation-conversation-title {
 	margin: 0;
 	padding: 8px 16px;
-	font-size: calc(14px * var(--ui-scale, 1));
+	font-size: calc(13px * var(--ui-scale, 1));
 	font-weight: 600;
 	color: var(--text-0);
 	white-space: nowrap;
@@ -1429,7 +1429,7 @@ body.remote-page {
 .remote-navigation-item {
 	appearance: none;
 	border: 0;
-	border-radius: 12px;
+	border-radius: var(--radius-touch);
 	background: transparent;
 	min-height: 48px;
 	padding: 0 16px;
@@ -1621,7 +1621,7 @@ body.remote-page {
 	margin-bottom: 8px;
 	padding: 18px 0 max(12px, env(safe-area-inset-bottom, 0px));
 	border: 1px solid var(--hairline-strong);
-	border-radius: 24px;
+	border-radius: var(--radius-float);
 	background: var(--chrome, var(--pane));
 	box-shadow: 0 20px 60px rgb(0 0 0 / 55%);
 	overflow: hidden;

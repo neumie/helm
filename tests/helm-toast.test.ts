@@ -17,7 +17,7 @@ test('toasts render as compact bottom-right notices', () => {
 	assert.match(css, /#toasts\s*\{[^}]*width:\s*min\(320px, calc\(100vw - 32px\)\)/s)
 	assert.match(css, /#toasts\s*\{[^}]*pointer-events:\s*none/s)
 	assert.doesNotMatch(css, /#toasts\s*\{[^}]*left:|#toasts\s*\{[^}]*translateX/s)
-	assert.match(css, /\.toast\s*\{[^}]*width:\s*100%[^}]*min-height:\s*48px[^}]*padding:\s*11px 12px 13px/s)
+	assert.match(css, /\.toast\s*\{[^}]*width:\s*100%[^}]*min-height:\s*48px[^}]*padding:\s*12px;/s)
 	assert.match(css, /\.toast\s*\{[^}]*align-items:\s*flex-start/s)
 	assert.match(story, /justifyContent:\s*'flex-end'/)
 	assert.match(story, /width:\s*'min\(320px, calc\(100vw - 32px\)\)'/)
@@ -26,10 +26,10 @@ test('toasts render as compact bottom-right notices', () => {
 test('toast hierarchy uses the shared ghost button and inset timer hairline', () => {
 	assert.match(css, /\.toast-msg\s*\{[^}]*font-size:\s*13px[^}]*font-weight:\s*500[^}]*line-height:\s*18px/s)
 	assert.match(css, /\.toast-detail\s*\{[^}]*color:\s*var\(--text-2\)[^}]*font-size:\s*11px/s)
-	assert.match(css, /\.toast-action\s*\{[^}]*flex:\s*none[^}]*margin:\s*-3px 0 0 0/s)
-	assert.match(css, /\.toast-dismiss\s*\{[^}]*flex:\s*none[^}]*margin:\s*-3px -6px 0 -6px/s)
+	assert.match(css, /\.toast-action\s*\{[^}]*flex:\s*none[^}]*margin:\s*-4px 0 0 0/s)
+	assert.match(css, /\.toast-dismiss\s*\{[^}]*flex:\s*none[^}]*margin:\s*-4px -6px 0 -6px/s)
 	assert.doesNotMatch(css, /\.toast-(?:action|dismiss)\s*\{[^}]*(?:height|padding|border|background|color|font-)/s)
-	assert.match(css, /\.toast-countdown\s*\{[^}]*left:\s*12px[^}]*right:\s*12px[^}]*bottom:\s*5px[^}]*height:\s*1px/s)
+	assert.match(css, /\.toast-countdown\s*\{[^}]*left:\s*12px[^}]*right:\s*12px[^}]*bottom:\s*4px[^}]*height:\s*1px/s)
 	assert.match(toast, /countdownEl\.style\.transition = `transform \$\{ttl\}ms linear`/)
 })
 

@@ -306,7 +306,7 @@ export const WIDGET_STYLES = `
 		color: var(--vg-text-0);
 		font-family: var(--vg-font);
 		font-size: 12px;
-		font-weight: 650;
+		font-weight: 600;
 		cursor: pointer;
 		outline: none;
 		transition: border-color 140ms ease-out;

@@ -48,7 +48,7 @@
 .run-context-save-state {
 	display: flex;
 	align-items: center;
-	gap: 7px;
+	gap: 8px;
 	color: var(--text-2);
 	font-size: calc(11px * var(--ui-scale));
 }
@@ -62,7 +62,7 @@
 }
 
 .run-context-notice {
-	padding: 9px 24px;
+	padding: 10px 24px;
 	border-bottom: 1px solid var(--hairline);
 	color: var(--text-2);
 	font-size: calc(11px * var(--ui-scale));

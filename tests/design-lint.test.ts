@@ -79,13 +79,15 @@ const BASELINE_CAPS: Record<(typeof lint.RULES)[number], number> = {
 	'raw-z-index': 45,
 	'raw-duration': 98,
 	'raw-easing': 89,
-	'radius-off-scale': 16,
-	'spacing-off-scale': 140,
-	'font-size-off-scale': 32,
+	// 8 / 58 / 20: §9 rulings 15, 98, 100 and 101 (D8 picks) fixed or ruled the rest (2026-11-13).
+	'radius-off-scale': 8,
+	'spacing-off-scale': 58,
+	'font-size-off-scale': 20,
 	'font-size-unscaled': 0,
 	uppercase: 0,
-	'letter-spacing': 4,
-	'font-weight': 4,
+	// 0 / 0: §9 rulings 99 and 102 (D8 picks, 2026-11-13).
+	'letter-spacing': 0,
+	'font-weight': 0,
 	'inline-svg': 4,
 	'primitive-outside-owner': 5,
 	'button-border': 1,
@@ -228,7 +230,7 @@ test('raw-z-index, raw-duration and raw-easing; var() and the reduced-motion cla
 test('indirection: !important, var() fallbacks behind non-tokens, local custom properties, calc() wrappers', () => {
 	assert.deepEqual(
 		css(`
-			.a { color: #f00!important; padding: 6px!important; z-index: 5 ! important }
+			.a { color: #f00!important; padding: 7px!important; z-index: 5 ! important }
 			.b { z-index: var(--nope, 9999); padding: var(--nope, 7px); border-radius: var(--x, 3px) }
 			.c { transition: opacity var(--d, 300ms) var(--e, ease-in) }
 			.d { padding: var(--accent, 7px); font-weight: calc(700) }
@@ -238,7 +240,7 @@ test('indirection: !important, var() fallbacks behind non-tokens, local custom p
 		`),
 		[
 			'.a | color: #f00!important | raw-color',
-			'.a | padding: 6px!important | spacing-off-scale',
+			'.a | padding: 7px!important | spacing-off-scale',
 			'.a | z-index: 5 ! important | raw-z-index',
 			'.b | z-index: var(--nope, 9999) | raw-z-index',
 			'.b | padding: var(--nope, 7px) | spacing-off-scale',
@@ -275,14 +277,14 @@ test('radius and spacing scales: on-scale, hairlines, segmented 2px, calc widths
 			.a { border-radius: 6px; border-top-left-radius: 999px; border-radius: 50%; border-radius: var(--r, 10px) }
 			.b { border-radius: 10px 0 0 10px }
 			.c { padding: 4px 8px 12px 16px; margin: -1px auto 0; gap: 20px 24px; inset: 32px; padding: 1em 2rem 5% }
-			.d { padding: 6px; margin-top: calc(-44px - env(safe-area-inset-top, 0px)) }
+			.d { padding: 5px; margin-top: calc(-44px - env(safe-area-inset-top, 0px)) }
 			.e { padding-inline: max(16px, calc((100% - 800px) / 2)); padding-top: calc(28px + var(--o, 76px)) }
 			.segmented-track { padding: 2px } .chip { padding: 2px 8px }
 		`),
 		[
 			'.a | border-radius: var(--r, 10px) | radius-off-scale',
 			'.b | border-radius: 10px 0 0 10px | radius-off-scale',
-			'.d | padding: 6px | spacing-off-scale',
+			'.d | padding: 5px | spacing-off-scale',
 			'.d | margin-top: calc(-44px - env(safe-area-inset-top, 0px)) | spacing-off-scale',
 			'.e | padding-top: calc(28px + var(--o, 76px)) | spacing-off-scale',
 			'.chip | padding: 2px 8px | spacing-off-scale',
@@ -292,10 +294,45 @@ test('radius and spacing scales: on-scale, hairlines, segmented 2px, calc widths
 	// (inset, top/right/bottom/left) are not spaces.
 	assert.deepEqual(
 		css(`
-			.r { padding: 0.375rem; gap: 1.5rem; margin: 0.25rem; padding: max(7px, 0%); gap: 0.3em }
+			.r { padding: 0.3125rem; gap: 1.5rem; margin: 0.25rem; padding: max(7px, 0%); gap: 0.3em }
 			.s { inset: 6px; top: 6px; inset-inline: 3px }
 		`),
-		['.r | padding: 0.375rem | spacing-off-scale', '.r | padding: max(7px, 0%) | spacing-off-scale'],
+		['.r | padding: 0.3125rem | spacing-off-scale', '.r | padding: max(7px, 0%) | spacing-off-scale'],
+	)
+})
+
+test('D8 picks: in-component 6/10, Remote phone radii as tokens only, Remote 16/21, key and code spacing', () => {
+	// §9 ruling 15: 6 and 10 are scale steps; odd values stay off.
+	assert.deepEqual(css('.a { padding: 6px 10px; gap: 6px; margin: -6px 0 0 } .b { padding: 11px 12px 13px }'), [
+		'.b | padding: 11px 12px 13px | spacing-off-scale',
+	])
+	// §9 ruling 100: the phone radii live in tokens used only by Remote; literals stay off-scale there too.
+	const remote = 'app/src/renderer/remote/x.css'
+	assert.deepEqual(
+		css(
+			'.t { border-radius: var(--radius-touch) } .f { border-radius: var(--radius-float) } .c { border-radius: var(--radius-capsule) } .l { border-radius: 12px }',
+			remote,
+		),
+		['.l | border-radius: 12px | radius-off-scale'],
+	)
+	assert.deepEqual(css('.d { border-radius: var(--radius-touch) }'), [
+		'.d | border-radius: var(--radius-touch) | radius-off-scale',
+	])
+	// §9 ruling 101: Remote's phone reading step 16 and its Markdown h3 21, only in Remote.
+	assert.deepEqual(
+		css(
+			'.m { font-size: calc(16px * var(--ui-scale, 1)) } .h { font-size: calc(21px * var(--ui-scale, 1)) } .x { font-size: 14px }',
+			remote,
+		),
+		['.x | font-size: 14px | font-size-off-scale'],
+	)
+	assert.deepEqual(css('.m { font-size: 16px }'), ['.m | font-size: 16px | font-size-off-scale'])
+	// §9 ruling 102: +0.04em only on key symbols and codes to copy; any other spacing or selector is off.
+	assert.deepEqual(
+		css(
+			'.agent-dock-kbd { letter-spacing: 0.04em } .hint kbd[data-face="symbols"] { letter-spacing: 0.04em } .remote-code { letter-spacing: 0.04em } .remote-code { letter-spacing: 0.08em } .title { letter-spacing: 0.04em }',
+		),
+		['.remote-code | letter-spacing: 0.08em | letter-spacing', '.title | letter-spacing: 0.04em | letter-spacing'],
 	)
 })
 
@@ -506,7 +543,7 @@ test('inline styles in TS/TSX: JSX objects (also conditional and cast), DOM styl
 		tsx(`
 			function A({ on, w }) {
 				return <>
-					<div style={{ zIndex: 5, padding: 6, gap: 8, color: 'var(--text-2)', width: w, fontSize: 13 }} />
+					<div style={{ zIndex: 5, padding: 7, gap: 8, color: 'var(--text-2)', width: w, fontSize: 13 }} />
 					<i style={on ? { color: '#fff' } : undefined} />
 					<b style={{ WebkitLineClamp: 2, textTransform: 'uppercase' } as React.CSSProperties} />
 				</>
@@ -523,7 +560,7 @@ test('inline styles in TS/TSX: JSX objects (also conditional and cast), DOM styl
 		`),
 		[
 			'<div style> in A | z-index: 5 | raw-z-index',
-			'<div style> in A | padding: 6px | spacing-off-scale',
+			'<div style> in A | padding: 7px | spacing-off-scale',
 			'<i style> in A | color: #fff | raw-color',
 			'<b style> in A | text-transform: uppercase | uppercase',
 			'el.style in B | z-index: 9 | raw-z-index',

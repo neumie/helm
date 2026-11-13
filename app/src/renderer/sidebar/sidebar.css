@@ -516,7 +516,7 @@
 	flex: none;
 	display: inline-flex;
 	align-items: center;
-	gap: 5px;
+	gap: 4px;
 	font-weight: 500;
 }
 .item-row-status.tone-accent {
@@ -1071,8 +1071,8 @@
 	width: 16px;
 	height: 16px;
 	border-radius: 999px;
-	font-size: calc(10px * var(--ui-scale));
-	font-weight: 700;
+	font-size: calc(11px * var(--ui-scale));
+	font-weight: 600;
 }
 
 .security-note {
@@ -2073,7 +2073,7 @@ button.banner {
 	font-family: var(--font-mono);
 	font-size: calc(17px * var(--ui-scale));
 	font-weight: 600;
-	letter-spacing: 0.08em;
+	letter-spacing: 0.04em;
 	color: var(--text-0);
 	user-select: text;
 }

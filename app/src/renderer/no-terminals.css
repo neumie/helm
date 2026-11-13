@@ -37,7 +37,7 @@
 .no-terms-detail kbd {
 	font-family: var(--font-mono);
 	font-size: calc(11px * var(--ui-scale));
-	padding: 1px 5px;
+	padding: 1px 4px;
 	border: 1px solid var(--fill-raised);
 	border-radius: 4px;
 	background: var(--fill-subtle);
