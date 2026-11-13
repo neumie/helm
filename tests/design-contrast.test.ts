@@ -18,7 +18,7 @@ type PairsModule = typeof import('../app/src/design/contrast-pairs.ts')
 type ThemePresetsModule = typeof import('../app/src/theme-presets.ts')
 
 const { contrast, resolveValue, paint, truncate2 } = contrastModule as unknown as ContrastModule
-const { ROWS, OPEN, NEED, PALETTES, SOURCES, LITERAL_SOURCES, measure, rowKey, spliceContrastTable } =
+const { ROWS, OPEN, EXEMPT, NEED, PALETTES, SOURCES, LITERAL_SOURCES, measure, rowKey, spliceContrastTable } =
 	pairsModule as unknown as PairsModule
 const { THEME_PRESETS } = themePresetsModule as unknown as ThemePresetsModule
 
@@ -76,12 +76,45 @@ test('pairs are unique and name known colours', () => {
 	for (const row of ROWS) assert.ok(Number.isFinite(measure(row)), rowKey(row))
 })
 
-test('every pair meets its need or is open under a decision', () => {
-	const openKeys = new Set(OPEN.map(rowKey))
-	const unexplained = ROWS.filter(row => fails(row) && !openKeys.has(rowKey(row))).map(
+test('every pair meets its need, is open under a decision, or is exempt by a ruling', () => {
+	const explained = new Set([...OPEN, ...EXEMPT].map(rowKey))
+	const unexplained = ROWS.filter(row => fails(row) && !explained.has(rowKey(row))).map(
 		row => `${rowKey(row)} = ${truncate2(measure(row)).toFixed(2)} < ${NEED[row.use]}`,
 	)
-	assert.deepEqual(unexplained, [], 'lift the colour, or add an OPEN entry naming the decision that owns it')
+	assert.deepEqual(
+		unexplained,
+		[],
+		'lift the colour, add an OPEN entry naming the decision that owns it, or an EXEMPT entry naming its ruling',
+	)
+})
+
+test('no exempt entry is stale: each names a measured pair that still fails, once, and is not also open', () => {
+	const rows = new Map(ROWS.map(row => [rowKey(row), row]))
+	const unknown = EXEMPT.filter(entry => !rows.has(rowKey(entry))).map(rowKey)
+	assert.deepEqual(unknown, [], 'exempt entries must name a row')
+	const stale = EXEMPT.filter(entry => {
+		const row = rows.get(rowKey(entry))
+		return row !== undefined && !fails(row)
+	}).map(rowKey)
+	assert.deepEqual(stale, [], 'these pairs pass now: remove them from EXEMPT')
+	const keys = EXEMPT.map(rowKey)
+	assert.deepEqual(
+		keys.filter((key, i) => keys.indexOf(key) !== i),
+		[],
+	)
+	const openKeys = new Set(OPEN.map(rowKey))
+	assert.deepEqual(
+		keys.filter(key => openKeys.has(key)),
+		[],
+		'a pair is either open or exempt',
+	)
+})
+
+test('exempt entries name rulings in the docs/design-system.md rulings table', () => {
+	const spec = read('docs/design-system.md')
+	for (const ruling of new Set(EXEMPT.map(entry => entry.ruling))) {
+		assert.ok(spec.includes(`\n| ${ruling} | `), `ruling ${ruling} is not a row of the rulings table`)
+	}
 })
 
 test('no open entry is stale: each names a measured pair that still fails', () => {
@@ -220,4 +253,15 @@ test('the stylesheet :root the Remote and Review palettes inherit still equals t
 test('the measured-contrast table in docs/design-system.md is fresh', () => {
 	const spec = read('docs/design-system.md')
 	assert.equal(spliceContrastTable(spec), spec, 'regenerate with node --import tsx app/scripts/contrast-table.ts')
+})
+
+test('the .select chevron data URI strokes the Helm --text-2 value (a token cannot reach inside the URI)', () => {
+	const text2 = THEME_PRESETS.helm?.tokens['--text-2'] ?? ''
+	const css = read('app/src/renderer/sidebar/sidebar.css')
+	const start = css.indexOf('\n.select {')
+	assert.ok(start >= 0, 'sidebar.css has no .select block')
+	const block = css.slice(start, css.indexOf('}', start))
+	const strokes = [...block.matchAll(/stroke='%23([0-9a-f]{6})'/gi)].map(match => `#${match[1]}`)
+	assert.match(text2, /^#[0-9a-f]{6}$/)
+	assert.deepEqual(strokes, [text2], 'the chevron stroke must be the --text-2 value')
 })

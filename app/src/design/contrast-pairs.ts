@@ -2,9 +2,10 @@
 //
 // Each row stores the ratio printed in §2.9 (two decimals, truncated). `tests/design-contrast.test.ts`
 // recomputes every row from the palettes below and fails when a stored ratio differs, when a pair misses
-// its need without an `OPEN` entry, or when an `OPEN` entry starts passing (stale). An open entry names
-// the decision in docs/plans/design-system/spec.md that owns it; it leaves only by a token change or a
-// ruling, never quietly. `app/scripts/contrast-table.ts` writes the §2.9 table from `ROWS`.
+// its need without an `OPEN` or `EXEMPT` entry, or when such an entry starts passing (stale). An open entry
+// names the decision in docs/plans/design-system/spec.md that owns it; an exempt entry names the
+// docs/design-system.md §9 ruling that exempts it. Either leaves only by a token change or a ruling, never
+// quietly. `app/scripts/contrast-table.ts` writes the §2.9 table from `ROWS`.
 //
 // Values come from the current sources (until stage S2 generates them from one token module):
 // the bundled presets (`app/src/theme-presets.ts`), and verbatim copies of the CSS declarations
@@ -65,14 +66,16 @@ const REVIEW_LIGHT = {
 	'--fill-subtle': 'rgba(0, 0, 0, 0.05)',
 	'--fill-raised': 'rgba(0, 0, 0, 0.09)',
 	'--fill-strong': 'rgba(0, 0, 0, 0.13)',
-	'--accent': '#176ac2',
-	'--accent-fill': '#176ac2',
+	'--accent': '#176ac1',
+	'--accent-fill': '#176ac1',
 	'--accent-fill-hover': '#125ba8',
 	'--danger': '#b91c1c',
 	'--warn': '#8a5a0a',
 	'--success': '#267347',
+	'--neutral': '#656a73',
 	'--danger-soft': 'color-mix(in srgb, var(--danger) 15%, transparent)',
 	'--warn-soft': 'color-mix(in srgb, var(--warn) 15%, transparent)',
+	'--neutral-soft': 'color-mix(in srgb, var(--neutral) 15%, transparent)',
 }
 
 /** `app/src/renderer/viewer/viewer.css` `.viewer-window`: syntax colours (dark uses the ANSI ladder). */
@@ -340,7 +343,17 @@ export interface OpenPair {
 	bg: readonly string[]
 	use: Use
 	/** The decision in docs/plans/design-system/spec.md that owns the failure. */
-	decision: 'D5' | 'D9'
+	decision: 'D9' | 'D15'
+}
+
+/** A failing pair a §9 ruling exempts from its need (decorative, or a pairing the ruling forbids drawing). */
+export interface ExemptPair {
+	palette: PaletteId
+	fg: string
+	bg: readonly string[]
+	use: Use
+	/** The §9 ruling in docs/design-system.md that exempts the pair. */
+	ruling: number
 }
 
 // Background stacks shared by the dark palettes.
@@ -368,13 +381,13 @@ const row = (palette: PaletteId, fg: string, bg: readonly string[], use: Use, ra
 
 /** Stored ratios of the terminal-group rows, per palette, in `groupRows` order. */
 const GROUP_RATIOS: Record<GroupPaletteId, readonly number[]> = {
-	'helm-group-blue': [2.35, 3.55, 7.07, 4.78, 3.35, 4.76, 3.46, 6.01, 5.03, 4.35, 3.64, 4.35],
-	'helm-group-purple': [2.31, 3.42, 6.76, 4.96, 3.48, 5.05, 3.6, 6.34, 5.24, 4.6, 3.8, 4.6],
-	'helm-group-pink': [2.35, 3.52, 7, 4.82, 3.43, 4.91, 3.5, 6.08, 5.08, 4.4, 3.68, 4.4],
-	'helm-group-red': [2.46, 3.9, 7.87, 4.38, 3.15, 4.27, 3.15, 5.26, 4.57, 3.79, 3.29, 3.79],
-	'helm-group-orange': [2.33, 3.46, 6.86, 4.9, 3.49, 5.05, 3.56, 6.22, 5.17, 4.51, 3.75, 4.51],
-	'helm-group-green': [2.22, 3.09, 5.99, 5.38, 3.97, 6.14, 3.96, 7.15, 5.73, 5.27, 4.23, 5.27],
-	'helm-group-cyan': [2.2, 3.02, 5.85, 5.46, 4.04, 6.31, 4.04, 7.34, 5.84, 5.42, 4.31, 5.42],
+	'helm-group-blue': [3.61, 3.55, 7.07, 4.78, 3.35, 4.76, 4.13, 6.01, 5.03, 5.19, 4.35, 5.19],
+	'helm-group-purple': [3.55, 3.42, 6.76, 4.96, 3.48, 5.05, 4.29, 6.34, 5.24, 5.48, 4.53, 5.48],
+	'helm-group-pink': [3.6, 3.52, 7, 4.82, 3.43, 4.91, 4.17, 6.08, 5.08, 5.25, 4.39, 5.25],
+	'helm-group-red': [3.78, 3.9, 7.87, 4.38, 3.15, 4.27, 3.77, 5.26, 4.57, 4.53, 3.93, 4.53],
+	'helm-group-orange': [3.58, 3.46, 6.86, 4.9, 3.49, 5.05, 4.23, 6.22, 5.17, 5.37, 4.47, 5.37],
+	'helm-group-green': [3.41, 3.09, 5.99, 5.38, 3.97, 6.14, 4.68, 7.15, 5.73, 6.23, 4.99, 6.23],
+	'helm-group-cyan': [3.38, 3.02, 5.85, 5.46, 4.04, 6.31, 4.76, 7.34, 5.84, 6.4, 5.09, 6.4],
 	'high-contrast-group-blue': [4.56, 5.22, 7.55, 6.82, 3.97, 6.08, 5.3, 8.93, 7.25, 6.95, 5.64, 6.95],
 	'high-contrast-group-purple': [4.44, 4.89, 6.99, 7.17, 4.25, 6.77, 5.6, 9.64, 7.67, 7.54, 6, 7.54],
 	'high-contrast-group-pink': [4.54, 5.14, 7.4, 6.91, 4.09, 6.33, 5.38, 9.09, 7.36, 7.08, 5.73, 7.08],
@@ -421,28 +434,28 @@ export const ROWS: readonly ContrastRow[] = [
 	// helm: text ladder
 	row('helm', '--text-0', CHROME, 'text', 14.47),
 	row('helm', '--text-1', CHROME, 'text', 6.35),
-	row('helm', '--text-2', CHROME, 'text', 2.96),
+	row('helm', '--text-2', CHROME, 'text', 4.54),
 	row('helm', '--text-0', PANE, 'text', 15.48),
 	row('helm', '--text-1', PANE, 'text', 6.79),
-	row('helm', '--text-2', PANE, 'text', 3.17),
+	row('helm', '--text-2', PANE, 'text', 4.86),
 	row('helm', '--text-0', WELL, 'text', 16.03),
 	row('helm', '--text-1', WELL, 'text', 7.04),
-	row('helm', '--text-2', WELL, 'text', 3.28),
+	row('helm', '--text-2', WELL, 'text', 5.03),
 	row('helm', '--text-0', INPUT, 'text', 13.7),
 	row('helm', '--text-1', INPUT, 'text', 6.01),
-	row('helm', '--text-2', INPUT, 'text', 2.8),
+	row('helm', '--text-2', INPUT, 'text', 4.3),
 	row('helm', '--text-0', SELECTED, 'text', 12.16),
 	row('helm', '--text-1', SELECTED, 'text', 5.34),
-	row('helm', '--text-2', SELECTED, 'text', 2.49),
+	row('helm', '--text-2', SELECTED, 'text', 3.81),
 	row('helm', '--text-0', PRESSED, 'text', 10.65),
 	row('helm', '--text-1', PRESSED, 'text', 4.67),
-	row('helm', '--text-2', PRESSED, 'text', 2.18),
+	row('helm', '--text-2', PRESSED, 'text', 3.34),
 	row('helm', '--text-0', DOCK_SELECTED, 'text', 11.14),
 	row('helm', '--text-1', DOCK_SELECTED, 'text', 4.89),
-	row('helm', '--text-2', DOCK_SELECTED, 'text', 2.28),
+	row('helm', '--text-2', DOCK_SELECTED, 'text', 3.49),
 	// helm: dock dim
-	row('helm', '--dock-dim', CHROME, 'text', 4.77),
-	row('helm', '--dock-dim', DOCK_SELECTED, 'text', 3.67),
+	row('helm', '--dock-dim', CHROME, 'text', 5.58),
+	row('helm', '--dock-dim', DOCK_SELECTED, 'text', 4.29),
 	// helm: tones
 	row('helm', '--accent', CHROME, 'text', 5.99),
 	row('helm', '--accent', PANE, 'text', 6.41),
@@ -462,9 +475,9 @@ export const ROWS: readonly ContrastRow[] = [
 	row('helm', '--neutral', PANE, 'text', 5.62),
 	row('helm', '--neutral', ['--pane', '--neutral-soft'], 'text', 4.58),
 	// helm: primary button
-	row('helm', '--on-accent', ['--accent-fill'], 'text', 3.67),
-	row('helm', '--on-accent', ['--accent-fill-hover'], 'text', 2.72),
-	row('helm', '--accent-fill', PANE, 'ui', 4.96),
+	row('helm', '--on-accent', ['--accent-fill'], 'text', 4.51),
+	row('helm', '--on-accent', ['--accent-fill-hover'], 'text', 5.11),
+	row('helm', '--accent-fill', PANE, 'ui', 4.04),
 	// helm: control edges and focus
 	row('helm', '--hairline', PANE, 'ui', 1.19),
 	row('helm', '--hairline', CHROME, 'ui', 1.21),
@@ -474,11 +487,11 @@ export const ROWS: readonly ContrastRow[] = [
 	row('helm', '--accent', WELL, 'ui', 6.64),
 	// helm: hovered tab and dock entry, Signals list rows, Run Context conflict banner, scrolling
 	row('helm', '--text-1', CHROME_HOVER, 'text', 5.54),
-	row('helm', '--text-2', CHROME_HOVER, 'text', 2.58),
-	row('helm', '--dock-dim', CHROME_HOVER, 'text', 4.16),
-	row('helm', '--dock-dim', PANE, 'text', 5.11),
-	row('helm', '--dock-dim', INPUT, 'text', 4.52),
-	row('helm', '--dock-dim', SELECTED, 'text', 4.01),
+	row('helm', '--text-2', CHROME_HOVER, 'text', 3.96),
+	row('helm', '--dock-dim', CHROME_HOVER, 'text', 4.87),
+	row('helm', '--dock-dim', PANE, 'text', 5.97),
+	row('helm', '--dock-dim', INPUT, 'text', 5.28),
+	row('helm', '--dock-dim', SELECTED, 'text', 4.69),
 	row('helm', '--text-0', ['--pane', '--accent-soft'], 'text', 12.46),
 	row('helm', '--ansi-bright-black', TERMINAL, 'text', 2.98),
 	row('helm', '--thumb', PANE, 'ui', 1.5),
@@ -543,13 +556,13 @@ export const ROWS: readonly ContrastRow[] = [
 	row('high-contrast', '--neutral', PANE, 'text', 8.6),
 	row('high-contrast', '--neutral', ['--pane', '--neutral-soft'], 'text', 6.79),
 	// high-contrast: primary button
-	row('high-contrast', '--on-accent', ['--accent-fill'], 'text', 4.46),
-	row('high-contrast', '--on-accent', ['--accent-fill-hover'], 'text', 3.07),
-	row('high-contrast', '--accent-fill', PANE, 'ui', 4.35),
+	row('high-contrast', '--on-accent', ['--accent-fill'], 'text', 4.51),
+	row('high-contrast', '--on-accent', ['--accent-fill-hover'], 'text', 5.21),
+	row('high-contrast', '--accent-fill', PANE, 'ui', 4.3),
 	// high-contrast: control edges and focus
-	row('high-contrast', '--hairline', PANE, 'ui', 1.55),
-	row('high-contrast', '--hairline', CHROME, 'ui', 1.63),
-	row('high-contrast', '--hairline-strong', PANE, 'ui', 2.83),
+	row('high-contrast', '--hairline', PANE, 'ui', 3.05),
+	row('high-contrast', '--hairline', CHROME, 'ui', 3.11),
+	row('high-contrast', '--hairline-strong', PANE, 'ui', 4.99),
 	row('high-contrast', '--accent', PANE, 'ui', 8.71),
 	row('high-contrast', '--accent', CHROME, 'ui', 7.96),
 	row('high-contrast', '--accent', WELL, 'ui', 9.4),
@@ -583,21 +596,21 @@ export const ROWS: readonly ContrastRow[] = [
 	// remote
 	row('remote', '--text-0', PANE, 'text', 16.47),
 	row('remote', '--text-1', PANE, 'text', 7.23),
-	row('remote', '--text-2', PANE, 'text', 3.37),
+	row('remote', '--text-2', PANE, 'text', 5.17),
 	row('remote', '--text-0', CHROME, 'text', 14.42),
 	row('remote', '--text-1', CHROME, 'text', 6.33),
-	row('remote', '--text-2', CHROME, 'text', 2.95),
+	row('remote', '--text-2', CHROME, 'text', 4.52),
 	row('remote', '--text-0', WELL, 'text', 14.75),
 	row('remote', '--text-1', WELL, 'text', 6.47),
-	row('remote', '--text-2', WELL, 'text', 3.02),
+	row('remote', '--text-2', WELL, 'text', 4.63),
 	row('remote', '--text-0', BUBBLE, 'text', 11.34),
 	row('remote', '--text-1', BUBBLE, 'text', 4.98),
-	row('remote', '--text-2', BUBBLE, 'text', 2.32),
+	row('remote', '--text-2', BUBBLE, 'text', 3.56),
 	row('remote', '--accent', PANE, 'text', 6.82),
 	row('remote', '--danger', PANE, 'text', 5.85),
 	row('remote', '--hairline-strong', PANE, 'ui', 1.55),
 	row('remote', '--accent', PANE, 'ui', 6.82),
-	row('remote', '--text-2', CHROME_HOVER, 'text', 2.53),
+	row('remote', '--text-2', CHROME_HOVER, 'text', 3.89),
 	row('remote', '--warn', ['--pane', '--warn-soft'], 'text', 7.65),
 	// review light
 	row('review-light', '--text-0', PANE, 'text', 14.23),
@@ -609,19 +622,19 @@ export const ROWS: readonly ContrastRow[] = [
 	row('review-light', '--text-0', WELL, 'text', 12.44),
 	row('review-light', '--text-1', WELL, 'text', 4.93),
 	row('review-light', '--text-2', WELL, 'text', 4.78),
-	row('review-light', '--accent', PANE, 'text', 5.14),
-	row('review-light', '--accent', WELL, 'text', 4.49),
-	row('review-light', '--neutral', PANE, 'text', 3.08),
-	row('review-light', '--neutral', WELL, 'text', 2.69),
+	row('review-light', '--accent', PANE, 'text', 5.15),
+	row('review-light', '--accent', WELL, 'text', 4.5),
+	row('review-light', '--neutral', PANE, 'text', 5.16),
+	row('review-light', '--neutral', WELL, 'text', 4.51),
 	row('review-light', '--danger', PANE, 'text', 6.14),
 	row('review-light', '--warn', PANE, 'text', 5.62),
 	row('review-light', '--success', PANE, 'text', 5.5),
 	row('review-light', '--danger', ['--pane', '--danger-soft'], 'text', 4.77),
 	row('review-light', '--warn', ['--pane', '--warn-soft'], 'text', 4.56),
-	row('review-light', '--on-accent', ['--accent-fill'], 'text', 5.41),
+	row('review-light', '--on-accent', ['--accent-fill'], 'text', 5.42),
 	row('review-light', '--on-accent', ['--accent-fill-hover'], 'text', 6.8),
 	row('review-light', '--hairline-strong', PANE, 'ui', 1.44),
-	row('review-light', '--accent', PANE, 'ui', 5.14),
+	row('review-light', '--accent', PANE, 'ui', 5.15),
 	row('review-light', '--thumb', PANE, 'ui', 1.3),
 	row('review-light', '--syntax-keyword', WELL, 'text', 5.26),
 	row('review-light', '--syntax-string', WELL, 'text', 4.84),
@@ -639,7 +652,7 @@ export const ROWS: readonly ContrastRow[] = [
 	row('viewer-dark', '--syntax-function', WELL, 'text', 6.64),
 	row('viewer-dark', '--syntax-property', WELL, 'text', 11.75),
 	row('viewer-dark', '--syntax-invalid', WELL, 'text', 5.69),
-	row('viewer-dark', '--syntax-comment', WELL, 'text', 3.28),
+	row('viewer-dark', '--syntax-comment', WELL, 'text', 5.03),
 	// popup
 	row('popup', 'body text', POPUP_BG, 'text', 9.53),
 	row('popup', 'title', POPUP_BG, 'text', 3.39),
@@ -660,112 +673,101 @@ const open = (
 	decision: OpenPair['decision'],
 ): OpenPair => ({ palette, fg, bg, use, decision })
 
-// Today's failures, each owned by a decision in docs/plans/design-system/spec.md: D5 (contrast) for the
-// app palettes, D9 (popup onto Helm tokens) for the extension popup. The dock's own target for
-// `--dock-dim` on its selected entry is 3:1 (§3.24); WCAG asks 4.5 for its 12px meta, so it stays open.
-// Scroll thumbs and the terminal's dim ANSI colour are listed too: D5 rules whether they are exempt.
+// Today's failures, each owned by a decision in docs/plans/design-system/spec.md: D15 (the pairs the D5 picks
+// did not cover: --text-2 and --dock-dim on fills, scroll thumbs, the terminal's dim ANSI colour, tones on
+// their soft fills over a hovered or selected row, the terminal-group band) for the app palettes, D9 (popup
+// onto Helm tokens) for the extension popup. The dock's own target for `--dock-dim` on its selected entry is
+// 3:1 (§3.24); WCAG asks 4.5 for its 12px meta, so it stays open.
 export const OPEN: readonly OpenPair[] = [
-	open('helm', '--text-2', CHROME, 'text', 'D5'),
-	open('helm', '--text-2', PANE, 'text', 'D5'),
-	open('helm', '--text-2', WELL, 'text', 'D5'),
-	open('helm', '--text-2', INPUT, 'text', 'D5'),
-	open('helm', '--text-2', SELECTED, 'text', 'D5'),
-	open('helm', '--text-2', PRESSED, 'text', 'D5'),
-	open('helm', '--text-2', DOCK_SELECTED, 'text', 'D5'),
-	open('helm', '--dock-dim', DOCK_SELECTED, 'text', 'D5'),
-	open('helm', '--on-accent', ['--accent-fill'], 'text', 'D5'),
-	open('helm', '--on-accent', ['--accent-fill-hover'], 'text', 'D5'),
-	open('helm', '--hairline', PANE, 'ui', 'D5'),
-	open('helm', '--hairline', CHROME, 'ui', 'D5'),
-	open('helm', '--hairline-strong', PANE, 'ui', 'D5'),
-	open('high-contrast', '--text-2', SELECTED, 'text', 'D5'),
-	open('high-contrast', '--text-2', PRESSED, 'text', 'D5'),
-	open('high-contrast', '--text-2', DOCK_SELECTED, 'text', 'D5'),
-	open('high-contrast', '--on-accent', ['--accent-fill'], 'text', 'D5'),
-	open('high-contrast', '--on-accent', ['--accent-fill-hover'], 'text', 'D5'),
-	open('high-contrast', '--hairline', PANE, 'ui', 'D5'),
-	open('high-contrast', '--hairline', CHROME, 'ui', 'D5'),
-	open('high-contrast', '--hairline-strong', PANE, 'ui', 'D5'),
-	open('remote', '--text-2', PANE, 'text', 'D5'),
-	open('remote', '--text-2', CHROME, 'text', 'D5'),
-	open('remote', '--text-2', WELL, 'text', 'D5'),
-	open('remote', '--text-2', BUBBLE, 'text', 'D5'),
-	open('remote', '--hairline-strong', PANE, 'ui', 'D5'),
-	open('review-light', '--accent', WELL, 'text', 'D5'),
-	open('review-light', '--neutral', PANE, 'text', 'D5'),
-	open('review-light', '--neutral', WELL, 'text', 'D5'),
-	open('review-light', '--hairline-strong', PANE, 'ui', 'D5'),
-	open('viewer-dark', '--syntax-comment', WELL, 'text', 'D5'),
-	open('helm', '--text-2', CHROME_HOVER, 'text', 'D5'),
-	open('helm', '--dock-dim', CHROME_HOVER, 'text', 'D5'),
-	open('helm', '--dock-dim', SELECTED, 'text', 'D5'),
-	open('helm', '--ansi-bright-black', TERMINAL, 'text', 'D5'),
-	open('helm', '--thumb', PANE, 'ui', 'D5'),
-	open('helm', '--term-scroll-thumb', TERMINAL, 'ui', 'D5'),
-	open('helm', '--accent', [...SELECTED, '--accent-soft'], 'text', 'D5'),
-	open('helm', '--danger', [...INPUT, '--danger-soft'], 'text', 'D5'),
-	open('helm', '--danger', [...SELECTED, '--danger-soft'], 'text', 'D5'),
-	open('helm', '--neutral', [...INPUT, '--neutral-soft'], 'text', 'D5'),
-	open('helm', '--neutral', [...SELECTED, '--neutral-soft'], 'text', 'D5'),
-	open('high-contrast', '--thumb', PANE, 'ui', 'D5'),
-	open('high-contrast', '--accent', [...SELECTED, '--accent-soft'], 'text', 'D5'),
-	open('high-contrast', '--danger', [...SELECTED, '--danger-soft'], 'text', 'D5'),
-	open('high-contrast', '--neutral', [...SELECTED, '--neutral-soft'], 'text', 'D5'),
-	open('remote', '--text-2', CHROME_HOVER, 'text', 'D5'),
-	open('review-light', '--thumb', PANE, 'ui', 'D5'),
-	open('helm-group-blue', '--text-2', BAND, 'text', 'D5'),
-	open('helm-group-blue', '--text-1', [...BAND, 'group hover'], 'text', 'D5'),
-	open('helm-group-blue', 'group label hover', [...BAND, 'group hover'], 'text', 'D5'),
-	open('helm-group-blue', 'group count', BAND, 'text', 'D5'),
-	open('helm-group-blue', 'group count', CHROME, 'text', 'D5'),
-	open('helm-group-blue', 'group count', [...CHROME, 'group row hover'], 'text', 'D5'),
-	open('helm-group-purple', '--text-2', BAND, 'text', 'D5'),
-	open('helm-group-purple', '--text-1', [...BAND, 'group hover'], 'text', 'D5'),
-	open('helm-group-purple', 'group label hover', [...BAND, 'group hover'], 'text', 'D5'),
-	open('helm-group-purple', 'group count', BAND, 'text', 'D5'),
-	open('helm-group-purple', 'group count', [...CHROME, 'group row hover'], 'text', 'D5'),
-	open('helm-group-pink', '--text-2', BAND, 'text', 'D5'),
-	open('helm-group-pink', '--text-1', [...BAND, 'group hover'], 'text', 'D5'),
-	open('helm-group-pink', 'group label hover', [...BAND, 'group hover'], 'text', 'D5'),
-	open('helm-group-pink', 'group count', BAND, 'text', 'D5'),
-	open('helm-group-pink', 'group count', CHROME, 'text', 'D5'),
-	open('helm-group-pink', 'group count', [...CHROME, 'group row hover'], 'text', 'D5'),
-	open('helm-group-red', '--text-2', BAND, 'text', 'D5'),
-	open('helm-group-red', '--text-1', [...BAND, 'group hover'], 'text', 'D5'),
-	open('helm-group-red', 'group label', BAND, 'text', 'D5'),
-	open('helm-group-red', 'group label hover', [...BAND, 'group hover'], 'text', 'D5'),
-	open('helm-group-red', 'group count', BAND, 'text', 'D5'),
-	open('helm-group-red', 'group count', CHROME, 'text', 'D5'),
-	open('helm-group-red', 'group count', [...CHROME, 'group row hover'], 'text', 'D5'),
-	open('helm-group-orange', '--text-2', BAND, 'text', 'D5'),
-	open('helm-group-orange', '--text-1', [...BAND, 'group hover'], 'text', 'D5'),
-	open('helm-group-orange', 'group label hover', [...BAND, 'group hover'], 'text', 'D5'),
-	open('helm-group-orange', 'group count', BAND, 'text', 'D5'),
-	open('helm-group-orange', 'group count', [...CHROME, 'group row hover'], 'text', 'D5'),
-	open('helm-group-green', '--text-2', BAND, 'text', 'D5'),
-	open('helm-group-green', '--text-1', [...BAND, 'group hover'], 'text', 'D5'),
-	open('helm-group-green', 'group label hover', [...BAND, 'group hover'], 'text', 'D5'),
-	open('helm-group-green', 'group count', BAND, 'text', 'D5'),
-	open('helm-group-green', 'group count', [...CHROME, 'group row hover'], 'text', 'D5'),
-	open('helm-group-cyan', '--text-2', BAND, 'text', 'D5'),
-	open('helm-group-cyan', '--text-1', [...BAND, 'group hover'], 'text', 'D5'),
-	open('helm-group-cyan', 'group label hover', [...BAND, 'group hover'], 'text', 'D5'),
-	open('helm-group-cyan', 'group count', BAND, 'text', 'D5'),
-	open('helm-group-cyan', 'group count', [...CHROME, 'group row hover'], 'text', 'D5'),
-	open('high-contrast-group-blue', 'group label hover', [...BAND, 'group hover'], 'text', 'D5'),
-	open('high-contrast-group-purple', '--text-2', BAND, 'text', 'D5'),
-	open('high-contrast-group-purple', 'group label hover', [...BAND, 'group hover'], 'text', 'D5'),
-	open('high-contrast-group-pink', 'group label hover', [...BAND, 'group hover'], 'text', 'D5'),
-	open('high-contrast-group-red', 'group label hover', [...BAND, 'group hover'], 'text', 'D5'),
-	open('high-contrast-group-orange', 'group label hover', [...BAND, 'group hover'], 'text', 'D5'),
-	open('high-contrast-group-green', '--text-2', BAND, 'text', 'D5'),
-	open('high-contrast-group-green', '--text-1', [...BAND, 'group hover'], 'text', 'D5'),
-	open('high-contrast-group-cyan', '--text-2', BAND, 'text', 'D5'),
-	open('high-contrast-group-cyan', '--text-1', [...BAND, 'group hover'], 'text', 'D5'),
+	open('helm', '--text-2', INPUT, 'text', 'D15'),
+	open('helm', '--text-2', SELECTED, 'text', 'D15'),
+	open('helm', '--text-2', PRESSED, 'text', 'D15'),
+	open('helm', '--text-2', DOCK_SELECTED, 'text', 'D15'),
+	open('helm', '--dock-dim', DOCK_SELECTED, 'text', 'D15'),
+	open('high-contrast', '--text-2', SELECTED, 'text', 'D15'),
+	open('high-contrast', '--text-2', DOCK_SELECTED, 'text', 'D15'),
+	open('helm', '--text-2', CHROME_HOVER, 'text', 'D15'),
+	open('helm', '--ansi-bright-black', TERMINAL, 'text', 'D15'),
+	open('helm', '--thumb', PANE, 'ui', 'D15'),
+	open('helm', '--term-scroll-thumb', TERMINAL, 'ui', 'D15'),
+	open('helm', '--accent', [...SELECTED, '--accent-soft'], 'text', 'D15'),
+	open('helm', '--danger', [...INPUT, '--danger-soft'], 'text', 'D15'),
+	open('helm', '--danger', [...SELECTED, '--danger-soft'], 'text', 'D15'),
+	open('helm', '--neutral', [...INPUT, '--neutral-soft'], 'text', 'D15'),
+	open('helm', '--neutral', [...SELECTED, '--neutral-soft'], 'text', 'D15'),
+	open('high-contrast', '--thumb', PANE, 'ui', 'D15'),
+	open('high-contrast', '--accent', [...SELECTED, '--accent-soft'], 'text', 'D15'),
+	open('high-contrast', '--danger', [...SELECTED, '--danger-soft'], 'text', 'D15'),
+	open('high-contrast', '--neutral', [...SELECTED, '--neutral-soft'], 'text', 'D15'),
+	open('remote', '--text-2', CHROME_HOVER, 'text', 'D15'),
+	open('review-light', '--thumb', PANE, 'ui', 'D15'),
+	open('helm-group-blue', '--text-2', BAND, 'text', 'D15'),
+	open('helm-group-blue', '--text-1', [...BAND, 'group hover'], 'text', 'D15'),
+	open('helm-group-blue', 'group label hover', [...BAND, 'group hover'], 'text', 'D15'),
+	open('helm-group-blue', 'group count', BAND, 'text', 'D15'),
+	open('helm-group-blue', 'group count', [...CHROME, 'group row hover'], 'text', 'D15'),
+	open('helm-group-purple', '--text-2', BAND, 'text', 'D15'),
+	open('helm-group-purple', '--text-1', [...BAND, 'group hover'], 'text', 'D15'),
+	open('helm-group-purple', 'group label hover', [...BAND, 'group hover'], 'text', 'D15'),
+	open('helm-group-purple', 'group count', BAND, 'text', 'D15'),
+	open('helm-group-pink', '--text-2', BAND, 'text', 'D15'),
+	open('helm-group-pink', '--text-1', [...BAND, 'group hover'], 'text', 'D15'),
+	open('helm-group-pink', 'group label hover', [...BAND, 'group hover'], 'text', 'D15'),
+	open('helm-group-pink', 'group count', BAND, 'text', 'D15'),
+	open('helm-group-pink', 'group count', [...CHROME, 'group row hover'], 'text', 'D15'),
+	open('helm-group-red', '--text-2', BAND, 'text', 'D15'),
+	open('helm-group-red', '--text-1', [...BAND, 'group hover'], 'text', 'D15'),
+	open('helm-group-red', 'group label', BAND, 'text', 'D15'),
+	open('helm-group-red', 'group label hover', [...BAND, 'group hover'], 'text', 'D15'),
+	open('helm-group-red', 'group count', BAND, 'text', 'D15'),
+	open('helm-group-red', 'group count', [...CHROME, 'group row hover'], 'text', 'D15'),
+	open('helm-group-orange', '--text-2', BAND, 'text', 'D15'),
+	open('helm-group-orange', '--text-1', [...BAND, 'group hover'], 'text', 'D15'),
+	open('helm-group-orange', 'group label hover', [...BAND, 'group hover'], 'text', 'D15'),
+	open('helm-group-orange', 'group count', BAND, 'text', 'D15'),
+	open('helm-group-orange', 'group count', [...CHROME, 'group row hover'], 'text', 'D15'),
+	open('helm-group-green', '--text-2', BAND, 'text', 'D15'),
+	open('helm-group-green', '--text-1', [...BAND, 'group hover'], 'text', 'D15'),
+	open('helm-group-green', 'group label hover', [...BAND, 'group hover'], 'text', 'D15'),
+	open('helm-group-cyan', '--text-2', BAND, 'text', 'D15'),
+	open('helm-group-cyan', '--text-1', [...BAND, 'group hover'], 'text', 'D15'),
+	open('helm-group-cyan', 'group label hover', [...BAND, 'group hover'], 'text', 'D15'),
+	open('high-contrast-group-blue', 'group label hover', [...BAND, 'group hover'], 'text', 'D15'),
+	open('high-contrast-group-purple', '--text-2', BAND, 'text', 'D15'),
+	open('high-contrast-group-purple', 'group label hover', [...BAND, 'group hover'], 'text', 'D15'),
+	open('high-contrast-group-pink', 'group label hover', [...BAND, 'group hover'], 'text', 'D15'),
+	open('high-contrast-group-red', 'group label hover', [...BAND, 'group hover'], 'text', 'D15'),
+	open('high-contrast-group-orange', 'group label hover', [...BAND, 'group hover'], 'text', 'D15'),
+	open('high-contrast-group-green', '--text-2', BAND, 'text', 'D15'),
+	open('high-contrast-group-green', '--text-1', [...BAND, 'group hover'], 'text', 'D15'),
+	open('high-contrast-group-cyan', '--text-2', BAND, 'text', 'D15'),
+	open('high-contrast-group-cyan', '--text-1', [...BAND, 'group hover'], 'text', 'D15'),
 	open('popup', 'title', POPUP_BG, 'text', 'D9'),
 	open('popup', 'label', POPUP_BG, 'text', 'D9'),
 	open('popup', 'status error', POPUP_BG, 'text', 'D9'),
 	open('popup', 'input border', POPUP_BG, 'ui', 'D9'),
+]
+
+const exempt = (palette: PaletteId, fg: string, bg: readonly string[], use: Use, ruling: number): ExemptPair => ({
+	palette,
+	fg,
+	bg,
+	use,
+	ruling,
+})
+
+// Pairs a §9 ruling exempts from their need: control edges are decorative (a field is identified by its
+// label, value and focus ring; §9 ruling 91; High contrast is not exempt and meets 3:1), the High contrast
+// preset keeps --text-2 because no production rule paints it on --fill-strong (§9 ruling 92), and Remote
+// draws no --text-2 on its message bubble (§9 ruling 93). An exempt pair that starts passing is stale.
+export const EXEMPT: readonly ExemptPair[] = [
+	exempt('helm', '--hairline', PANE, 'ui', 91),
+	exempt('helm', '--hairline', CHROME, 'ui', 91),
+	exempt('helm', '--hairline-strong', PANE, 'ui', 91),
+	exempt('high-contrast', '--text-2', PRESSED, 'text', 92),
+	exempt('remote', '--text-2', BUBBLE, 'text', 93),
+	exempt('remote', '--hairline-strong', PANE, 'ui', 91),
+	exempt('review-light', '--hairline-strong', PANE, 'ui', 91),
 ]
 
 export function rowKey(row: { palette: PaletteId; fg: string; bg: readonly string[]; use: Use }): string {
@@ -802,13 +804,33 @@ function openFor(row: ContrastRow): OpenPair | undefined {
 	return OPEN.find(entry => rowKey(entry) === key)
 }
 
+function exemptFor(row: ContrastRow): ExemptPair | undefined {
+	const key = rowKey(row)
+	return EXEMPT.find(entry => rowKey(entry) === key)
+}
+
+function statusCell(row: ContrastRow): string {
+	const open = openFor(row)
+	if (open) return `open ${open.decision}`
+	const exempt = exemptFor(row)
+	if (exempt) return `exempt §9 ruling ${exempt.ruling}`
+	return 'pass'
+}
+
 /** The §2.9 table, as written between the markers in docs/design-system.md. */
 export function contrastTable(): string {
 	const open = ROWS.filter(row => openFor(row) !== undefined)
-	const decisions = [...new Set(OPEN.map(entry => entry.decision))].sort()
+	const exempt = ROWS.filter(row => exemptFor(row) !== undefined)
+	const decisions = [...new Set(OPEN.map(entry => entry.decision))].sort(
+		(a, b) => Number(a.slice(1)) - Number(b.slice(1)),
+	)
 	const counts = decisions.map(d => `${d} ${OPEN.filter(entry => entry.decision === d).length}`).join(', ')
+	const rulings = [...new Set(EXEMPT.map(entry => entry.ruling))].sort((a, b) => a - b)
+	const exemptCounts = rulings
+		.map(n => `§9 ruling ${n}: ${EXEMPT.filter(entry => entry.ruling === n).length}`)
+		.join(', ')
 	const lines = [
-		`${ROWS.length} pairs, ${open.length} open (${counts}). Palettes: ${BASE_PALETTE_LABELS}, and one per terminal group colour in each preset. High contrast is the bundled preset; a theme file seeded before newer tokens existed fills them from Helm (D10), so its contrast can differ. Need: text 4.5, large text and \`ui\` (control edges, focus ring, a filled control against its surface) 3, decorative n/a. Ratios are WCAG 2.x, two decimals, truncated; translucent fills are composited over the surface named under them. The extension widget's \`--vg-*\` values are checked equal to Helm's, so its pairs are the Helm rows. Generated by \`node --import tsx app/scripts/contrast-table.ts\`.`,
+		`${ROWS.length} pairs, ${open.length} open (${counts}), ${exempt.length} exempt (${exemptCounts}). Palettes: ${BASE_PALETTE_LABELS}, and one per terminal group colour in each preset. High contrast is the bundled preset; a theme file seeded before newer tokens existed fills them from Helm and keeps the values it was seeded with (D10), so its contrast can differ. Need: text 4.5, large text and \`ui\` (control edges, focus ring, a filled control against its surface) 3, decorative n/a. Ratios are WCAG 2.x, two decimals, truncated; translucent fills are composited over the surface named under them. The extension widget's \`--vg-*\` values are checked equal to Helm's, so its pairs are the Helm rows. Generated by \`node --import tsx app/scripts/contrast-table.ts\`.`,
 		'',
 		'| Palette | Foreground | Background | Use | Need | Ratio | Status |',
 		'| --- | --- | --- | --- | --- | --- | --- |',
@@ -819,9 +841,8 @@ export function contrastTable(): string {
 			.map(key => colourCell(row.palette, key))
 			.join(' over ')
 		const need = NEED[row.use]
-		const entry = openFor(row)
 		lines.push(
-			`| ${PALETTES[row.palette].label} | ${colourCell(row.palette, row.fg)} | ${background} | ${row.use} | ${need ?? 'n/a'} | ${row.ratio.toFixed(2)} | ${entry ? `open ${entry.decision}` : 'pass'} |`,
+			`| ${PALETTES[row.palette].label} | ${colourCell(row.palette, row.fg)} | ${background} | ${row.use} | ${need ?? 'n/a'} | ${row.ratio.toFixed(2)} | ${statusCell(row)} |`,
 		)
 	}
 	return lines.join('\n')

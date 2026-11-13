@@ -106,6 +106,57 @@ export function resolveTokens(state: AppearanceState, themes: ThemeListEntry[]):
 	return { ...helmBase, ...base, ...state.overrides }
 }
 
+/** HSL lightness points the primary fill's hover drops below its rest colour: both presets use this step
+ *  (Helm #1e6ff5 → #0b63f4, High contrast #3473de → #2367da), so hover darkens and white text gains
+ *  contrast (§9 ruling 90). */
+export const ACCENT_FILL_HOVER_DARKEN = 4
+
+/** The hover fill the Appearance accent well derives from a picked `#rrggbb`: the same hue and saturation,
+ *  `ACCENT_FILL_HOVER_DARKEN` HSL lightness points darker (clamped at black). Non-hex input comes back as is. */
+export function accentFillHover(hex: string): string {
+	const match = /^#([0-9a-f]{6})$/i.exec(hex.trim())
+	if (!match?.[1]) return hex
+	const value = Number.parseInt(match[1], 16)
+	const r = ((value >> 16) & 255) / 255
+	const g = ((value >> 8) & 255) / 255
+	const b = (value & 255) / 255
+	const max = Math.max(r, g, b)
+	const min = Math.min(r, g, b)
+	const delta = max - min
+	const lightness = (max + min) / 2
+	let hue = 0
+	let saturation = 0
+	if (delta !== 0) {
+		saturation = lightness > 0.5 ? delta / (2 - max - min) : delta / (max + min)
+		if (max === r) hue = (g - b) / delta + (g < b ? 6 : 0)
+		else if (max === g) hue = (b - r) / delta + 2
+		else hue = (r - g) / delta + 4
+		hue /= 6
+	}
+	const l = Math.max(0, lightness - ACCENT_FILL_HOVER_DARKEN / 100)
+	const q = l < 0.5 ? l * (1 + saturation) : l + saturation - l * saturation
+	const p = 2 * l - q
+	const channel = (offset: number) => {
+		let t = hue + offset
+		if (t < 0) t += 1
+		if (t > 1) t -= 1
+		const c =
+			saturation === 0
+				? l
+				: t < 1 / 6
+					? p + (q - p) * 6 * t
+					: t < 1 / 2
+						? q
+						: t < 2 / 3
+							? p + (q - p) * (2 / 3 - t) * 6
+							: p
+		return Math.round(c * 255)
+			.toString(16)
+			.padStart(2, '0')
+	}
+	return `#${channel(1 / 3)}${channel(0)}${channel(-1 / 3)}`
+}
+
 /** xterm ITheme built from the resolved tokens (assumes resolveTokens output,
  *  which always carries every --term-* / --ansi-* key). */
 export function termThemeFromTokens(tokens: Record<string, string>) {

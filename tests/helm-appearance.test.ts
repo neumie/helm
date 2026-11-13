@@ -14,6 +14,7 @@ const {
 	TERM_FONT_DEFAULT,
 	TERM_FONT_MAX,
 	TERM_FONT_MIN,
+	accentFillHover,
 	clampTermFont,
 	effectiveAppearance,
 	normalizeAppearance,
@@ -100,4 +101,16 @@ test('macOS Increase Contrast picks High contrast until a theme is chosen', () =
 	// Edits carry over to the followed preset.
 	const edited = normalizeAppearance({ overrides: { '--accent': '#123456' } })
 	assert.equal(resolveTokens(effectiveAppearance(edited, true), [])['--accent'], '#123456')
+})
+
+test('the accent well derives a darker hover exactly as both presets step it (rest → hover)', () => {
+	for (const id of ['helm', 'high-contrast']) {
+		const tokens = THEME_PRESETS[id]?.tokens ?? {}
+		const rest = tokens['--accent-fill'] ?? ''
+		assert.equal(accentFillHover(rest), tokens['--accent-fill-hover'], id)
+	}
+	assert.equal(accentFillHover('#3b82f6'), '#2776f5')
+	assert.equal(accentFillHover('#000000'), '#000000')
+	assert.equal(accentFillHover('#808080'), '#767676')
+	assert.equal(accentFillHover('var(--accent)'), 'var(--accent)')
 })

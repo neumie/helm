@@ -7,7 +7,7 @@
 import { useEffect, useSyncExternalStore } from 'react'
 import { agentDockNotify, agentDockPosition } from '../agent-dock-layout'
 import type { AgentDockPosition } from '../agent-dock/presentation'
-import { TERM_FONT_DEFAULT, TERM_FONT_MAX, TERM_FONT_MIN, UI_SCALES, appearance } from '../appearance'
+import { TERM_FONT_DEFAULT, TERM_FONT_MAX, TERM_FONT_MIN, UI_SCALES, accentFillHover, appearance } from '../appearance'
 import { Btn, Card, FieldLabel, PushHeader, Segmented, SelectInput, Toggle } from './ui'
 
 const TERM_WELLS: ReadonlyArray<{ token: string; label: string }> = [
@@ -109,11 +109,11 @@ export function AppearancePage({ onBack }: { onBack: () => void }) {
 							value={tokens['--accent']}
 							onChange={hex =>
 								// One well drives the whole accent family so buttons, links,
-								// and focus rings stay coherent (hover derives via color-mix).
+								// and focus rings stay coherent (hover darkens like the presets).
 								appearance.setOverrides({
 									'--accent': hex,
 									'--accent-fill': hex,
-									'--accent-fill-hover': `color-mix(in srgb, ${hex} 78%, white)`,
+									'--accent-fill-hover': accentFillHover(hex),
 								})
 							}
 						/>

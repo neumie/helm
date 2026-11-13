@@ -25,14 +25,16 @@
 	--fill-subtle: rgba(0, 0, 0, 0.05);
 	--fill-raised: rgba(0, 0, 0, 0.09);
 	--fill-strong: rgba(0, 0, 0, 0.13);
-	--accent: #176ac2;
-	--accent-fill: #176ac2;
+	--accent: #176ac1;
+	--accent-fill: #176ac1;
 	--accent-fill-hover: #125ba8;
 	--danger: #b91c1c;
 	--warn: #8a5a0a;
 	--success: #267347;
+	--neutral: #656a73;
 	--danger-soft: color-mix(in srgb, var(--danger) 15%, transparent);
 	--warn-soft: color-mix(in srgb, var(--warn) 15%, transparent);
+	--neutral-soft: color-mix(in srgb, var(--neutral) 15%, transparent);
 }
 .document-review[data-review-theme="dark"] {
 	color-scheme: dark;

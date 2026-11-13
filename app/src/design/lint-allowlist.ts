@@ -47,8 +47,8 @@ statusEl.style in module | color | #f14c4c | D9 extension popup (moves onto Helm
 :root | --text-0 | #ececee | D7 Remote offline page (served by remote-sw.js when the host is unreachable; its own copy of the palette and 16/24px type)
 :root | --text-1 | #9a9ea6 | D7 Remote offline page (served by remote-sw.js when the host is unreachable; its own copy of the palette and 16/24px type)
 ### app/src/renderer/document-review/document-review.css
-.document-review[data-review-theme="light"] | --accent | #176ac2 | §2.8 Review light scope (§9 ruling 10)
-.document-review[data-review-theme="light"] | --accent-fill | #176ac2 | §2.8 Review light scope (§9 ruling 10)
+.document-review[data-review-theme="light"] | --accent | #176ac1 | §2.8 Review light scope (§9 ruling 10; value §9 ruling 94)
+.document-review[data-review-theme="light"] | --accent-fill | #176ac1 | §2.8 Review light scope (§9 ruling 10; value §9 ruling 94)
 .document-review[data-review-theme="light"] | --accent-fill-hover | #125ba8 | §2.8 Review light scope (§9 ruling 10)
 .document-review[data-review-theme="light"] | --chrome | #f1f0ed | §2.8 Review light scope (§9 ruling 10)
 .document-review[data-review-theme="light"] | --danger | #b91c1c | §2.8 Review light scope (§9 ruling 10)
@@ -58,6 +58,8 @@ statusEl.style in module | color | #f14c4c | D9 extension popup (moves onto Helm
 .document-review[data-review-theme="light"] | --fill-subtle | rgba(0, 0, 0, 0.05) | §2.8 Review light scope (§9 ruling 10)
 .document-review[data-review-theme="light"] | --hairline | rgba(0, 0, 0, 0.07) | §2.8 Review light scope (§9 ruling 10)
 .document-review[data-review-theme="light"] | --hairline-strong | rgba(0, 0, 0, 0.16) | §2.8 Review light scope (§9 ruling 10)
+.document-review[data-review-theme="light"] | --neutral | #656a73 | §2.8 Review light scope (§9 ruling 10; value §9 ruling 94)
+.document-review[data-review-theme="light"] | --neutral-soft | color-mix(in srgb, var(--neutral) 15%, transparent) | §2.8 Review light scope (§9 ruling 10): the soft fill recomputed from the scope's --neutral (§9 ruling 94)
 .document-review[data-review-theme="light"] | --pane | #faf9f6 | §2.8 Review light scope (§9 ruling 10)
 .document-review[data-review-theme="light"] | --success | #267347 | §2.8 Review light scope (§9 ruling 10)
 .document-review[data-review-theme="light"] | --text-0 | #24272c | §2.8 Review light scope (§9 ruling 10)
@@ -611,7 +613,7 @@ h1 | font-size | 14px | D9 extension popup (moves onto Helm tokens)
 ### app/src/renderer/index.html
 html | markup | <svg viewBox="0 0 16 16"> | §9 ruling 54: static first-paint copy of the icon module's backgroundStack, held equal by tests/design-icons.test.ts
 ### app/src/renderer/sidebar/sidebar.css
-.select | background-image | url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' … #b8a367f3 | D6 hand-drawn icons (a CSS data URI, listed in ICONS_OUTSIDE_MODULE)
+.select | background-image | url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' … #34f18bb3 | D6 hand-drawn icons (a CSS data URI, listed in ICONS_OUTSIDE_MODULE)
 ### extension/src/Widget.tsx
 in ModelSelect | jsx | <svg viewBox="0 0 10 6"> | D6 hand-drawn icons (D1: the SolidJS extension keeps its own icons)
 in ModelSelect | jsx | <svg viewBox="0 0 10 8"> | D6 hand-drawn icons (D1: the SolidJS extension keeps its own icons)

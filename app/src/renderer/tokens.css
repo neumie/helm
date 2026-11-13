@@ -20,11 +20,11 @@
 	/* Text ladder */
 	--text-0: #ececee;
 	--text-1: #9a9ea6;
-	--text-2: #62666e;
+	--text-2: #7f848d;
 	/* Accent & semantic tones */
 	--accent: #4c9aff;
-	--accent-fill: #3b82f6;
-	--accent-fill-hover: #5a9dff;
+	--accent-fill: #1e6ff5;
+	--accent-fill-hover: #0b63f4;
 	--on-accent: #ffffff;
 	--success: #4ec98a;
 	--warn: #e0b341;

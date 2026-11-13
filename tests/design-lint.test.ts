@@ -73,7 +73,8 @@ test('every baseline reason names an existing open decision, ruling or plan stag
  */
 const BASELINE_CAPS: Record<(typeof lint.RULES)[number], number> = {
 	'raw-color': 24,
-	'token-definition': 34,
+	// 36: §9 ruling 94 adds the Review light scope's --neutral and its recomputed --neutral-soft (2026-11-13).
+	'token-definition': 36,
 	'raw-z-index': 45,
 	'raw-duration': 98,
 	'raw-easing': 89,

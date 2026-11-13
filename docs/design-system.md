@@ -79,14 +79,14 @@ Text:
 | --- | --- | --- |
 | `--text-0` | `#ececee` | Primary: titles, body, button labels |
 | `--text-1` | `#9a9ea6` | Secondary: descriptions, toast detail, quiet-button labels |
-| `--text-2` | `#62666e` | Faint: meta, timestamps, labels, placeholders, disabled-adjacent |
+| `--text-2` | `#7f848d` | Faint: meta, timestamps, labels, placeholders, disabled-adjacent. 4.5:1 on every unfilled surface (`--chrome` is the lightest), not on fills (§9 ruling 89); never on the Remote message bubble (§9 ruling 93) |
 
 Accent and semantic tones. Each tone has a **text/icon value** and a **soft fill** (15% alpha) for chips and banners:
 
 | Token | Value | Soft fill | Role |
 | --- | --- | --- | --- |
 | `--accent` | `#4c9aff` | `rgba(76,154,255,0.15)` | Links, focus ring, running state, cursor, selection |
-| `--accent-fill` | `#3b82f6` | (hover `#5a9dff`) | Filled primary button background ONLY — `#4c9aff` is too bright as a fill under white text |
+| `--accent-fill` | `#1e6ff5` | (hover `#0b63f4`, darker) | Filled primary button background ONLY — `#4c9aff` is too bright as a fill under white text; white text is 4.5:1 at rest and 5.1:1 on hover (§9 ruling 90) |
 | `--accent-text` | `var(--accent)` | — | Accent-coloured text for a live state that holds the keys (the shortcut recording line in Settings → Terminal); an alias on `:root`, so it follows every preset and theme (§9 ruling 87) |
 | `--success` | `#4ec98a` | `rgba(78,201,138,0.15)` | Done, connected, merged |
 | `--warn` | `#e0b341` | `rgba(224,179,65,0.15)` | Needs attention, review, degraded |
@@ -204,42 +204,42 @@ Every color in this document is a **CSS custom property** — components MUST co
 
 - **Soft fills are derived, not stored**: `--<tone>-soft: color-mix(in srgb, var(--<tone>) 15%, transparent)`. Themes override the tone; every chip/banner/soft border follows automatically. Never hand-mix a per-component alpha (the §2.1 0.15 rule, mechanized).
 - **A theme is a flat JSON object of token overrides**, stored as `<userData>/themes/<id>.json` (`{ "name": "…", "tokens": { "--token": "value", … } }`). Main seeds the presets as editable files on first list (`themes:list` IPC) and any other `*.json` dropped in the dir appears in the Appearance theme picker; sparse themes backfill missing tokens from the Helm base. Runtime application is owned by `app/src/renderer/appearance.ts`: `documentElement.style.setProperty` per token plus an xterm `options.theme` rebuild from the `--term-*`/`--ansi-*` tokens (`termThemeFromTokens`) — CSS and terminal can never disagree.
-- **Presets: "Helm" + "High contrast".** Deliberately NO light preset: the §2.1 ladder is dark-only — the white-alpha hairline/fill system and the terminal palette assume a dark surface, so a genuinely good light theme needs its own ladder and fill system designed from scratch, not inverted tokens. High contrast raises the text ladder to white, doubles the line/fill alphas, deepens the wells to black, and brightens the ANSI 16. Until a theme is picked (`themeChosen` in `helm.appearance`; any stored non-default theme counts as picked), macOS **Increase contrast** (`prefers-contrast: more`, followed live) applies High contrast and the picker shows it; picking any theme, Helm included, makes the choice stick (`effectiveAppearance` in `appearance.ts`). No surface ships its own contrast override.
+- **Presets: "Helm" + "High contrast".** Deliberately NO light preset: the §2.1 ladder is dark-only — the white-alpha hairline/fill system and the terminal palette assume a dark surface, so a genuinely good light theme needs its own ladder and fill system designed from scratch, not inverted tokens. High contrast raises the text ladder to white, strengthens the lines (`--hairline` 0.34 and `--hairline-strong` 0.48, so control edges reach 3:1) and fills, darkens the primary fill until white text reaches 4.5:1 (`#3473de`, hover `#2367da`), deepens the wells to black, and brightens the ANSI 16 (§9 ruling 92). A changed preset value reaches an installed theme file only through D10: main seeds the files once. Until a theme is picked (`themeChosen` in `helm.appearance`; any stored non-default theme counts as picked), macOS **Increase contrast** (`prefers-contrast: more`, followed live) applies High contrast and the picker shows it; picking any theme, Helm included, makes the choice stick (`effectiveAppearance` in `appearance.ts`). No surface ships its own contrast override.
 - **Appearance state** (active theme id, per-token overrides from the color wells, terminal font size, UI text scale) persists in `localStorage['helm.appearance']`; the same page's **Agent dock → Position** (Bottom / Top) segmented control writes the dock's own `localStorage['helm.agentDock.position']` and its **Notify when Helm is in the background** toggle row (standard `.toggle-row` + `Toggle`, default on) writes `localStorage['helm.agentDock.notify']` (§3.24) — same persistence surface as the split width. Settings → Appearance live-applies every change; "Reset to preset" drops the overrides; switching themes starts clean. The accent color well writes the whole accent family (`--accent`, `--accent-fill`, derived `--accent-fill-hover`) so buttons, links, and focus rings stay coherent.
 - **Type knobs**: terminal font size **9–24px, default 13**, via ⌘= / ⌘− / ⌘0 — View-menu accelerators forwarded over IPC (the ⌘T pattern; the stock `viewMenu` zoom roles are replaced) — or the Appearance stepper; terminals refit on change. UI text scale is `--ui-scale` per §2.2.
 
 ### 2.9 Measured contrast
 
-The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2.x contrast of every foreground/background token pair a surface actually draws, per palette: Helm, High contrast, Remote, the Document Review light reading scope, the extension popup) and checked by `tests/design-contrast.test.ts`: each ratio must meet the need stated beside it, or the pair is listed as open with the decision that owns it (D5). Do not edit the rows by hand; change the token or the pair list and regenerate.
+The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2.x contrast of every foreground/background token pair a surface actually draws, per palette: Helm, High contrast, Remote, the Document Review light reading scope, the extension popup) and checked by `tests/design-contrast.test.ts`: each ratio must meet the need stated beside it, or the pair is listed as open with the decision that owns it (D15; D9 for the popup), or as exempt with the §9 ruling that exempts it (decorative control edges, §9 ruling 91; no `--text-2` on the Remote bubble, §9 ruling 93; the High contrast `--text-2` on `--fill-strong` no rule paints, §9 ruling 92). Do not edit the rows by hand; change the token or the pair list and regenerate.
 
 <!-- contrast-table:begin -->
-379 pairs, 101 open (D5 97, D9 4). Palettes: Helm, High contrast, Remote, Review light, Viewer (dark), Extension popup, and one per terminal group colour in each preset. High contrast is the bundled preset; a theme file seeded before newer tokens existed fills them from Helm (D10), so its contrast can differ. Need: text 4.5, large text and `ui` (control edges, focus ring, a filled control against its surface) 3, decorative n/a. Ratios are WCAG 2.x, two decimals, truncated; translucent fills are composited over the surface named under them. The extension widget's `--vg-*` values are checked equal to Helm's, so its pairs are the Helm rows. Generated by `node --import tsx app/scripts/contrast-table.ts`.
+379 pairs, 67 open (D9 4, D15 63), 7 exempt (§9 ruling 91: 5, §9 ruling 92: 1, §9 ruling 93: 1). Palettes: Helm, High contrast, Remote, Review light, Viewer (dark), Extension popup, and one per terminal group colour in each preset. High contrast is the bundled preset; a theme file seeded before newer tokens existed fills them from Helm and keeps the values it was seeded with (D10), so its contrast can differ. Need: text 4.5, large text and `ui` (control edges, focus ring, a filled control against its surface) 3, decorative n/a. Ratios are WCAG 2.x, two decimals, truncated; translucent fills are composited over the surface named under them. The extension widget's `--vg-*` values are checked equal to Helm's, so its pairs are the Helm rows. Generated by `node --import tsx app/scripts/contrast-table.ts`.
 
 | Palette | Foreground | Background | Use | Need | Ratio | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | Helm | `--text-0` | `--chrome` | text | 4.5 | 14.47 | pass |
 | Helm | `--text-1` | `--chrome` | text | 4.5 | 6.35 | pass |
-| Helm | `--text-2` | `--chrome` | text | 4.5 | 2.96 | open D5 |
+| Helm | `--text-2` | `--chrome` | text | 4.5 | 4.54 | pass |
 | Helm | `--text-0` | `--pane` | text | 4.5 | 15.48 | pass |
 | Helm | `--text-1` | `--pane` | text | 4.5 | 6.79 | pass |
-| Helm | `--text-2` | `--pane` | text | 4.5 | 3.17 | open D5 |
+| Helm | `--text-2` | `--pane` | text | 4.5 | 4.86 | pass |
 | Helm | `--text-0` | `--well` | text | 4.5 | 16.03 | pass |
 | Helm | `--text-1` | `--well` | text | 4.5 | 7.04 | pass |
-| Helm | `--text-2` | `--well` | text | 4.5 | 3.28 | open D5 |
+| Helm | `--text-2` | `--well` | text | 4.5 | 5.03 | pass |
 | Helm | `--text-0` | `--fill-subtle` over `--pane` | text | 4.5 | 13.70 | pass |
 | Helm | `--text-1` | `--fill-subtle` over `--pane` | text | 4.5 | 6.01 | pass |
-| Helm | `--text-2` | `--fill-subtle` over `--pane` | text | 4.5 | 2.80 | open D5 |
+| Helm | `--text-2` | `--fill-subtle` over `--pane` | text | 4.5 | 4.30 | open D15 |
 | Helm | `--text-0` | `--fill-raised` over `--pane` | text | 4.5 | 12.16 | pass |
 | Helm | `--text-1` | `--fill-raised` over `--pane` | text | 4.5 | 5.34 | pass |
-| Helm | `--text-2` | `--fill-raised` over `--pane` | text | 4.5 | 2.49 | open D5 |
+| Helm | `--text-2` | `--fill-raised` over `--pane` | text | 4.5 | 3.81 | open D15 |
 | Helm | `--text-0` | `--fill-strong` over `--pane` | text | 4.5 | 10.65 | pass |
 | Helm | `--text-1` | `--fill-strong` over `--pane` | text | 4.5 | 4.67 | pass |
-| Helm | `--text-2` | `--fill-strong` over `--pane` | text | 4.5 | 2.18 | open D5 |
+| Helm | `--text-2` | `--fill-strong` over `--pane` | text | 4.5 | 3.34 | open D15 |
 | Helm | `--text-0` | `--fill-raised` over `--chrome` | text | 4.5 | 11.14 | pass |
 | Helm | `--text-1` | `--fill-raised` over `--chrome` | text | 4.5 | 4.89 | pass |
-| Helm | `--text-2` | `--fill-raised` over `--chrome` | text | 4.5 | 2.28 | open D5 |
-| Helm | `--dock-dim` | `--chrome` | text | 4.5 | 4.77 | pass |
-| Helm | `--dock-dim` | `--fill-raised` over `--chrome` | text | 4.5 | 3.67 | open D5 |
+| Helm | `--text-2` | `--fill-raised` over `--chrome` | text | 4.5 | 3.49 | open D15 |
+| Helm | `--dock-dim` | `--chrome` | text | 4.5 | 5.58 | pass |
+| Helm | `--dock-dim` | `--fill-raised` over `--chrome` | text | 4.5 | 4.29 | open D15 |
 | Helm | `--accent` | `--chrome` | text | 4.5 | 5.99 | pass |
 | Helm | `--accent` | `--pane` | text | 4.5 | 6.41 | pass |
 | Helm | `--accent-text` | `--pane` | text | 4.5 | 6.41 | pass |
@@ -256,40 +256,40 @@ The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2
 | Helm | `--neutral` | `--chrome` | text | 4.5 | 5.25 | pass |
 | Helm | `--neutral` | `--pane` | text | 4.5 | 5.62 | pass |
 | Helm | `--neutral` | `--neutral-soft` over `--pane` | text | 4.5 | 4.58 | pass |
-| Helm | `--on-accent` | `--accent-fill` | text | 4.5 | 3.67 | open D5 |
-| Helm | `--on-accent` | `--accent-fill-hover` | text | 4.5 | 2.72 | open D5 |
-| Helm | `--accent-fill` | `--pane` | ui | 3 | 4.96 | pass |
-| Helm | `--hairline` | `--pane` | ui | 3 | 1.19 | open D5 |
-| Helm | `--hairline` | `--chrome` | ui | 3 | 1.21 | open D5 |
-| Helm | `--hairline-strong` | `--pane` | ui | 3 | 1.61 | open D5 |
+| Helm | `--on-accent` | `--accent-fill` | text | 4.5 | 4.51 | pass |
+| Helm | `--on-accent` | `--accent-fill-hover` | text | 4.5 | 5.11 | pass |
+| Helm | `--accent-fill` | `--pane` | ui | 3 | 4.04 | pass |
+| Helm | `--hairline` | `--pane` | ui | 3 | 1.19 | exempt §9 ruling 91 |
+| Helm | `--hairline` | `--chrome` | ui | 3 | 1.21 | exempt §9 ruling 91 |
+| Helm | `--hairline-strong` | `--pane` | ui | 3 | 1.61 | exempt §9 ruling 91 |
 | Helm | `--accent` | `--pane` | ui | 3 | 6.41 | pass |
 | Helm | `--accent` | `--chrome` | ui | 3 | 5.99 | pass |
 | Helm | `--accent` | `--well` | ui | 3 | 6.64 | pass |
 | Helm | `--text-1` | `--fill-subtle` over `--chrome` | text | 4.5 | 5.54 | pass |
-| Helm | `--text-2` | `--fill-subtle` over `--chrome` | text | 4.5 | 2.58 | open D5 |
-| Helm | `--dock-dim` | `--fill-subtle` over `--chrome` | text | 4.5 | 4.16 | open D5 |
-| Helm | `--dock-dim` | `--pane` | text | 4.5 | 5.11 | pass |
-| Helm | `--dock-dim` | `--fill-subtle` over `--pane` | text | 4.5 | 4.52 | pass |
-| Helm | `--dock-dim` | `--fill-raised` over `--pane` | text | 4.5 | 4.01 | open D5 |
+| Helm | `--text-2` | `--fill-subtle` over `--chrome` | text | 4.5 | 3.96 | open D15 |
+| Helm | `--dock-dim` | `--fill-subtle` over `--chrome` | text | 4.5 | 4.87 | pass |
+| Helm | `--dock-dim` | `--pane` | text | 4.5 | 5.97 | pass |
+| Helm | `--dock-dim` | `--fill-subtle` over `--pane` | text | 4.5 | 5.28 | pass |
+| Helm | `--dock-dim` | `--fill-raised` over `--pane` | text | 4.5 | 4.69 | pass |
 | Helm | `--text-0` | `--accent-soft` over `--pane` | text | 4.5 | 12.46 | pass |
-| Helm | `--ansi-bright-black` | `--term-bg` | text | 4.5 | 2.98 | open D5 |
-| Helm | `--thumb` | `--pane` | ui | 3 | 1.50 | open D5 |
-| Helm | `--term-scroll-thumb` | `--term-bg` | ui | 3 | 1.97 | open D5 |
+| Helm | `--ansi-bright-black` | `--term-bg` | text | 4.5 | 2.98 | open D15 |
+| Helm | `--thumb` | `--pane` | ui | 3 | 1.50 | open D15 |
+| Helm | `--term-scroll-thumb` | `--term-bg` | ui | 3 | 1.97 | open D15 |
 | Helm | `--accent` | `--fill-subtle` over `--pane` | text | 4.5 | 5.67 | pass |
 | Helm | `--success` | `--fill-subtle` over `--pane` | text | 4.5 | 7.73 | pass |
 | Helm | `--warn` | `--fill-subtle` over `--pane` | text | 4.5 | 8.23 | pass |
 | Helm | `--danger` | `--fill-subtle` over `--pane` | text | 4.5 | 4.86 | pass |
 | Helm | `--neutral` | `--fill-subtle` over `--pane` | text | 4.5 | 4.97 | pass |
 | Helm | `--accent` | `--accent-soft` over `--fill-subtle` over `--pane` | text | 4.5 | 4.50 | pass |
-| Helm | `--accent` | `--accent-soft` over `--fill-raised` over `--pane` | text | 4.5 | 3.99 | open D5 |
+| Helm | `--accent` | `--accent-soft` over `--fill-raised` over `--pane` | text | 4.5 | 3.99 | open D15 |
 | Helm | `--success` | `--success-soft` over `--fill-subtle` over `--pane` | text | 4.5 | 5.78 | pass |
 | Helm | `--success` | `--success-soft` over `--fill-raised` over `--pane` | text | 4.5 | 5.13 | pass |
 | Helm | `--warn` | `--warn-soft` over `--fill-subtle` over `--pane` | text | 4.5 | 6.05 | pass |
 | Helm | `--warn` | `--warn-soft` over `--fill-raised` over `--pane` | text | 4.5 | 5.36 | pass |
-| Helm | `--danger` | `--danger-soft` over `--fill-subtle` over `--pane` | text | 4.5 | 4.03 | open D5 |
-| Helm | `--danger` | `--danger-soft` over `--fill-raised` over `--pane` | text | 4.5 | 3.59 | open D5 |
-| Helm | `--neutral` | `--neutral-soft` over `--fill-subtle` over `--pane` | text | 4.5 | 3.99 | open D5 |
-| Helm | `--neutral` | `--neutral-soft` over `--fill-raised` over `--pane` | text | 4.5 | 3.54 | open D5 |
+| Helm | `--danger` | `--danger-soft` over `--fill-subtle` over `--pane` | text | 4.5 | 4.03 | open D15 |
+| Helm | `--danger` | `--danger-soft` over `--fill-raised` over `--pane` | text | 4.5 | 3.59 | open D15 |
+| Helm | `--neutral` | `--neutral-soft` over `--fill-subtle` over `--pane` | text | 4.5 | 3.99 | open D15 |
+| Helm | `--neutral` | `--neutral-soft` over `--fill-raised` over `--pane` | text | 4.5 | 3.54 | open D15 |
 | High contrast | `--text-0` | `--chrome` | text | 4.5 | 17.78 | pass |
 | High contrast | `--text-1` | `--chrome` | text | 4.5 | 10.47 | pass |
 | High contrast | `--text-2` | `--chrome` | text | 4.5 | 5.97 | pass |
@@ -304,13 +304,13 @@ The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2
 | High contrast | `--text-2` | `--fill-subtle` over `--pane` | text | 4.5 | 5.29 | pass |
 | High contrast | `--text-0` | `--fill-raised` over `--pane` | text | 4.5 | 12.51 | pass |
 | High contrast | `--text-1` | `--fill-raised` over `--pane` | text | 4.5 | 7.36 | pass |
-| High contrast | `--text-2` | `--fill-raised` over `--pane` | text | 4.5 | 4.20 | open D5 |
+| High contrast | `--text-2` | `--fill-raised` over `--pane` | text | 4.5 | 4.20 | open D15 |
 | High contrast | `--text-0` | `--fill-strong` over `--pane` | text | 4.5 | 10.02 | pass |
 | High contrast | `--text-1` | `--fill-strong` over `--pane` | text | 4.5 | 5.89 | pass |
-| High contrast | `--text-2` | `--fill-strong` over `--pane` | text | 4.5 | 3.36 | open D5 |
+| High contrast | `--text-2` | `--fill-strong` over `--pane` | text | 4.5 | 3.36 | exempt §9 ruling 92 |
 | High contrast | `--text-0` | `--fill-raised` over `--chrome` | text | 4.5 | 10.89 | pass |
 | High contrast | `--text-1` | `--fill-raised` over `--chrome` | text | 4.5 | 6.41 | pass |
-| High contrast | `--text-2` | `--fill-raised` over `--chrome` | text | 4.5 | 3.66 | open D5 |
+| High contrast | `--text-2` | `--fill-raised` over `--chrome` | text | 4.5 | 3.66 | open D15 |
 | High contrast | `--dock-dim` | `--chrome` | text | 4.5 | 8.47 | pass |
 | High contrast | `--dock-dim` | `--fill-raised` over `--chrome` | text | 4.5 | 5.19 | pass |
 | High contrast | `--accent` | `--chrome` | text | 4.5 | 7.96 | pass |
@@ -329,12 +329,12 @@ The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2
 | High contrast | `--neutral` | `--chrome` | text | 4.5 | 7.86 | pass |
 | High contrast | `--neutral` | `--pane` | text | 4.5 | 8.60 | pass |
 | High contrast | `--neutral` | `--neutral-soft` over `--pane` | text | 4.5 | 6.79 | pass |
-| High contrast | `--on-accent` | `--accent-fill` | text | 4.5 | 4.46 | open D5 |
-| High contrast | `--on-accent` | `--accent-fill-hover` | text | 4.5 | 3.07 | open D5 |
-| High contrast | `--accent-fill` | `--pane` | ui | 3 | 4.35 | pass |
-| High contrast | `--hairline` | `--pane` | ui | 3 | 1.55 | open D5 |
-| High contrast | `--hairline` | `--chrome` | ui | 3 | 1.63 | open D5 |
-| High contrast | `--hairline-strong` | `--pane` | ui | 3 | 2.83 | open D5 |
+| High contrast | `--on-accent` | `--accent-fill` | text | 4.5 | 4.51 | pass |
+| High contrast | `--on-accent` | `--accent-fill-hover` | text | 4.5 | 5.21 | pass |
+| High contrast | `--accent-fill` | `--pane` | ui | 3 | 4.30 | pass |
+| High contrast | `--hairline` | `--pane` | ui | 3 | 3.05 | pass |
+| High contrast | `--hairline` | `--chrome` | ui | 3 | 3.11 | pass |
+| High contrast | `--hairline-strong` | `--pane` | ui | 3 | 4.99 | pass |
 | High contrast | `--accent` | `--pane` | ui | 3 | 8.71 | pass |
 | High contrast | `--accent` | `--chrome` | ui | 3 | 7.96 | pass |
 | High contrast | `--accent` | `--well` | ui | 3 | 9.40 | pass |
@@ -346,7 +346,7 @@ The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2
 | High contrast | `--dock-dim` | `--fill-raised` over `--pane` | text | 4.5 | 5.96 | pass |
 | High contrast | `--text-0` | `--accent-soft` over `--pane` | text | 4.5 | 15.37 | pass |
 | High contrast | `--ansi-bright-black` | `--term-bg` | text | 4.5 | 5.05 | pass |
-| High contrast | `--thumb` | `--pane` | ui | 3 | 2.43 | open D5 |
+| High contrast | `--thumb` | `--pane` | ui | 3 | 2.43 | open D15 |
 | High contrast | `--term-scroll-thumb` | `--term-bg` | ui | 3 | 3.00 | pass |
 | High contrast | `--accent` | `--fill-subtle` over `--pane` | text | 4.5 | 7.06 | pass |
 | High contrast | `--success` | `--fill-subtle` over `--pane` | text | 4.5 | 9.75 | pass |
@@ -354,32 +354,32 @@ The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2
 | High contrast | `--danger` | `--fill-subtle` over `--pane` | text | 4.5 | 5.69 | pass |
 | High contrast | `--neutral` | `--fill-subtle` over `--pane` | text | 4.5 | 6.97 | pass |
 | High contrast | `--accent` | `--accent-soft` over `--fill-subtle` over `--pane` | text | 4.5 | 5.32 | pass |
-| High contrast | `--accent` | `--accent-soft` over `--fill-raised` over `--pane` | text | 4.5 | 4.26 | open D5 |
+| High contrast | `--accent` | `--accent-soft` over `--fill-raised` over `--pane` | text | 4.5 | 4.26 | open D15 |
 | High contrast | `--success` | `--success-soft` over `--fill-subtle` over `--pane` | text | 4.5 | 6.89 | pass |
 | High contrast | `--success` | `--success-soft` over `--fill-raised` over `--pane` | text | 4.5 | 5.51 | pass |
 | High contrast | `--warn` | `--warn-soft` over `--fill-subtle` over `--pane` | text | 4.5 | 6.83 | pass |
 | High contrast | `--warn` | `--warn-soft` over `--fill-raised` over `--pane` | text | 4.5 | 5.46 | pass |
 | High contrast | `--danger` | `--danger-soft` over `--fill-subtle` over `--pane` | text | 4.5 | 4.55 | pass |
-| High contrast | `--danger` | `--danger-soft` over `--fill-raised` over `--pane` | text | 4.5 | 3.66 | open D5 |
+| High contrast | `--danger` | `--danger-soft` over `--fill-raised` over `--pane` | text | 4.5 | 3.66 | open D15 |
 | High contrast | `--neutral` | `--neutral-soft` over `--fill-subtle` over `--pane` | text | 4.5 | 5.23 | pass |
-| High contrast | `--neutral` | `--neutral-soft` over `--fill-raised` over `--pane` | text | 4.5 | 4.19 | open D5 |
+| High contrast | `--neutral` | `--neutral-soft` over `--fill-raised` over `--pane` | text | 4.5 | 4.19 | open D15 |
 | Remote | `--text-0` | `--pane` | text | 4.5 | 16.47 | pass |
 | Remote | `--text-1` | `--pane` | text | 4.5 | 7.23 | pass |
-| Remote | `--text-2` | `--pane` | text | 4.5 | 3.37 | open D5 |
+| Remote | `--text-2` | `--pane` | text | 4.5 | 5.17 | pass |
 | Remote | `--text-0` | `--chrome` | text | 4.5 | 14.42 | pass |
 | Remote | `--text-1` | `--chrome` | text | 4.5 | 6.33 | pass |
-| Remote | `--text-2` | `--chrome` | text | 4.5 | 2.95 | open D5 |
+| Remote | `--text-2` | `--chrome` | text | 4.5 | 4.52 | pass |
 | Remote | `--text-0` | `--well` | text | 4.5 | 14.75 | pass |
 | Remote | `--text-1` | `--well` | text | 4.5 | 6.47 | pass |
-| Remote | `--text-2` | `--well` | text | 4.5 | 3.02 | open D5 |
+| Remote | `--text-2` | `--well` | text | 4.5 | 4.63 | pass |
 | Remote | `--text-0` | `--remote-bubble` | text | 4.5 | 11.34 | pass |
 | Remote | `--text-1` | `--remote-bubble` | text | 4.5 | 4.98 | pass |
-| Remote | `--text-2` | `--remote-bubble` | text | 4.5 | 2.32 | open D5 |
+| Remote | `--text-2` | `--remote-bubble` | text | 4.5 | 3.56 | exempt §9 ruling 93 |
 | Remote | `--accent` | `--pane` | text | 4.5 | 6.82 | pass |
 | Remote | `--danger` | `--pane` | text | 4.5 | 5.85 | pass |
-| Remote | `--hairline-strong` | `--pane` | ui | 3 | 1.55 | open D5 |
+| Remote | `--hairline-strong` | `--pane` | ui | 3 | 1.55 | exempt §9 ruling 91 |
 | Remote | `--accent` | `--pane` | ui | 3 | 6.82 | pass |
-| Remote | `--text-2` | `--fill-subtle` over `--chrome` | text | 4.5 | 2.53 | open D5 |
+| Remote | `--text-2` | `--fill-subtle` over `--chrome` | text | 4.5 | 3.89 | open D15 |
 | Remote | `--warn` | `--warn-soft` over `--pane` | text | 4.5 | 7.65 | pass |
 | Review light | `--text-0` | `--pane` | text | 4.5 | 14.23 | pass |
 | Review light | `--text-1` | `--pane` | text | 4.5 | 5.63 | pass |
@@ -390,20 +390,20 @@ The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2
 | Review light | `--text-0` | `--well` | text | 4.5 | 12.44 | pass |
 | Review light | `--text-1` | `--well` | text | 4.5 | 4.93 | pass |
 | Review light | `--text-2` | `--well` | text | 4.5 | 4.78 | pass |
-| Review light | `--accent` | `--pane` | text | 4.5 | 5.14 | pass |
-| Review light | `--accent` | `--well` | text | 4.5 | 4.49 | open D5 |
-| Review light | `--neutral` | `--pane` | text | 4.5 | 3.08 | open D5 |
-| Review light | `--neutral` | `--well` | text | 4.5 | 2.69 | open D5 |
+| Review light | `--accent` | `--pane` | text | 4.5 | 5.15 | pass |
+| Review light | `--accent` | `--well` | text | 4.5 | 4.50 | pass |
+| Review light | `--neutral` | `--pane` | text | 4.5 | 5.16 | pass |
+| Review light | `--neutral` | `--well` | text | 4.5 | 4.51 | pass |
 | Review light | `--danger` | `--pane` | text | 4.5 | 6.14 | pass |
 | Review light | `--warn` | `--pane` | text | 4.5 | 5.62 | pass |
 | Review light | `--success` | `--pane` | text | 4.5 | 5.50 | pass |
 | Review light | `--danger` | `--danger-soft` over `--pane` | text | 4.5 | 4.77 | pass |
 | Review light | `--warn` | `--warn-soft` over `--pane` | text | 4.5 | 4.56 | pass |
-| Review light | `--on-accent` | `--accent-fill` | text | 4.5 | 5.41 | pass |
+| Review light | `--on-accent` | `--accent-fill` | text | 4.5 | 5.42 | pass |
 | Review light | `--on-accent` | `--accent-fill-hover` | text | 4.5 | 6.80 | pass |
-| Review light | `--hairline-strong` | `--pane` | ui | 3 | 1.44 | open D5 |
-| Review light | `--accent` | `--pane` | ui | 3 | 5.14 | pass |
-| Review light | `--thumb` | `--pane` | ui | 3 | 1.30 | open D5 |
+| Review light | `--hairline-strong` | `--pane` | ui | 3 | 1.44 | exempt §9 ruling 91 |
+| Review light | `--accent` | `--pane` | ui | 3 | 5.15 | pass |
+| Review light | `--thumb` | `--pane` | ui | 3 | 1.30 | open D15 |
 | Review light | `--syntax-keyword` | `--well` | text | 4.5 | 5.26 | pass |
 | Review light | `--syntax-string` | `--well` | text | 4.5 | 4.84 | pass |
 | Review light | `--syntax-number` | `--well` | text | 4.5 | 5.34 | pass |
@@ -419,7 +419,7 @@ The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2
 | Viewer (dark) | `--syntax-function` | `--well` | text | 4.5 | 6.64 | pass |
 | Viewer (dark) | `--syntax-property` | `--well` | text | 4.5 | 11.75 | pass |
 | Viewer (dark) | `--syntax-invalid` | `--well` | text | 4.5 | 5.69 | pass |
-| Viewer (dark) | `--syntax-comment` | `--well` | text | 4.5 | 3.28 | open D5 |
+| Viewer (dark) | `--syntax-comment` | `--well` | text | 4.5 | 5.03 | pass |
 | Extension popup | body text `#cccccc` | body background `#252526` | text | 4.5 | 9.53 | pass |
 | Extension popup | title `#007acc` | body background `#252526` | text | 4.5 | 3.39 | open D9 |
 | Extension popup | label `#808080` | body background `#252526` | text | 4.5 | 3.87 | open D9 |
@@ -428,95 +428,95 @@ The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2
 | Extension popup | body text `#cccccc` | input background `#1e1e1e` | text | 4.5 | 10.38 | pass |
 | Extension popup | input border `#3c3c3c` | body background `#252526` | ui | 3 | 1.38 | open D9 |
 | Extension popup | input focus border `#007acc` | body background `#252526` | ui | 3 | 3.39 | pass |
-| Helm, blue group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 2.35 | open D5 |
-| Helm, blue group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.55 | open D5 |
+| Helm, blue group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.61 | open D15 |
+| Helm, blue group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.55 | open D15 |
 | Helm, blue group | `--text-0` | group active `color-mix(in srgb, var(--group-color) 30%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 7.07 | pass |
 | Helm, blue group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.78 | pass |
-| Helm, blue group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.35 | open D5 |
+| Helm, blue group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.35 | open D15 |
 | Helm, blue group | group label hover `var(--group-color)` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | ui | 3 | 4.76 | pass |
-| Helm, blue group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.46 | open D5 |
+| Helm, blue group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.13 | open D15 |
 | Helm, blue group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | `--chrome` | text | 4.5 | 6.01 | pass |
 | Helm, blue group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 5.03 | pass |
-| Helm, blue group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | text | 4.5 | 4.35 | open D5 |
-| Helm, blue group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 3.64 | open D5 |
-| Helm, blue group | group restore `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | ui | 3 | 4.35 | pass |
-| Helm, purple group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 2.31 | open D5 |
-| Helm, purple group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.42 | open D5 |
+| Helm, blue group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | text | 4.5 | 5.19 | pass |
+| Helm, blue group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 4.35 | open D15 |
+| Helm, blue group | group restore `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | ui | 3 | 5.19 | pass |
+| Helm, purple group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.55 | open D15 |
+| Helm, purple group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.42 | open D15 |
 | Helm, purple group | `--text-0` | group active `color-mix(in srgb, var(--group-color) 30%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 6.76 | pass |
 | Helm, purple group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.96 | pass |
-| Helm, purple group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.48 | open D5 |
+| Helm, purple group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.48 | open D15 |
 | Helm, purple group | group label hover `var(--group-color)` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | ui | 3 | 5.05 | pass |
-| Helm, purple group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.60 | open D5 |
+| Helm, purple group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.29 | open D15 |
 | Helm, purple group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | `--chrome` | text | 4.5 | 6.34 | pass |
 | Helm, purple group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 5.24 | pass |
-| Helm, purple group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | text | 4.5 | 4.60 | pass |
-| Helm, purple group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 3.80 | open D5 |
-| Helm, purple group | group restore `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | ui | 3 | 4.60 | pass |
-| Helm, pink group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 2.35 | open D5 |
-| Helm, pink group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.52 | open D5 |
+| Helm, purple group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | text | 4.5 | 5.48 | pass |
+| Helm, purple group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 4.53 | pass |
+| Helm, purple group | group restore `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | ui | 3 | 5.48 | pass |
+| Helm, pink group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.60 | open D15 |
+| Helm, pink group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.52 | open D15 |
 | Helm, pink group | `--text-0` | group active `color-mix(in srgb, var(--group-color) 30%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 7.00 | pass |
 | Helm, pink group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.82 | pass |
-| Helm, pink group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.43 | open D5 |
+| Helm, pink group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.43 | open D15 |
 | Helm, pink group | group label hover `var(--group-color)` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | ui | 3 | 4.91 | pass |
-| Helm, pink group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.50 | open D5 |
+| Helm, pink group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.17 | open D15 |
 | Helm, pink group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | `--chrome` | text | 4.5 | 6.08 | pass |
 | Helm, pink group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 5.08 | pass |
-| Helm, pink group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | text | 4.5 | 4.40 | open D5 |
-| Helm, pink group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 3.68 | open D5 |
-| Helm, pink group | group restore `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | ui | 3 | 4.40 | pass |
-| Helm, red group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 2.46 | open D5 |
-| Helm, red group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.90 | open D5 |
+| Helm, pink group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | text | 4.5 | 5.25 | pass |
+| Helm, pink group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 4.39 | open D15 |
+| Helm, pink group | group restore `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | ui | 3 | 5.25 | pass |
+| Helm, red group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.78 | open D15 |
+| Helm, red group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.90 | open D15 |
 | Helm, red group | `--text-0` | group active `color-mix(in srgb, var(--group-color) 30%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 7.87 | pass |
-| Helm, red group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.38 | open D5 |
-| Helm, red group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.15 | open D5 |
+| Helm, red group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.38 | open D15 |
+| Helm, red group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.15 | open D15 |
 | Helm, red group | group label hover `var(--group-color)` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | ui | 3 | 4.27 | pass |
-| Helm, red group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.15 | open D5 |
+| Helm, red group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.77 | open D15 |
 | Helm, red group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | `--chrome` | text | 4.5 | 5.26 | pass |
 | Helm, red group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 4.57 | pass |
-| Helm, red group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | text | 4.5 | 3.79 | open D5 |
-| Helm, red group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 3.29 | open D5 |
-| Helm, red group | group restore `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | ui | 3 | 3.79 | pass |
-| Helm, orange group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 2.33 | open D5 |
-| Helm, orange group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.46 | open D5 |
+| Helm, red group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | text | 4.5 | 4.53 | pass |
+| Helm, red group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 3.93 | open D15 |
+| Helm, red group | group restore `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | ui | 3 | 4.53 | pass |
+| Helm, orange group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.58 | open D15 |
+| Helm, orange group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.46 | open D15 |
 | Helm, orange group | `--text-0` | group active `color-mix(in srgb, var(--group-color) 30%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 6.86 | pass |
 | Helm, orange group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.90 | pass |
-| Helm, orange group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.49 | open D5 |
+| Helm, orange group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.49 | open D15 |
 | Helm, orange group | group label hover `var(--group-color)` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | ui | 3 | 5.05 | pass |
-| Helm, orange group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.56 | open D5 |
+| Helm, orange group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.23 | open D15 |
 | Helm, orange group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | `--chrome` | text | 4.5 | 6.22 | pass |
 | Helm, orange group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 5.17 | pass |
-| Helm, orange group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | text | 4.5 | 4.51 | pass |
-| Helm, orange group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 3.75 | open D5 |
-| Helm, orange group | group restore `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | ui | 3 | 4.51 | pass |
-| Helm, green group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 2.22 | open D5 |
-| Helm, green group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.09 | open D5 |
+| Helm, orange group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | text | 4.5 | 5.37 | pass |
+| Helm, orange group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 4.47 | open D15 |
+| Helm, orange group | group restore `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | ui | 3 | 5.37 | pass |
+| Helm, green group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.41 | open D15 |
+| Helm, green group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.09 | open D15 |
 | Helm, green group | `--text-0` | group active `color-mix(in srgb, var(--group-color) 30%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 5.99 | pass |
 | Helm, green group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 5.38 | pass |
-| Helm, green group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.97 | open D5 |
+| Helm, green group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.97 | open D15 |
 | Helm, green group | group label hover `var(--group-color)` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | ui | 3 | 6.14 | pass |
-| Helm, green group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.96 | open D5 |
+| Helm, green group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.68 | pass |
 | Helm, green group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | `--chrome` | text | 4.5 | 7.15 | pass |
 | Helm, green group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 5.73 | pass |
-| Helm, green group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | text | 4.5 | 5.27 | pass |
-| Helm, green group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 4.23 | open D5 |
-| Helm, green group | group restore `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | ui | 3 | 5.27 | pass |
-| Helm, cyan group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 2.20 | open D5 |
-| Helm, cyan group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.02 | open D5 |
+| Helm, green group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | text | 4.5 | 6.23 | pass |
+| Helm, green group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 4.99 | pass |
+| Helm, green group | group restore `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | ui | 3 | 6.23 | pass |
+| Helm, cyan group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.38 | open D15 |
+| Helm, cyan group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.02 | open D15 |
 | Helm, cyan group | `--text-0` | group active `color-mix(in srgb, var(--group-color) 30%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 5.85 | pass |
 | Helm, cyan group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 5.46 | pass |
-| Helm, cyan group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.04 | open D5 |
+| Helm, cyan group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.04 | open D15 |
 | Helm, cyan group | group label hover `var(--group-color)` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | ui | 3 | 6.31 | pass |
-| Helm, cyan group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.04 | open D5 |
+| Helm, cyan group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.76 | pass |
 | Helm, cyan group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | `--chrome` | text | 4.5 | 7.34 | pass |
 | Helm, cyan group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 5.84 | pass |
-| Helm, cyan group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | text | 4.5 | 5.42 | pass |
-| Helm, cyan group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 4.31 | open D5 |
-| Helm, cyan group | group restore `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | ui | 3 | 5.42 | pass |
+| Helm, cyan group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | text | 4.5 | 6.40 | pass |
+| Helm, cyan group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 5.09 | pass |
+| Helm, cyan group | group restore `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | ui | 3 | 6.40 | pass |
 | High contrast, blue group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.56 | pass |
 | High contrast, blue group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 5.22 | pass |
 | High contrast, blue group | `--text-0` | group active `color-mix(in srgb, var(--group-color) 30%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 7.55 | pass |
 | High contrast, blue group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 6.82 | pass |
-| High contrast, blue group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.97 | open D5 |
+| High contrast, blue group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.97 | open D15 |
 | High contrast, blue group | group label hover `var(--group-color)` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | ui | 3 | 6.08 | pass |
 | High contrast, blue group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 5.30 | pass |
 | High contrast, blue group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | `--chrome` | text | 4.5 | 8.93 | pass |
@@ -524,11 +524,11 @@ The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2
 | High contrast, blue group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | text | 4.5 | 6.95 | pass |
 | High contrast, blue group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 5.64 | pass |
 | High contrast, blue group | group restore `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | ui | 3 | 6.95 | pass |
-| High contrast, purple group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.44 | open D5 |
+| High contrast, purple group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.44 | open D15 |
 | High contrast, purple group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.89 | pass |
 | High contrast, purple group | `--text-0` | group active `color-mix(in srgb, var(--group-color) 30%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 6.99 | pass |
 | High contrast, purple group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 7.17 | pass |
-| High contrast, purple group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.25 | open D5 |
+| High contrast, purple group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.25 | open D15 |
 | High contrast, purple group | group label hover `var(--group-color)` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | ui | 3 | 6.77 | pass |
 | High contrast, purple group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 5.60 | pass |
 | High contrast, purple group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | `--chrome` | text | 4.5 | 9.64 | pass |
@@ -540,7 +540,7 @@ The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2
 | High contrast, pink group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 5.14 | pass |
 | High contrast, pink group | `--text-0` | group active `color-mix(in srgb, var(--group-color) 30%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 7.40 | pass |
 | High contrast, pink group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 6.91 | pass |
-| High contrast, pink group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.09 | open D5 |
+| High contrast, pink group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.09 | open D15 |
 | High contrast, pink group | group label hover `var(--group-color)` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | ui | 3 | 6.33 | pass |
 | High contrast, pink group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 5.38 | pass |
 | High contrast, pink group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | `--chrome` | text | 4.5 | 9.09 | pass |
@@ -552,7 +552,7 @@ The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2
 | High contrast, red group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 5.90 | pass |
 | High contrast, red group | `--text-0` | group active `color-mix(in srgb, var(--group-color) 30%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 8.70 | pass |
 | High contrast, red group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 6.16 | pass |
-| High contrast, red group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.62 | open D5 |
+| High contrast, red group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 3.62 | open D15 |
 | High contrast, red group | group label hover `var(--group-color)` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | ui | 3 | 5.18 | pass |
 | High contrast, red group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.74 | pass |
 | High contrast, red group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | `--chrome` | text | 4.5 | 7.63 | pass |
@@ -564,7 +564,7 @@ The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2
 | High contrast, orange group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 5.08 | pass |
 | High contrast, orange group | `--text-0` | group active `color-mix(in srgb, var(--group-color) 30%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 7.30 | pass |
 | High contrast, orange group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 6.97 | pass |
-| High contrast, orange group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.14 | open D5 |
+| High contrast, orange group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.14 | open D15 |
 | High contrast, orange group | group label hover `var(--group-color)` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | ui | 3 | 6.46 | pass |
 | High contrast, orange group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 5.43 | pass |
 | High contrast, orange group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | `--chrome` | text | 4.5 | 9.21 | pass |
@@ -572,8 +572,8 @@ The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2
 | High contrast, orange group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | text | 4.5 | 7.18 | pass |
 | High contrast, orange group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 5.79 | pass |
 | High contrast, orange group | group restore `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | ui | 3 | 7.18 | pass |
-| High contrast, green group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.29 | open D5 |
-| High contrast, green group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.48 | open D5 |
+| High contrast, green group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.29 | open D15 |
+| High contrast, green group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.48 | open D15 |
 | High contrast, green group | `--text-0` | group active `color-mix(in srgb, var(--group-color) 30%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 6.29 | pass |
 | High contrast, green group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 7.57 | pass |
 | High contrast, green group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.70 | pass |
@@ -584,8 +584,8 @@ The table below is generated from `app/src/design/contrast-pairs.ts` (the WCAG 2
 | High contrast, green group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | text | 4.5 | 8.33 | pass |
 | High contrast, green group | group count `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | group row hover `color-mix(in srgb, var(--group-color) 12%, transparent)` over `--chrome` | text | 4.5 | 6.46 | pass |
 | High contrast, green group | group restore `color-mix(in srgb, var(--group-color) 55%, var(--text-2))` | `--chrome` | ui | 3 | 8.33 | pass |
-| High contrast, cyan group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.22 | open D5 |
-| High contrast, cyan group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.32 | open D5 |
+| High contrast, cyan group | `--text-2` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.22 | open D15 |
+| High contrast, cyan group | `--text-1` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.32 | open D15 |
 | High contrast, cyan group | `--text-0` | group active `color-mix(in srgb, var(--group-color) 30%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 6.04 | pass |
 | High contrast, cyan group | group label `color-mix(in srgb, var(--group-color) 55%, var(--text-1))` | group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 7.76 | pass |
 | High contrast, cyan group | group label hover `var(--group-color)` | group hover `color-mix(in srgb, var(--group-color) 22%, transparent)` over group band `color-mix(in srgb, var(--group-color) 15%, transparent)` over `--chrome` | text | 4.5 | 4.83 | pass |
@@ -620,7 +620,7 @@ Tones:
 
 | Tone | Resting | Hover | Use |
 | --- | --- | --- | --- |
-| primary | `--accent-fill` bg, `--on-accent` text (`#fff`) | bg `--accent-fill-hover` (`#5a9dff`) | THE one primary action of the surface |
+| primary | `--accent-fill` bg, `--on-accent` text (`#fff`) | bg `--accent-fill-hover` (`#0b63f4`, darker than rest; §9 ruling 90) | THE one primary action of the surface |
 | quiet | bg `--fill-raised`, no border, `--text-0` text | bg `--fill-strong` | Secondary actions — a filled gray button, never an outline |
 | danger | bg danger-soft, no border, `--danger` text | bg danger soft ×22% (`color-mix(in srgb, var(--danger) 22%, transparent)`) | Destructive (reject, cancel run, delete) |
 | ghost | transparent, no border, `--text-2` | bg `--fill-subtle`, text `--text-0` | Icon buttons, overflow "…", back chevron, close × |
@@ -690,7 +690,7 @@ Reference implementation: `app/src/renderer/toast.ts` + `toast.css`.
 
 - Height **28** (textarea min-height 64), padding 0 10, background `--fill-subtle`, 1px `--hairline` border, radius `--radius-md`, text 12 `--text-0`, placeholder `--text-2`. Natural-language textareas use the UI font at 12px/1.5; mono is reserved for an explicitly code-shaped editor, never an ordinary prompt.
 - Hover: border `--hairline-strong`. Focus: border `--accent`, no outer ring (the border is the ring for fields; buttons/rows use the outline ring).
-- Select: `appearance: none` + inline SVG chevron data-URI, stroke `#62666e` (`--text-2`), positioned `right 10px center`, right padding 28. Option list background `--chrome`.
+- Select: `appearance: none` + inline SVG chevron data-URI, stroke `#7f848d` (the `--text-2` value, written into the URI: a token cannot reach it), positioned `right 10px center`, right padding 28. Option list background `--chrome`.
 - Field labels: Label type style (12/500 sentence case, `--text-2`), 4px above the field.
 - Disabled: `opacity: 0.5; cursor: default`.
 - **Color wells** (`<input type="color">`, `.color-input`): well = `--fill-subtle`, 1px `--hairline`, radius 6. Chromium's default swatch bezel (1px gray border, square corners) MUST be stripped via the pseudo-elements: `::-webkit-color-swatch-wrapper { padding: 3px }` + `::-webkit-color-swatch { border: none; border-radius: 3px }` — inner radius = outer radius − padding, so the color chip sits inset on the well with token-only lines.
@@ -954,7 +954,7 @@ At native idle only, fresh positive limited subagent activity uses the existing 
 Queue of what Okena's Claude Remote sessions owe the operator, answerable from the dock, docked in `main#right` beside the terminals: one `--chrome` surface — the topbar mirrored — in **two bands**: the 28px **queue row** (one quiet line per item — glyph, short name, wait — then the Agents entry and ⌘⇧J; always shown, the same with or without a pane; no rules, no cards) and an in-flow **pane** that splits off the terminal row like a tmux pane when an entry is opened. There is no separate summary strip and no collapsed/expanded state: "collapsed" is simply the row with no pane. Implementation: `app/src/renderer/agent-dock/AgentDock.tsx` (pane host and its state), `AgentDockQueue.tsx` (row, entries), `AgentDockDetail.tsx` (picks the pane body: `AskPanel.tsx`, `DecisionPanels.tsx`, `TurnPanel.tsx`, `AgentsDetail.tsx` (Agents overview), `AgentPanel.tsx` (agent detail), built from `pane-chrome.tsx` and `pane-keys.ts`), `presentation.ts` (pure snapshot → copy/tone/glyph/name/fit/order helpers, incl. `queueLayout`), `app/src/renderer/agent-dock-layout.ts` (`mountAgentDock`: placement, focus, ⌘⇧J, pane room, refit); styles in `agent-dock/agent-dock.css` (`.agent-dock-*`). Stories: **Views / Terminal workspace / Agent dock*** (row, question, permission, plan, turn, orphaned, agents, narrow 900, narrow question, source down, empty, top, harness, receipt sending/unconfirmed/answered/refused/failed), **Views / Agent dock under Claude Code** (the production dock under a Claude Code session: `ClaudeCodeSession`, `RealCaseCollapsed` (the row, no pane), `RealCaseQuestion`/`Permission`/`Turn`, `Overflow`, `Top`, `HighContrast`) and **Views / Agent dock agents entry** (`AgentsEntry`, `States` — 0 / 1 / 3 / 9 mixed / 12 capped / unknown / open / keyboard focus — and `Narrow 900`), **Compositions / Agent dock** (same states without a terminal, incl. `RealCase*` and `Overflow`), all built from `tests/fixtures/okena-claude` through the real reducer.
 
 - **Type:** **one typeface, the UI's** (`--dock-sans`) for everything: the row, the pane header, choices, key hints, buttons, the Agents pane — 12/18 for the row and meta, 13/20 for what is read (the header's kind, question, option labels, turn message, fields, warnings), letter-spacing −0.01em, tabular digits. **Mono (`--dock-mono`) only for literal commands, code, plans and previews**: the permission command, the Always-allow rule, the plan, option previews, bounded tool input. The tool's name in the permission lead and PR numbers are words, not code. Glyphs: kind `?` question, `$` permission, `≡` plan, `↵` turn ended, `✓` resolved; agent status `✻` working (pulses), `◐` background, `?` waiting, `↵` sending, `✓` read, `·` idle, `¿` unknown / not connected, `▪` frozen; turn message mark `●`; steppers `‹ ›`. Glyphs differ in width in the UI face, so the kind glyph sits in a fixed 12px box (names line up). Never box-drawing strokes (`─`) as text, never `❯`, `⏺`, `⤶`, `⎿`. Keys in hints use one notation with the row's `⌘⇧J`: modifier shortcuts as symbols (`⌘⇧J`, `⌘↵`; `Ctrl+Enter` / `Ctrl+Shift+J` off macOS), plain keys as words (`esc`, `1–3`), never `⏎`.
-- **Hierarchy:** bright/dim, never weight: **no bold anywhere in the dock** (400 throughout, buttons included). `--text-0` for the header's kind and the open entry's name (the selected fill plus the brighter name mark it), `--text-1` for entry names and the header's agent name, dim for ages, the header's context, project and task title, the Agents entry, hints and descriptions. The dock's dim is **`--dock-dim`** (`color-mix(in srgb, var(--text-1) 60%, var(--text-2))`, defined on `.agent-dock`): `--text-2` alone is ~3:1 on `--chrome`, too faint for 12px meta; `--dock-dim` is ≥4.5:1 on `--chrome` and ≥3:1 on the selected fill. **Color lives on glyphs only** — the kind glyph (`--warn` ask/orphaned, `--accent` turn, `--success` answered from the dock; items closed elsewhere keep their glyph untoned; the glyph says the kind, **never the age**), status glyphs, the Agents pane's source dots, the picked choice's mark — plus ages once genuinely old (§Aging), receipts, Deny, and unknown agents. An answer on its way or landed stops ageing.
+- **Hierarchy:** bright/dim, never weight: **no bold anywhere in the dock** (400 throughout, buttons included). `--text-0` for the header's kind and the open entry's name (the selected fill plus the brighter name mark it), `--text-1` for entry names and the header's agent name, dim for ages, the header's context, project and task title, the Agents entry, hints and descriptions. The dock's dim is **`--dock-dim`** (`color-mix(in srgb, var(--text-1) 60%, var(--text-2))`, defined on `.agent-dock`): it was introduced when `--text-2` was ~3:1 on `--chrome`; `--text-2` now meets 4.5:1 there (§9 ruling 89) and `--dock-dim` follows it, ≥5.5:1 on `--chrome` and ≥4.2:1 on the selected fill (D15 owns that last pair). **Color lives on glyphs only** — the kind glyph (`--warn` ask/orphaned, `--accent` turn, `--success` answered from the dock; items closed elsewhere keep their glyph untoned; the glyph says the kind, **never the age**), status glyphs, the Agents pane's source dots, the picked choice's mark — plus ages once genuinely old (§Aging), receipts, Deny, and unknown agents. An answer on its way or landed stops ageing.
 - **Sources:** the dock lists Okena's Claude Remote sessions and Claude Code running in Helm's own terminals (source "Helm terminals", hooks into Helm's hub), in one queue — no per-source badge, column or ordering. Each source's health is in the **Agents pane header** (`Okena ● · Helm terminals ●`, see Agents); the row's accessible name, its down note and the empty-row text name only the down / connecting ones ("Helm terminals unreachable since HH:MM", "! Helm terminals unreachable", "Connecting to Okena…"). A blocked answer names the item's own source ("Helm terminals unreachable: answer in the terminal"; an item whose source is reachable stays answerable while another source is down), and pane warnings name "Helm's Claude hub" instead of Okena for a Helm terminal. A Helm terminal whose claude was started with its own `--settings` is listed with state unknown (no hooks).
 - **Placement:** `#right` is a row grid; the dock owns its own `auto` row **below** `#terms` by default and above it when the persisted position is `top` (`localStorage['helm.agentDock.position']`). The position is chosen in **Settings → Appearance → Agent dock** (Position: Bottom / Top, §2.8), never on the row; `agentDockPosition` in `agent-dock-layout.ts` owns the value and every mounted dock re-lays out and refits xterm live when it changes. The terminal row shrinks and the existing `#terms` ResizeObserver refits xterm; no PTY/placement code knows about the dock. `#no-terms` is grid-placed so it stays centered over the terminal row. A preload without `window.helm.agentDock` leaves `#agent-dock` hidden. Bottom dock, top to bottom: pane, row (the row on the window edge); top dock: row, pane.
 - **Surface:** the whole dock — row and pane — is **one `--chrome` surface**, the topbar's material, mirrored: the terminal ends where the material changes (Xcode's debug area), which matters under Claude Code, whose own full-width hairline rules sit right above the dock. The dock's terminal-side edge is one 1px `--hairline` (the topbar's `border-bottom` token), laid over its terminal-side pixel row (`.agent-dock::before`, above the children); while the dock holds the keys (row or pane, `:focus-within`) it turns `--accent` (tmux's active border); an arrival pulses it for 1.4s (**Arrival** below). Inside, one `--hairline` between pane and row — nothing else: no rule before the Agents entry, no shadows, nothing floats.
@@ -1155,7 +1155,7 @@ Ship-blocking: a UI change is not done until every item that applies to it is ch
 
 **Perception**
 
-- [ ] Text meets WCAG AA contrast on its real background in Helm and High contrast: 4.5:1 body/meta, 3:1 large text and non-text UI (§2.9). Check: `tests/design-contrast.test.ts`; today's failures are open as D5.
+- [ ] Text meets WCAG AA contrast on its real background in Helm and High contrast: 4.5:1 body/meta, 3:1 large text and non-text UI (§2.9). Check: `tests/design-contrast.test.ts`; today's failures are open as D15 (D9 for the popup); control edges are decorative outside High contrast (§9 ruling 91).
 - [ ] State is never color-only: every status has words or an accessible label (§3.5, §4). Check: `tests/helm-model.test.ts` (status words), axe over every story (pending S6).
 - [ ] Icons and icon-only buttons have an accessible name; decorative glyphs are `aria-hidden` (§3.1, §3.18 tab numbers). Check: axe (pending S6).
 - [ ] UI text follows `--ui-scale` (§2.2). Check: `tests/design-lint.test.ts` (font-size-unscaled, no exceptions).
@@ -1284,6 +1284,12 @@ Every design decision already made, numbered, with where it came from and what h
 | 86 | Copy voice | Sentence case, active voice, state then direction, "…" only when more input follows, relative times under 24h | d499fd6 2026-07-11 | §5 | `tests/design-lint.test.ts` (uppercase); pending S10 (the rest of the voice) |
 | 87 | Accent text | `--accent-text` is `var(--accent)` on `:root`, the colour of text for a live state that holds the keys (shortcut recording); never its own value | 52e2402 2026-11-13; Jakub 2026-11-13 (D4 A) | §2.1 | `tests/design-root-tokens.test.ts`; `tests/design-contrast.test.ts` |
 | 88 | Widget controls | The extension widget's buttons (`.vg-btn`, `.vg-pr`) are the §3.1 md button (32 · 0 14 · 13/600 · radius 8); its segmented pickers and model trigger stay 28 (§3.2, §3.7); no widget-only button size | 52e2402 2026-11-13; Jakub 2026-11-13 (D12 C) | §3.1, §3.28 | `tests/design-widget-controls.test.ts` |
+| 89 | Meta text | Helm `--text-2` is `#7f848d`: 4.5:1 on `--chrome`, `--pane` and `--well` (the extension `--vg-text-2` and the `.select` chevron's data-URI stroke carry the same value; `--dock-dim` derives from it); on fills it stays under 4.5 (D15) | Jakub 2026-11-13 (D5 meta text A) | §2.1, §3.7, §3.24 | `tests/design-contrast.test.ts` (rows, the widget copy, the chevron stroke) |
+| 90 | Primary fill | Helm `--accent-fill` `#1e6ff5`, hover `#0b63f4`: hover is darker than rest, white text 4.5:1 at rest and 5.1:1 on hover; the Appearance accent well derives its hover the same way (4 HSL lightness points darker, `accentFillHover`) | Jakub 2026-11-13 (D5 primary button A) | §2.1, §3.1, §3.16 | `tests/design-contrast.test.ts`; `tests/helm-appearance.test.ts` |
+| 91 | Control edges | A field's, select's and off toggle's `--hairline` / `--hairline-strong` edge is decorative: a field is identified by its label, value and focus ring, so these pairs are exempt from 3:1 in Helm, Remote and the Review light scope; High contrast is not exempt (§9 ruling 92) | Jakub 2026-11-13 (D5 control edges B) | §2.1, §2.9, §3.7, §3.16 | `tests/design-contrast.test.ts` (EXEMPT entries, stale once they pass) |
+| 92 | High contrast preset | High contrast `--accent-fill` `#3473de`, hover `#2367da`; `--hairline` white 0.34 and `--hairline-strong` white 0.48 (control edges 3:1); `--text-2` stays `#9096a0`, because no production rule paints it on `--fill-strong` (that pair is exempt). Installed theme files get changed preset values only through D10 | Jakub 2026-11-13 (D5 High contrast preset B) | §2.8, §2.9 | `tests/design-contrast.test.ts`; `tests/helm-appearance.test.ts`; D10 |
+| 93 | Remote meta | Remote inherits the app `--text-2` (§9 ruling 89) and adds no value of its own; no `--text-2` text on the Remote message bubble (3.56:1, exempt) | Jakub 2026-11-13 (D5 Remote meta text A) | §2.9, §3.23 | `tests/design-contrast.test.ts` (EXEMPT entry); pending S10 (a check that finds text-2 on the bubble) |
+| 94 | Review light accent | The Document Review light scope sets `--accent` and `--accent-fill` to `#176ac1` (4.5:1 on its well) and its own `--neutral` `#656a73` with `--neutral-soft` recomputed in the scope (15%, as on `:root`) | Jakub 2026-11-13 (D5 Review light A) | §2.9, §3.26, Native document review workspace | `tests/design-contrast.test.ts` (the scope's declarations are pinned); `tests/design-lint.test.ts` (token-definition baseline) |
 
 ---
 
@@ -1302,7 +1308,7 @@ Which check holds each rule family, and its state. **enforced** = a check in the
 | Literal colors, off-scale spacing/radii/sizes/weights, letter-spacing, uppercase, unscaled sidebar type, durations and easings | §2.1–§2.5, §5 | `tests/design-lint.test.ts` (the scanner in app/src/design/lint.ts over every production stylesheet, HTML style and inline TS/TSX style in app/ and extension/; ratchet baseline app/src/design/lint-allowlist.ts; npm run lint:design prints counts plus any new or stale finding, npm run lint:design -- --all every finding) | enforced; D8 |
 | Buttons draw no border in any tone | §3.1 | `tests/design-lint.test.ts` (button-border rule: button classes, button elements, role=button and button-type inputs in the app and the widget) | enforced |
 | A shared primitive's base rules only in its owner file (`button.css` for buttons, `sidebar/sidebar.css` for segmented, list row, chips, fields, menus, action rows, toggle and icon button, `sidebar/detail-redesign.css` for disclosure); surface modifiers (`.agent-dock-key.btn`) and descendant overrides stay with their surface | §3 | `tests/design-lint.test.ts` (primitive-outside-owner; the PRIMITIVES table in app/src/design/lint.ts) | enforced |
-| Measured contrast of every drawn token pair | §2.9 | `tests/design-contrast.test.ts` | enforced; D5 |
+| Measured contrast of every drawn token pair, and the ruled exemptions (decorative control edges, no `--text-2` on the Remote bubble) | §2.9, §9 rulings 89–94 | `tests/design-contrast.test.ts` (OPEN and EXEMPT entries, stale either way) | enforced; D15 |
 | Extension popup colors | §3.28 | `tests/design-contrast.test.ts`, design lint | D9 |
 | Every interactive primitive shows forced hover/focus/active/disabled states | §3, §7 | `tests/design-force-state.test.ts` (States stories on StateGrid with data-force-state selectors) | enforced |
 | axe in every theme, focus ring, hit targets, hover-only functionality, forced colors | §4, §8 | axe over every story | pending S6 |
@@ -1384,7 +1390,7 @@ Values that existed in code before this document, and the canonical pick. Migrat
 | --- | --- | --- | --- |
 | `extension/src/widget.styles.ts` bg ladder | `#17181a` / `#1e2024` / `#292c31` | `--pane #141517` / `--chrome #1a1c1f` / `--fill-raised` hover | One ladder everywhere; helm's matches the design seed |
 | widget border | `rgba(255,255,255,0.09)` | `--hairline 0.07` | 0.09 is the *fill-raised* alpha, not a line |
-| widget text | `#ededee` / `#a6a9af` / `#6b6f77` | `#ececee` / `#9a9ea6` / `#62666e` | Near-duplicates; helm's are canonical |
+| widget text | `#ededee` / `#a6a9af` / `#6b6f77` | `#ececee` / `#9a9ea6` / `#62666e` (`--text-2` `#7f848d` since §9 ruling 89) | Near-duplicates; helm's are canonical |
 | widget card radius | 14 / controls 8 | 8 / 6 | Radii ladder is 8/6/4 |
 | widget soft fills | 0.15 and 0.16 mixed | 0.15 everywhere | One alpha for all tone fills |
 | widget motion | `150ms ease` | 140ms state / 150ms enter, `ease-out` | §2.5 |
@@ -1395,8 +1401,8 @@ Values that existed in code before this document, and the canonical pick. Migrat
 | widget font stack | no SF Pro Text entry; `ui-monospace` first | §2.2 stacks | Single canonical stacks |
 | helm `panes.css` divider hover | `rgba(255,255,255,0.18)` | `--hairline-strong 0.16` | Fold into the strong-line token |
 | helm kbd background | `rgba(255,255,255,0.04)` | `--fill-subtle 0.05` | No off-scale alphas |
-| extension select chevron | stroke `#6b6f77` | `#62666e` (`--text-2`) | Text ladder |
-| extension accent-fill + hover | `#3b82f6`, hover `#5a9dff` | **adopted** as `--accent-fill` | Better fill contrast under white text than `#4c9aff`; promoted into the system |
+| extension select chevron | stroke `#6b6f77` | `#62666e` (`--text-2`; `#7f848d` since §9 ruling 89) | Text ladder |
+| extension accent-fill + hover | `#3b82f6`, hover `#5a9dff` | **adopted** as `--accent-fill` | Better fill contrast under white text than `#4c9aff`; promoted into the system (darkened to `#1e6ff5` / `#0b63f4` by §9 ruling 90) |
 | extension `--vg-border-strong 0.16` | — | **adopted** as `--hairline-strong` | Useful second line weight; promoted |
 | extension shadow | `0 10px 30px -8px …` | **adopted** as `--shadow-2` | Floating-over-foreign-page elevation; helm toast shadow stays `--shadow-1` |
 | extension tone-class names (`chip-*`, `c-*`, `bg-*`) | — | **adopted** as shared tone vocabulary | Already mirrored by the web dashboard |
@@ -1453,7 +1459,7 @@ The operator-approved light **reading surface** is a scoped Document Review exce
 | Primary / secondary / faint text | `#24272c` / `#60646c` / `#62666e` |
 | Hairline / strong line | black at 0.07 / 0.16 |
 | Subtle / raised / strong fill | black at 0.05 / 0.09 / 0.13 |
-| Accent / primary fill / hover | `#176ac2` / `#176ac2` / `#125ba8` |
-| Danger / warning / success | `#b91c1c` / `#8a5a0a` / `#267347` |
+| Accent / primary fill / hover | `#176ac1` / `#176ac1` / `#125ba8` (4.5:1 on the well; §9 ruling 94) |
+| Danger / warning / success / neutral | `#b91c1c` / `#8a5a0a` / `#267347` / `#656a73` (neutral 4.5:1 on the well, its soft fill recomputed in the scope; §9 ruling 94) |
 
 Semantic soft fills remain 15%; dark uses the existing Helm tokens unchanged. No remote images or parser HTML mount. Native selects are appropriate here (not in a closed shadow root). Focus rings use the shared 2px accent; reading/chat scroll owners retain keyboard focus and meaningful names. Reduced motion removes all review transitions and animation. `Views/Document review` owns large-document, light, working, missing-file, unknown-outcome, save-failure, comment, stale-anchor, change-review, No connected agent, Listener paused Passage feedback and Writing first stories. Editorial / Editorial light add an opt-in multiparagraph document and empty Pi conversation with a long caller name; the original large/safety fixture remains unchanged. Browser screenshots are production-component fixture evidence, not native-window or live-provider certification.

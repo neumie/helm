@@ -26,12 +26,12 @@ export const WIDGET_STYLES = `
 		/* Text ladder */
 		--vg-text-0: #ececee;
 		--vg-text-1: #9a9ea6;
-		--vg-text-2: #62666e;
+		--vg-text-2: #7f848d;
 
 		/* Accent & semantic tones; soft fills derived at exactly 15% (§2.1) */
 		--vg-accent: #4c9aff;
-		--vg-accent-fill: #3b82f6;
-		--vg-accent-fill-hover: #5a9dff;
+		--vg-accent-fill: #1e6ff5;
+		--vg-accent-fill-hover: #0b63f4;
 		--vg-on-accent: #ffffff;
 		--vg-green: #4ec98a;
 		--vg-amber: #e0b341;
