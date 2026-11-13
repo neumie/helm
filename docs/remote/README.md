@@ -189,23 +189,18 @@ The optional i18n SDK is absent; the real English fallback is exercised.
 From the implementation checkout:
 
 ```sh
-# CPU-heavy commands use the shared macOS sysbudget allocation.
-sysbudget run --class background -n 2 --label 'Remote preview build' -- \
-  node app/scripts/build-remote.mjs
+node app/scripts/build-remote.mjs
 
 # Supply the real installed CLI file, not a launcher shim or a live session path.
 export HELM_REMOTE_PROOF_PI=/absolute/path/to/pi-coding-agent/dist/cli.js
-sysbudget run --class background -n 1 --label 'Remote Pi types' -- \
-  node scripts/check-remote-pi.mjs
+node scripts/check-remote-pi.mjs
 
-HELM_REMOTE_PROOF_BROWSER=1 sysbudget run --class background -n 2 \
-  --label 'Remote two-terminal proof' -- node --import tsx --test \
-  --test-concurrency=1 tests/remote-foundation.test.ts \
+HELM_REMOTE_PROOF_BROWSER=1 node --import tsx --test --test-concurrency=1 \
+  tests/remote-foundation.test.ts \
   tests/remote-development.test.ts tests/remote-terminal-proof.test.ts
 
 cd app
-sysbudget run --class background -n 2 --label 'Remote Chromium workbench' -- \
-  node_modules/.bin/playwright test browser-tests/remote-workspace.spec.ts --workers=1
+node_modules/.bin/playwright test browser-tests/remote-workspace.spec.ts --workers=1
 ```
 
 The Pi proof owns two disposable pseudo-terminals, isolated HOME/Pi configuration
@@ -220,7 +215,6 @@ by an HTTP-only proof. Default root tests skip the expensive Pi proof.
 To inspect the development UI manually after building it:
 
 ```sh
-# This is a service, not a CPU batch: do not wrap it in sysbudget.
 node --import tsx src/remote/development.ts
 ```
 
@@ -355,7 +349,6 @@ dependencies available**, provide a new private short socket root:
 
 ```sh
 HELM_SCHEDULED_SOCKET_DIR=$(mktemp -d /tmp/hr-sched-reg-XXXXXX) \
-  sysbudget run --class background -n 1 --label 'Helm isolated regression' -- \
   node --import tsx --test --test-concurrency=1 tests/*.test.ts
 ```
 

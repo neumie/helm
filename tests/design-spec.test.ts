@@ -433,12 +433,7 @@ test('every repository path AGENTS.md ## Design system names exists', () => {
 
 // Plan notes record history (the research and the S8 stage say the guidance was removed), so they may
 // name the tool. Every other doc is guidance an agent follows. A listed file that no longer names it fails.
-const SYSBUDGET_PENDING = new Map([
-	[
-		'docs/remote/README.md',
-		'Remote runbook commands, outside this branch (spec.md S8 Progress names it); rewrite them to run directly',
-	],
-])
+const SYSBUDGET_PENDING = new Map<string, string>()
 
 test('AGENTS.md and docs carry no guidance for the retired CPU-lease tool', () => {
 	const docs: string[] = []
