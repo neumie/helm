@@ -137,12 +137,14 @@ export const SCALED_TYPE_DIRS = ['app/src/renderer/sidebar/'] as const
 
 /**
  * Blocks that ARE a token source: their custom-property definitions may hold literals (§2.8). The app's
- * `:root` mirrors `HELM_TOKENS` for the pre-JS first paint; the extension's `:host` holds the `--vg-` copy.
+ * `:root` mirrors `HELM_TOKENS` for the pre-JS first paint; the extension's `:host` holds the `--vg-` copy and its
+ * popup's `:root` the plain-name copy (§9 ruling 103).
  */
 export const TOKEN_SOURCES: readonly { file: string; selector: string }[] = [
 	// `styles.css` is only the ordered @import manifest (S7); the app `:root` lives in tokens.css.
 	{ file: 'app/src/renderer/tokens.css', selector: ':root' },
 	{ file: 'extension/src/widget.styles.ts', selector: ':host' },
+	{ file: 'extension/src/popup.html', selector: ':root' },
 ]
 
 /**
@@ -1993,14 +1995,12 @@ export function nextBaseline(findings: readonly Finding[], entries: readonly All
 	})
 }
 
-const isPopup = (file: string) => file.startsWith('extension/src/popup.')
 const isRemote = (file: string) => file.startsWith('app/src/renderer/remote/')
 const isReview = (file: string) =>
 	file.startsWith('app/src/renderer/document-review/') || file.startsWith('app/src/renderer/viewer/')
 
 /** The reason suggested for a new baseline entry: the decision or ruling that keeps a value of its kind today. */
 export function defaultReason(f: FindingKey): string {
-	if (isPopup(f.file)) return 'D9 extension popup (moves onto Helm tokens)'
 	switch (f.rule) {
 		case 'raw-color':
 			return isRemote(f.file) ? 'D7 Remote palette' : 'S2 gives the literal a token (§9 ruling 9)'

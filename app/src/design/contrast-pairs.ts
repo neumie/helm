@@ -93,18 +93,20 @@ const VIEWER_SYNTAX_LIGHT = {
 	'--syntax-invalid': '#b91c1c',
 }
 
-/** `extension/src/popup.html` / `popup.ts` literals (no tokens yet; D9). */
-const POPUP = {
-	'body background': '#252526',
-	'body text': '#cccccc',
-	title: '#007acc',
-	label: '#808080',
-	'input background': '#1e1e1e',
-	'input border': '#3c3c3c',
-	'input focus border': '#007acc',
-	'status ok': '#6a9955',
-	'status error': '#f14c4c',
-}
+/** The Helm tokens `extension/src/popup.html` copies into its own `:root` (§3.28, §9 ruling 103). */
+const POPUP_TOKENS = [
+	'--pane',
+	'--hairline',
+	'--hairline-strong',
+	'--fill-subtle',
+	'--text-0',
+	'--text-1',
+	'--text-2',
+	'--accent',
+	'--accent-fill',
+	'--success',
+	'--danger',
+] as const
 
 /**
  * `terminal-tabs.css` and `background-terminals.css` terminal groups (§3.18): the group's colour comes from `--group-color`, set inline to
@@ -152,7 +154,7 @@ const BASE_PALETTES = {
 	},
 	popup: {
 		label: 'Extension popup',
-		scopes: [POPUP],
+		scopes: [Object.fromEntries(POPUP_TOKENS.map(name => [name, presetTokens('helm')[name] ?? '']))],
 	},
 } as const satisfies Record<string, { label: string; scopes: Scopes }>
 
@@ -255,6 +257,11 @@ const groupSource = (
 	file: string = TABS_CSS,
 ): SourceCheck[] => GROUP_PALETTES.map(palette => ({ palette, file, block, property, key }))
 
+/** A popup.html rule that paints `token` (pinned so the measured pair is the one the popup draws). */
+const popupRole = (block: string, property: string, token: string, prefix = ''): SourceCheck[] => [
+	{ palette: 'popup', file: POPUP_HTML, block, property, key: token, expect: `${prefix}var(${token})` },
+]
+
 export const SOURCES: readonly SourceCheck[] = [
 	...declarations('helm', TOKENS_CSS, ':root {', ROOT_DERIVED),
 	...declarations('helm', DOCK_CSS, '.agent-dock {', DOCK),
@@ -263,23 +270,27 @@ export const SOURCES: readonly SourceCheck[] = [
 	...declarations('review-light', REVIEW_CSS, '.document-review[data-review-theme="light"] {', REVIEW_LIGHT),
 	...declarations('viewer-dark', VIEWER_CSS, '.viewer-window {', VIEWER_SYNTAX),
 	...declarations('review-light', VIEWER_CSS, '.viewer-window[data-review-theme="light"] {', VIEWER_SYNTAX_LIGHT),
-	{ palette: 'popup', file: POPUP_HTML, block: 'body {', property: 'background', key: 'body background' },
-	{ palette: 'popup', file: POPUP_HTML, block: 'body {', property: 'color', key: 'body text' },
-	{ palette: 'popup', file: POPUP_HTML, block: 'h1 {', property: 'color', key: 'title' },
-	{ palette: 'popup', file: POPUP_HTML, block: 'label {', property: 'color', key: 'label' },
-	{ palette: 'popup', file: POPUP_HTML, block: '.models .group {', property: 'color', key: 'label' },
-	{ palette: 'popup', file: POPUP_HTML, block: 'input {', property: 'background', key: 'input background' },
-	{ palette: 'popup', file: POPUP_HTML, block: 'input {', property: 'color', key: 'body text' },
-	{
-		palette: 'popup',
-		file: POPUP_HTML,
-		block: 'input {',
-		property: 'border',
-		key: 'input border',
-		expect: '1px solid #3c3c3c',
-	},
-	{ palette: 'popup', file: POPUP_HTML, block: 'input:focus {', property: 'border-color', key: 'input focus border' },
-	{ palette: 'popup', file: POPUP_HTML, block: '.status {', property: 'color', key: 'status ok' },
+	// The popup's :root copies the Helm values (palette 'popup' is those values), and each rule paints the token.
+	...POPUP_TOKENS.map(property => ({ palette: 'popup' as const, file: POPUP_HTML, block: ':root {', property })),
+	...popupRole('body {', 'background', '--pane'),
+	...popupRole('body {', 'color', '--text-0'),
+	...popupRole('h1 {', 'color', '--accent'),
+	...popupRole('label {', 'color', '--text-1'),
+	...popupRole('.models .group {', 'color', '--text-1'),
+	...popupRole('.models .row {', 'color', '--text-0'),
+	...popupRole('input[type="text"] {', 'background', '--fill-subtle'),
+	...popupRole('input[type="text"] {', 'color', '--text-0'),
+	...popupRole('input[type="text"] {', 'border', '--hairline', '1px solid '),
+	...popupRole('input[type="text"]::placeholder {', 'color', '--text-2'),
+	...popupRole(
+		'input[type="text"]:hover, input[type="text"][data-force-state~="hover"] {',
+		'border-color',
+		'--hairline-strong',
+	),
+	...popupRole('input[type="text"]:focus {', 'border-color', '--accent'),
+	...popupRole('.status--ok {', 'color', '--success'),
+	...popupRole('.status--error {', 'color', '--danger'),
+	...popupRole('.models .row input {', 'accent-color', '--accent-fill'),
 	...groupSource('.tab-group-section {', 'background', 'group band'),
 	...groupSource('.tab-group-section .tab:hover {', 'background', 'group hover'),
 	...groupSource('.tab-group-section.collapsed > .tab-group-toggle:hover {', 'background', 'group hover'),
@@ -307,12 +318,6 @@ export const SOURCES: readonly SourceCheck[] = [
 	})),
 ]
 
-/** popup.ts sets the status colour inline; these literals must still appear there. */
-export const LITERAL_SOURCES: readonly { file: string; text: string; palette: PaletteId; key: string }[] = [
-	{ file: 'extension/src/popup.ts', text: "statusEl.style.color = '#6a9955'", palette: 'popup', key: 'status ok' },
-	{ file: 'extension/src/popup.ts', text: "statusEl.style.color = '#f14c4c'", palette: 'popup', key: 'status error' },
-]
-
 /** `text` body/meta 4.5:1; `large-text` (≥ 24px, or ≥ 18.66px bold) and `ui` (control edges, focus, meaningful graphics) 3:1; `decorative` has no need. */
 export type Use = 'text' | 'large-text' | 'ui' | 'decorative'
 
@@ -334,7 +339,7 @@ export interface OpenPair {
 	bg: readonly string[]
 	use: Use
 	/** The decision in docs/plans/design-system/spec.md that owns the failure. */
-	decision: 'D9' | 'D15'
+	decision: 'D15'
 }
 
 /** A failing pair a §9 ruling exempts from its need (decorative, or a pairing the ruling forbids drawing). */
@@ -359,8 +364,7 @@ const CHROME_HOVER = ['--chrome', '--fill-subtle']
 const TERMINAL = ['--term-bg']
 const BAND = ['--chrome', 'group band']
 const BUBBLE = ['--remote-bubble']
-const POPUP_BG = ['body background']
-const POPUP_INPUT = ['input background']
+const POPUP_INPUT = ['--pane', '--fill-subtle']
 
 const row = (palette: PaletteId, fg: string, bg: readonly string[], use: Use, ratio: number): ContrastRow => ({
 	palette,
@@ -645,14 +649,17 @@ export const ROWS: readonly ContrastRow[] = [
 	row('viewer-dark', '--syntax-invalid', WELL, 'text', 5.69),
 	row('viewer-dark', '--syntax-comment', WELL, 'text', 5.03),
 	// popup
-	row('popup', 'body text', POPUP_BG, 'text', 9.53),
-	row('popup', 'title', POPUP_BG, 'text', 3.39),
-	row('popup', 'label', POPUP_BG, 'text', 3.87),
-	row('popup', 'status ok', POPUP_BG, 'text', 4.59),
-	row('popup', 'status error', POPUP_BG, 'text', 4.28),
-	row('popup', 'body text', POPUP_INPUT, 'text', 10.38),
-	row('popup', 'input border', POPUP_BG, 'ui', 1.38),
-	row('popup', 'input focus border', POPUP_BG, 'ui', 3.39),
+	row('popup', '--text-0', PANE, 'text', 15.48),
+	row('popup', '--accent', PANE, 'text', 6.41),
+	row('popup', '--text-1', PANE, 'text', 6.79),
+	row('popup', '--success', PANE, 'text', 8.73),
+	row('popup', '--danger', PANE, 'text', 5.5),
+	row('popup', '--text-0', POPUP_INPUT, 'text', 13.7),
+	row('popup', '--text-2', POPUP_INPUT, 'text', 4.3),
+	row('popup', '--hairline', POPUP_INPUT, 'ui', 1.22),
+	row('popup', '--hairline-strong', POPUP_INPUT, 'ui', 1.66),
+	row('popup', '--accent', POPUP_INPUT, 'ui', 5.67),
+	row('popup', '--accent-fill', PANE, 'ui', 4.04),
 	...GROUP_PALETTES.flatMap(groupRows),
 ]
 
@@ -666,8 +673,8 @@ const open = (
 
 // Today's failures, each owned by a decision in docs/plans/design-system/spec.md: D15 (the pairs the D5 picks
 // did not cover: --text-2 and --dock-dim on fills, scroll thumbs, the terminal's dim ANSI colour, tones on
-// their soft fills over a hovered or selected row, the terminal-group band) for the app palettes, D9 (popup
-// onto Helm tokens) for the extension popup. The dock's own target for `--dock-dim` on its selected entry is
+// their soft fills over a hovered or selected row, the terminal-group band, field placeholders: the app's and the
+// extension popup's, §9 ruling 103). The dock's own target for `--dock-dim` on its selected entry is
 // 3:1 (§3.24); WCAG asks 4.5 for its 12px meta, so it stays open.
 export const OPEN: readonly OpenPair[] = [
 	open('helm', '--text-2', INPUT, 'text', 'D15'),
@@ -733,10 +740,8 @@ export const OPEN: readonly OpenPair[] = [
 	open('high-contrast-group-green', '--text-1', [...BAND, 'group hover'], 'text', 'D15'),
 	open('high-contrast-group-cyan', '--text-2', BAND, 'text', 'D15'),
 	open('high-contrast-group-cyan', '--text-1', [...BAND, 'group hover'], 'text', 'D15'),
-	open('popup', 'title', POPUP_BG, 'text', 'D9'),
-	open('popup', 'label', POPUP_BG, 'text', 'D9'),
-	open('popup', 'status error', POPUP_BG, 'text', 'D9'),
-	open('popup', 'input border', POPUP_BG, 'ui', 'D9'),
+	// The popup's placeholder is the sidebar fields' pair (`helm` --text-2 on INPUT above).
+	open('popup', '--text-2', POPUP_INPUT, 'text', 'D15'),
 ]
 
 const exempt = (palette: PaletteId, fg: string, bg: readonly string[], use: Use, ruling: number): ExemptPair => ({
@@ -755,6 +760,8 @@ export const EXEMPT: readonly ExemptPair[] = [
 	exempt('helm', '--hairline', PANE, 'ui', 91),
 	exempt('helm', '--hairline', CHROME, 'ui', 91),
 	exempt('helm', '--hairline-strong', PANE, 'ui', 91),
+	exempt('popup', '--hairline', POPUP_INPUT, 'ui', 91),
+	exempt('popup', '--hairline-strong', POPUP_INPUT, 'ui', 91),
 	exempt('high-contrast', '--text-2', PRESSED, 'text', 92),
 	exempt('remote', '--text-2', BUBBLE, 'text', 93),
 	exempt('remote', '--hairline-strong', PANE, 'ui', 91),

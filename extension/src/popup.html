@@ -2,58 +2,92 @@
 <html>
 <head>
 	<style>
+		/* Helm token values (app/src/theme-presets.ts HELM_TOKENS, tokens.css --font-ui), copied unchanged until S2
+		   generates this block; tests/design-contrast.test.ts holds every value equal (docs/design-system.md §3.28). */
+		:root {
+			--pane: #141517;
+			--hairline: rgba(255, 255, 255, 0.07);
+			--hairline-strong: rgba(255, 255, 255, 0.16);
+			--fill-subtle: rgba(255, 255, 255, 0.05);
+			--text-0: #ececee;
+			--text-1: #9a9ea6;
+			--text-2: #7f848d;
+			--accent: #4c9aff;
+			--accent-fill: #1e6ff5;
+			--success: #4ec98a;
+			--danger: #f2585b;
+			--font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+		}
 		body {
 			width: 280px;
 			padding: 16px;
-			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-			background: #252526;
-			color: #cccccc;
 			margin: 0;
+			font-family: var(--font-ui);
+			background: var(--pane);
+			color: var(--text-0);
+			color-scheme: dark;
+			letter-spacing: -0.01em;
+			-webkit-font-smoothing: antialiased;
 		}
 		h1 {
-			font-size: 14px;
+			font-size: 13px;
 			font-weight: 600;
-			color: #007acc;
-			margin: 0 0 14px 0;
+			color: var(--accent);
+			margin: 0 0 12px;
 		}
 		label {
 			display: block;
-			font-size: 11px;
-			color: #808080;
+			font-size: 12px;
+			font-weight: 500;
+			color: var(--text-1);
 			margin-bottom: 4px;
 		}
-		input {
+		input[type="text"] {
 			width: 100%;
-			padding: 6px 8px;
-			background: #1e1e1e;
-			border: 1px solid #3c3c3c;
-			border-radius: 3px;
-			color: #cccccc;
+			height: 28px;
+			padding: 0 10px;
+			background: var(--fill-subtle);
+			border: 1px solid var(--hairline);
+			border-radius: 6px;
+			color: var(--text-0);
+			font-family: inherit;
 			font-size: 12px;
 			outline: none;
 			box-sizing: border-box;
 		}
-		input:focus { border-color: #007acc; }
+		input[type="text"]::placeholder { color: var(--text-2); }
+		input[type="text"]:hover,
+		input[type="text"][data-force-state~="hover"] { border-color: var(--hairline-strong); }
+		input[type="text"]:focus { border-color: var(--accent); }
 		.status {
-			margin-top: 10px;
-			font-size: 11px;
-			color: #6a9955;
-			min-height: 16px;
+			margin-top: 8px;
+			min-height: 18px;
+			font-size: 12px;
+			line-height: 18px;
 		}
+		.status--ok { color: var(--success); }
+		.status--error { color: var(--danger); }
 		.models { margin-top: 12px; }
 		.models .group {
-			font-size: 11px;
-			color: #808080;
-			margin: 8px 0 2px;
+			margin: 12px 0 4px;
+			font-size: 12px;
+			font-weight: 600;
+			color: var(--text-1);
 		}
 		.models .row {
 			display: flex;
 			align-items: center;
-			gap: 6px;
+			gap: 8px;
+			margin: 0;
+			padding: 4px 0;
 			font-size: 12px;
-			padding: 2px 0;
+			font-weight: 400;
+			color: var(--text-0);
 		}
-		.models .row input { width: auto; }
+		.models .row input {
+			margin: 0;
+			accent-color: var(--accent-fill);
+		}
 	</style>
 </head>
 <body>

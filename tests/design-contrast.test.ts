@@ -18,7 +18,7 @@ type PairsModule = typeof import('../app/src/design/contrast-pairs.ts')
 type ThemePresetsModule = typeof import('../app/src/theme-presets.ts')
 
 const { contrast, resolveValue, paint, truncate2 } = contrastModule as unknown as ContrastModule
-const { ROWS, OPEN, EXEMPT, NEED, PALETTES, SOURCES, LITERAL_SOURCES, measure, rowKey, spliceContrastTable } =
+const { ROWS, OPEN, EXEMPT, NEED, PALETTES, SOURCES, measure, rowKey, spliceContrastTable } =
 	pairsModule as unknown as PairsModule
 const { THEME_PRESETS } = themePresetsModule as unknown as ThemePresetsModule
 
@@ -195,11 +195,6 @@ test('every copied colour matches its source declaration', () => {
 			drift.push(`${source.file} ${source.block} ${source.property}: ${actual ?? 'missing'}, expected ${expected}`)
 		}
 	}
-	for (const literal of LITERAL_SOURCES) {
-		const value = paletteValue(literal.palette, literal.key)
-		assert.ok(value !== undefined && literal.text.includes(value), `${literal.key} literal must carry ${value}`)
-		if (!read(literal.file).includes(literal.text)) drift.push(`${literal.file}: missing ${literal.text}`)
-	}
 	assert.deepEqual(drift, [], 'update the palette in contrast-pairs.ts (and the rows), then regenerate')
 })
 
@@ -248,6 +243,17 @@ test('the stylesheet :root the Remote and Review palettes inherit still equals t
 		.filter(([token, value]) => root.has(token) && root.get(token) !== normalize(value))
 		.map(([token, value]) => `${token}: tokens.css ${root.get(token)}, preset ${value}`)
 	assert.deepEqual(drift, [])
+})
+
+test('the extension popup copies the app type family and writes no inline colour (§9 ruling 103)', () => {
+	const root = blockDeclarations('app/src/renderer/tokens.css', ':root {')
+	const popup = blockDeclarations('extension/src/popup.html', ':root {')
+	assert.equal(popup.get('--font-ui'), root.get('--font-ui'))
+	assert.doesNotMatch(
+		read('extension/src/popup.ts'),
+		/\.style\b/,
+		'popup.ts sets status--ok / status--error, never a style',
+	)
 })
 
 test('the measured-contrast table in docs/design-system.md is fresh', () => {

@@ -2,6 +2,12 @@ import { DEFAULT_SERVER_URL, getSync, setSync } from './storage'
 
 const urlInput = document.getElementById('url') as HTMLInputElement
 const statusEl = document.getElementById('status') as HTMLElement
+/** The status line's tone: a class popup.html styles with Helm's --success / --danger (no inline colour). */
+function showStatus(text: string, tone: 'ok' | 'error'): void {
+	statusEl.textContent = text
+	statusEl.classList.toggle('status--ok', tone === 'ok')
+	statusEl.classList.toggle('status--error', tone === 'error')
+}
 const AGENT_LABEL: Record<string, string> = { claude: 'Claude', codex: 'Codex', pi: 'Pi' }
 
 // Load saved URL
@@ -24,17 +30,14 @@ urlInput.addEventListener('input', () => {
 			fetch(`${url}/api/status`)
 				.then(r => {
 					if (r.ok) {
-						statusEl.textContent = 'Connected'
-						statusEl.style.color = '#6a9955'
+						showStatus('Connected', 'ok')
 						void loadModelCatalog()
 					} else {
-						statusEl.textContent = `Error: ${r.status}`
-						statusEl.style.color = '#f14c4c'
+						showStatus(`Error: ${r.status}`, 'error')
 					}
 				})
 				.catch(() => {
-					statusEl.textContent = 'Cannot connect'
-					statusEl.style.color = '#f14c4c'
+					showStatus('Cannot connect', 'error')
 				})
 		})
 	}, 500)

@@ -24,6 +24,7 @@ const storyCoverage = [
 	['app/src/renderer/signals/SignalsColumn.stories.tsx', 'Views/Signals/Column'],
 	['app/src/renderer/signals/SignalsFlows.stories.tsx', 'Views/Signals/Flows'],
 	['app/src/renderer/signals/SignalsDone.stories.tsx', 'Views/Signals/Done'],
+	['app/src/renderer/sidebar/ExtensionPopup.stories.tsx', 'Views/Extension popup'],
 ] as const
 
 test('Storybook discovers the whole renderer and sorts large review views first', () => {

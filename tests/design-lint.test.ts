@@ -72,7 +72,8 @@ test('every baseline reason names an existing open decision, ruling or plan stag
  * be lowered with it; growing a count means raising a cap here, in review, with the entry's written reason.
  */
 const BASELINE_CAPS: Record<(typeof lint.RULES)[number], number> = {
-	'raw-color': 23,
+	// 10: §9 ruling 103 moved the extension popup onto Helm tokens (2026-11-13).
+	'raw-color': 10,
 	// 36: §9 ruling 94 adds the Review light scope's --neutral and its recomputed --neutral-soft (2026-11-13).
 	// 29: §9 ruling 96 removed Remote's seven surface-token overrides (2026-11-13).
 	'token-definition': 29,
@@ -80,9 +81,10 @@ const BASELINE_CAPS: Record<(typeof lint.RULES)[number], number> = {
 	'raw-duration': 98,
 	'raw-easing': 89,
 	// 8 / 58 / 20: §9 rulings 15, 98, 100 and 101 (D8 picks) fixed or ruled the rest (2026-11-13).
-	'radius-off-scale': 8,
-	'spacing-off-scale': 58,
-	'font-size-off-scale': 20,
+	// 7 / 55 / 19: §9 ruling 103 put the extension popup on the scale (2026-11-13).
+	'radius-off-scale': 7,
+	'spacing-off-scale': 55,
+	'font-size-off-scale': 19,
 	'font-size-unscaled': 0,
 	uppercase: 0,
 	// 0 / 0: §9 rulings 99 and 102 (D8 picks, 2026-11-13).

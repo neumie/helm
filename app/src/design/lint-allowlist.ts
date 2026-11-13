@@ -23,21 +23,6 @@ export const DESIGN_LINT_BASELINE = String.raw`
 @media (hover: hover) .remote-composer-actions .remote-send.btn-primary:hover:not(:disabled), .remote-composer-actions .remote-send.btn-primary[data-force-state="hover"]:not(:disabled) | background | rgb(255 255 255 / 88%) | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
 ### app/src/renderer/viewer/viewer.css
 .viewer-pdf-paper | background | #fff | S2 gives the literal a token (§9 ruling 9)
-### extension/src/popup.html
-.models .group | color | #808080 | D9 extension popup (moves onto Helm tokens)
-.status | color | #6a9955 | D9 extension popup (moves onto Helm tokens)
-body | background | #252526 | D9 extension popup (moves onto Helm tokens)
-body | color | #cccccc | D9 extension popup (moves onto Helm tokens)
-h1 | color | #007acc | D9 extension popup (moves onto Helm tokens)
-input | background | #1e1e1e | D9 extension popup (moves onto Helm tokens)
-input | border | 1px solid #3c3c3c | D9 extension popup (moves onto Helm tokens)
-input | color | #cccccc | D9 extension popup (moves onto Helm tokens)
-input:focus | border-color | #007acc | D9 extension popup (moves onto Helm tokens)
-label | color | #808080 | D9 extension popup (moves onto Helm tokens)
-### extension/src/popup.ts
-statusEl.style in module | color | #6a9955 | D9 extension popup (moves onto Helm tokens)
-statusEl.style in module | color | #f14c4c | D9 extension popup (moves onto Helm tokens)
-statusEl.style in module | color | #f14c4c | D9 extension popup (moves onto Helm tokens)
 
 ## token-definition
 ### app/assets/remote/remote-sw.js
@@ -364,8 +349,6 @@ countdownEl.style in showToast | transition | transform var(--expr)ms linear | S
 ### app/src/renderer/viewer/viewer.css
 .viewer-code .cm-editor .cm-searchMatch | border-radius | 2px | D17 off-scale values the scale picks did not settle (radii under 4px)
 .viewer-pdf-paper | border-radius | 2px | D17 off-scale values the scale picks did not settle (radii under 4px)
-### extension/src/popup.html
-input | border-radius | 3px | D9 extension popup (moves onto Helm tokens)
 
 ## spacing-off-scale
 ### app/assets/remote/remote-sw.js
@@ -433,10 +416,6 @@ body | padding | 48px 24px | D16 Remote offline page type and spacing (served by
 ### app/src/renderer/viewer/viewer.css
 .viewer-code .cm-editor .cm-panel.cm-search | padding | 8px 48px 8px 16px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
 .viewer-pdf-password | margin | 48px auto | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
-### extension/src/popup.html
-.models .group | margin | 8px 0 2px | D9 extension popup (moves onto Helm tokens)
-.models .row | padding | 2px 0 | D9 extension popup (moves onto Helm tokens)
-h1 | margin | 0 0 14px 0 | D9 extension popup (moves onto Helm tokens)
 ### extension/src/widget.styles.ts
 .vg-btn | padding | 0 14px | §9 ruling 88 widget buttons are the §3.1 md button (0 14 as .btn; the 14 itself is D17, a component dimension the scale picks did not settle)
 .vg-chip | padding | 2px 8px | §9 ruling 26 chip padding 2×8
@@ -469,8 +448,6 @@ h1 | font-size | 24px | D16 Remote offline page type and spacing (served by remo
 ### app/src/renderer/viewer/viewer.css
 .viewer-grid-letter, .viewer-grid-number | font-size | 0.92em | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
 .viewer-pdf-password-title | font-size | calc(14px * var(--ui-scale)) | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
-### extension/src/popup.html
-h1 | font-size | 14px | D9 extension popup (moves onto Helm tokens)
 ### extension/src/widget.styles.ts
 .vg-close | font-size | 16px | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
 .vg-error__dismiss | font-size | 16px | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
