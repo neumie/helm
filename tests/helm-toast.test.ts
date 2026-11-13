@@ -30,7 +30,7 @@ test('toast hierarchy uses the shared ghost button and inset timer hairline', ()
 	assert.match(css, /\.toast-dismiss\s*\{[^}]*flex:\s*none[^}]*margin:\s*-4px -6px 0 -6px/s)
 	assert.doesNotMatch(css, /\.toast-(?:action|dismiss)\s*\{[^}]*(?:height|padding|border|background|color|font-)/s)
 	assert.match(css, /\.toast-countdown\s*\{[^}]*left:\s*12px[^}]*right:\s*12px[^}]*bottom:\s*4px[^}]*height:\s*1px/s)
-	assert.match(toast, /countdownEl\.style\.transition = `transform \$\{ttl\}ms linear`/)
+	assert.match(toast, /countdownEl\.style\.transition = `transform \$\{ttl\}ms var\(--ease-linear\)`/)
 })
 
 test('toast action uses the renderer-wide Btn primitive through its plain-DOM adapter', () => {

@@ -103,9 +103,23 @@ test('renderer wires explicit progress into visible, accessible tab state', () =
 	assert.equal(renderer.match(/progressTracker\.clear\(\)/g)?.length, 5)
 	assert.match(css, /\.activity-indicator\s*\{[^}]*grid-template-columns:\s*repeat\(2, 2px\)/s)
 	assert.match(css, /\.activity-indicator-dot\s*\{[^}]*background:\s*var\(--text-0\)/s)
-	assert.match(css, /\.activity-indicator-dot\s*\{[^}]*activity-indicator-clockwise 1s linear infinite/s)
-	assert.match(css, /\.activity-indicator-dot:nth-child\(2\)\s*\{[^}]*animation-delay:\s*-833ms/s)
-	assert.match(css, /\.activity-indicator-dot:nth-child\(6\)\s*\{[^}]*animation-delay:\s*-500ms/s)
+	// The cycles are tokens (§2.5): 1s / 0.9s / 1.8s; delays are fractions of their cycle.
+	assert.match(css, /--motion-activity:\s*1s;/)
+	assert.match(css, /--motion-activity-waiting:\s*0\.9s;/)
+	assert.match(css, /--motion-activity-breathe:\s*1\.8s;/)
+	assert.match(css, /--ease-linear:\s*linear;/)
+	assert.match(
+		css,
+		/\.activity-indicator-dot\s*\{[^}]*activity-indicator-clockwise var\(--motion-activity\) var\(--ease-linear\) infinite/s,
+	)
+	assert.match(
+		css,
+		/\.activity-indicator-dot:nth-child\(2\)\s*\{[^}]*animation-delay:\s*calc\(var\(--motion-activity\) \* -0\.833\)/s,
+	)
+	assert.match(
+		css,
+		/\.activity-indicator-dot:nth-child\(6\)\s*\{[^}]*animation-delay:\s*calc\(var\(--motion-activity\) \* -0\.5\)/s,
+	)
 	const progressStyles = css.slice(
 		css.indexOf('@keyframes activity-indicator-clockwise'),
 		css.indexOf('/* Completion becomes'),
@@ -118,22 +132,28 @@ test('renderer wires explicit progress into visible, accessible tab state', () =
 	assert.match(story, /variant: 'waiting'/)
 	assert.match(
 		css,
-		/\.activity-indicator\[data-variant=["']waiting["']\][^{]*\.activity-indicator-dot\s*\{[^}]*background:\s*var\(--warn\)[^}]*activity-indicator-waiting[^}]*0\.9s/s,
+		/\.activity-indicator\[data-variant=["']waiting["']\][^{]*\.activity-indicator-dot\s*\{[^}]*background:\s*var\(--warn\)[^}]*activity-indicator-waiting[^}]*var\(--motion-activity-waiting\)/s,
 	)
 	assert.match(css, /\.activity-indicator\[data-variant=["']attention["']\]/)
 	assert.match(
 		css,
-		/data-variant=["']attention["'][^}]*\.activity-indicator-dot\s*\{[^}]*activity-indicator-attention-color[^}]*1\.8s/s,
+		/data-variant=["']attention["'][^}]*\.activity-indicator-dot\s*\{[^}]*activity-indicator-attention-color[^}]*var\(--motion-activity-breathe\)/s,
 	)
-	assert.match(css, /nth-child\(2\),[\s\S]*nth-child\(3\)[^}]*animation-delay:\s*-0\.6s/s)
-	assert.match(css, /nth-child\(4\),[\s\S]*nth-child\(5\)[^}]*animation-delay:\s*-0\.3s/s)
+	assert.match(
+		css,
+		/nth-child\(2\),[\s\S]*nth-child\(3\)[^}]*animation-delay:\s*calc\(var\(--motion-activity-breathe\) \/ -3\)/s,
+	)
+	assert.match(
+		css,
+		/nth-child\(4\),[\s\S]*nth-child\(5\)[^}]*animation-delay:\s*calc\(var\(--motion-activity-breathe\) \/ -6\)/s,
+	)
 	assert.match(css, /data-variant=["']attention["'][^}]*nth-child\(6\)[^}]*animation-delay:\s*0s/s)
 	assert.match(
 		css,
 		/@keyframes activity-indicator-attention-color[\s\S]*background-color:\s*var\(--text-2\)[\s\S]*background-color:\s*var\(--accent\)/,
 	)
 	assert.match(story, /className="activity-indicator-label"/)
-	assert.match(css, /\.activity-indicator-label\s*\{[^}]*animation:[^;}]*1\.8s/s)
+	assert.match(css, /\.activity-indicator-label\s*\{[^}]*animation:[^;}]*var\(--motion-activity-breathe\)/s)
 	assert.match(css, /@keyframes activity-indicator-label-breathe[\s\S]*opacity:\s*0\.76/)
 	assert.match(css, /\.tab-running\s*\{[^}]*margin-right:\s*2px/s)
 })
