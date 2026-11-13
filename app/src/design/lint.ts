@@ -154,7 +154,6 @@ export const SCOPED_TOKEN_BLOCKS: readonly { file: string; selector: string }[] 
 	// The dock/Signals dim text (§3.24).
 	{ file: 'app/src/renderer/agent-dock/agent-dock.css', selector: '.agent-dock' },
 	{ file: 'app/src/renderer/signals/signals.css', selector: '.signals' },
-	{ file: 'app/src/renderer/remote/remote.css', selector: ':root.remote-page' },
 	{ file: 'app/src/renderer/remote/remote.css', selector: '.remote-workspace, .remote-login, .remote-empty' },
 	{
 		file: 'app/src/renderer/document-review/document-review.css',

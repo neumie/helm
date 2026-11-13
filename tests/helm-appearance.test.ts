@@ -68,6 +68,27 @@ test('a sparse custom theme backfills missing tokens from the Helm base', () => 
 	assert.equal(tokens['--ansi-red'], THEME_PRESETS[DEFAULT_THEME_ID]?.tokens['--ansi-red'])
 })
 
+test('a sparse preset file fills its missing tokens from the same preset, not from Helm (§9 ruling 97)', () => {
+	const hc = THEME_PRESETS['high-contrast']?.tokens ?? {}
+	const helm = THEME_PRESETS[DEFAULT_THEME_ID]?.tokens ?? {}
+	// An edited high-contrast.json seeded before --fill-strong and the group colours existed.
+	const { '--fill-strong': _fill, '--group-blue': _blue, ...seeded } = hc
+	const file = { ...seeded, '--text-0': '#fafafa' }
+	const tokens = resolveTokens(normalizeAppearance({ themeId: 'high-contrast' }), [
+		{ id: 'high-contrast', name: 'High contrast', tokens: file },
+	])
+	assert.equal(tokens['--text-0'], '#fafafa') // the file wins over its preset
+	assert.equal(tokens['--fill-strong'], hc['--fill-strong'])
+	assert.equal(tokens['--group-blue'], hc['--group-blue'])
+	assert.notEqual(hc['--fill-strong'], helm['--fill-strong'])
+	// A user theme with another id still backfills from Helm, and ignores any cache once listed.
+	const custom = resolveTokens(normalizeAppearance({ themeId: 'mine', themeTokensCache: { '--pane': '#010101' } }), [
+		{ id: 'mine', name: 'Mine', tokens: { '--text-0': '#fefefe' } },
+	])
+	assert.equal(custom['--fill-strong'], helm['--fill-strong'])
+	assert.equal(custom['--pane'], helm['--pane'])
+})
+
 test('an unknown themeId falls back to the cached tokens, then the Helm preset', () => {
 	const cached = normalizeAppearance({ themeId: 'gone', themeTokensCache: { '--term-bg': '#111111' } })
 	assert.equal(resolveTokens(cached, [])['--term-bg'], '#111111')

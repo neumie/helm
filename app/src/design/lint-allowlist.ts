@@ -12,16 +12,15 @@ import { type AllowlistEntry, parseBaseline } from './lint'
 export const DESIGN_LINT_BASELINE = String.raw`
 ## raw-color
 ### app/src/renderer/remote/remote.css
-.remote-composer-actions .menu-panel | box-shadow | 0 16px 44px rgb(0 0 0 / 48%) | D7 Remote palette
-.remote-composer-actions .remote-send.btn-primary | background | #fff | D7 Remote palette
-.remote-composer-actions .remote-send.btn-primary | color | #0d0d0d | D7 Remote palette
-.remote-navigation-dismiss | background | rgb(0 0 0 / 58%) | D7 Remote palette
-.remote-navigation-menu | box-shadow | 20px 0 60px rgb(0 0 0 / 48%) | D7 Remote palette
-.remote-row-menu | box-shadow | 0 8px 24px rgb(0 0 0 / 35%) | D7 Remote palette
-.remote-sheet | box-shadow | 0 20px 60px rgb(0 0 0 / 55%) | D7 Remote palette
-.remote-sheet-dismiss | background | rgb(0 0 0 / 58%) | D7 Remote palette
-@media (hover: hover) .remote-composer-actions .remote-send.btn-primary:hover:not(:disabled), .remote-composer-actions .remote-send.btn-primary[data-force-state="hover"]:not(:disabled) | background | rgb(255 255 255 / 88%) | D7 Remote palette
-body.remote-page, #remote-root | background | var(--remote-page, #0d0d0d) | D7 Remote palette
+.remote-composer-actions .menu-panel | box-shadow | 0 16px 44px rgb(0 0 0 / 48%) | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
+.remote-composer-actions .remote-send.btn-primary | background | #fff | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
+.remote-composer-actions .remote-send.btn-primary | color | #0d0d0d | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
+.remote-navigation-dismiss | background | rgb(0 0 0 / 58%) | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
+.remote-navigation-menu | box-shadow | 20px 0 60px rgb(0 0 0 / 48%) | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
+.remote-row-menu | box-shadow | 0 8px 24px rgb(0 0 0 / 35%) | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
+.remote-sheet | box-shadow | 0 20px 60px rgb(0 0 0 / 55%) | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
+.remote-sheet-dismiss | background | rgb(0 0 0 / 58%) | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
+@media (hover: hover) .remote-composer-actions .remote-send.btn-primary:hover:not(:disabled), .remote-composer-actions .remote-send.btn-primary[data-force-state="hover"]:not(:disabled) | background | rgb(255 255 255 / 88%) | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
 ### app/src/renderer/viewer/viewer.css
 .viewer-pdf-paper | background | #fff | S2 gives the literal a token (§9 ruling 9)
 ### extension/src/popup.html
@@ -42,10 +41,10 @@ statusEl.style in module | color | #f14c4c | D9 extension popup (moves onto Helm
 
 ## token-definition
 ### app/assets/remote/remote-sw.js
-:root | --accent | #4c9aff | D7 Remote offline page (served by remote-sw.js when the host is unreachable; its own copy of the palette and 16/24px type)
-:root | --pane | #141517 | D7 Remote offline page (served by remote-sw.js when the host is unreachable; its own copy of the palette and 16/24px type)
-:root | --text-0 | #ececee | D7 Remote offline page (served by remote-sw.js when the host is unreachable; its own copy of the palette and 16/24px type)
-:root | --text-1 | #9a9ea6 | D7 Remote offline page (served by remote-sw.js when the host is unreachable; its own copy of the palette and 16/24px type)
+:root | --accent | #4c9aff | §9 ruling 96 (the offline page cannot load tokens.css; its colours copy the Helm preset, held by tests/remote-pwa.test.ts)
+:root | --pane | #141517 | §9 ruling 96 (the offline page cannot load tokens.css; its colours copy the Helm preset, held by tests/remote-pwa.test.ts)
+:root | --text-0 | #ececee | §9 ruling 96 (the offline page cannot load tokens.css; its colours copy the Helm preset, held by tests/remote-pwa.test.ts)
+:root | --text-1 | #9a9ea6 | §9 ruling 96 (the offline page cannot load tokens.css; its colours copy the Helm preset, held by tests/remote-pwa.test.ts)
 ### app/src/renderer/document-review/document-review.css
 .document-review[data-review-theme="light"] | --accent | #176ac1 | §2.8 Review light scope (§9 ruling 10; value §9 ruling 94)
 .document-review[data-review-theme="light"] | --accent-fill | #176ac1 | §2.8 Review light scope (§9 ruling 10; value §9 ruling 94)
@@ -71,14 +70,6 @@ statusEl.style in module | color | #f14c4c | D9 extension popup (moves onto Helm
 .document-review[data-review-theme="light"] | --warn-soft | color-mix(in srgb, var(--warn) 15%, transparent) | §2.8 Review light scope (§9 ruling 10)
 .document-review[data-review-theme="light"] | --well | #ebeae6 | §2.8 Review light scope (§9 ruling 10)
 .review-reading | --ui-scale | calc(var(--review-ui-scale) * var(--review-zoom, 1)) | D7 surface reach (Review keeps its own text scale)
-### app/src/renderer/remote/remote.css
-.remote-workspace, .remote-login, .remote-empty | --chrome | #1c1c1e | D7 Remote palette
-.remote-workspace, .remote-login, .remote-empty | --fill-raised | rgb(255 255 255 / 11%) | D7 Remote palette
-.remote-workspace, .remote-login, .remote-empty | --fill-subtle | rgb(255 255 255 / 5.5%) | D7 Remote palette
-.remote-workspace, .remote-login, .remote-empty | --hairline | rgb(255 255 255 / 8%) | D7 Remote palette
-.remote-workspace, .remote-login, .remote-empty | --hairline-strong | rgb(255 255 255 / 16%) | D7 Remote palette
-.remote-workspace, .remote-login, .remote-empty | --pane | var(--remote-page, #0d0d0d) | D7 Remote palette
-.remote-workspace, .remote-login, .remote-empty | --well | #1a1a1a | D7 Remote palette
 ### app/src/renderer/viewer/viewer.css
 .viewer-stage | --ui-scale | calc(var(--review-ui-scale) * var(--review-zoom, 1)) | D7 surface reach (Review keeps its own text scale)
 
@@ -387,7 +378,7 @@ input | border-radius | 3px | D9 extension popup (moves onto Helm tokens)
 
 ## spacing-off-scale
 ### app/assets/remote/remote-sw.js
-body | padding | 48px 24px | D7 Remote offline page (served by remote-sw.js when the host is unreachable; its own copy of the palette and 16/24px type)
+body | padding | 48px 24px | D16 Remote offline page type and spacing (served by remote-sw.js; cannot load tokens.css)
 ### app/src/renderer/agent-dock/agent-dock.css
 .agent-dock-agent-age | padding-left | 6px | D8 off-scale values
 .agent-dock-agents-bar | gap | 2px | D8 off-scale values
@@ -548,8 +539,8 @@ input | padding | 6px 8px | D9 extension popup (moves onto Helm tokens)
 
 ## font-size-off-scale
 ### app/assets/remote/remote-sw.js
-body | font | 16px/1.6 -apple-system,BlinkMacSystemFont,sans-serif | D7 Remote offline page (served by remote-sw.js when the host is unreachable; its own copy of the palette and 16/24px type)
-h1 | font-size | 24px | D7 Remote offline page (served by remote-sw.js when the host is unreachable; its own copy of the palette and 16/24px type)
+body | font | 16px/1.6 -apple-system,BlinkMacSystemFont,sans-serif | D16 Remote offline page type and spacing (served by remote-sw.js; cannot load tokens.css)
+h1 | font-size | 24px | D16 Remote offline page type and spacing (served by remote-sw.js; cannot load tokens.css)
 ### app/src/renderer/agent-dock/agent-dock.css
 .agent-dock-message-mark | font-size | calc(9px * var(--ui-scale)) | D8 off-scale values
 ### app/src/renderer/background-terminals.css

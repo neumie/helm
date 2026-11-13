@@ -72,9 +72,10 @@ test('every baseline reason names an existing open decision, ruling or plan stag
  * be lowered with it; growing a count means raising a cap here, in review, with the entry's written reason.
  */
 const BASELINE_CAPS: Record<(typeof lint.RULES)[number], number> = {
-	'raw-color': 24,
+	'raw-color': 23,
 	// 36: §9 ruling 94 adds the Review light scope's --neutral and its recomputed --neutral-soft (2026-11-13).
-	'token-definition': 36,
+	// 29: §9 ruling 96 removed Remote's seven surface-token overrides (2026-11-13).
+	'token-definition': 29,
 	'raw-z-index': 45,
 	'raw-duration': 98,
 	'raw-easing': 89,
@@ -196,7 +197,7 @@ test('raw-color: literals, names and fallbacks; tokens, keywords, masks and toke
 	)
 	assert.deepEqual(
 		css(
-			':root.remote-page { --remote-page: #0d0d0d } .remote-workspace, .remote-login, .remote-empty { --pane: #111; --remote-bubble: #2f2f2f }',
+			'.remote-workspace, .remote-login, .remote-empty { --pane: #111; --remote-bubble: #2f2f2f }',
 			'app/src/renderer/remote/remote.css',
 		),
 		['.remote-workspace, .remote-login, .remote-empty | --pane: #111 | token-definition'],

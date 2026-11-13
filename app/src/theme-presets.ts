@@ -1,5 +1,5 @@
 // Built-in theme presets — the single source for shipped token values.
-// Shared by main (seeds <userData>/themes/*.json on first run) and the
+// Shared by main (seeds and upgrades <userData>/themes/*.json, theme-files.ts) and the
 // renderer (Reset to preset + fallback values for missing tokens).
 //
 // A theme is a flat JSON object of design-token overrides (CSS custom
@@ -143,3 +143,24 @@ export const THEME_PRESETS: Record<string, ThemeDefinition> = {
 }
 
 export const DEFAULT_THEME_ID = 'helm'
+
+/**
+ * Values a bundled preset carried in an earlier release, per token (§9 ruling 97). A seeded preset file whose
+ * every token equals the current preset or one of these values was written by Helm and never edited, so main
+ * rewrites it at startup; files seeded before main recorded fingerprints (`themes/.seeded.json`) are recognised
+ * only this way. When a preset value changes, append the value it replaces here.
+ */
+export const PRESET_EARLIER_VALUES: Record<string, Readonly<Record<string, readonly string[]>>> = {
+	// Before D5 (§9 rulings 89, 90, 92; 0b4934b 2026-11-13).
+	helm: {
+		'--text-2': ['#62666e'],
+		'--accent-fill': ['#3b82f6'],
+		'--accent-fill-hover': ['#5a9dff'],
+	},
+	'high-contrast': {
+		'--hairline': ['rgba(255, 255, 255, 0.16)'],
+		'--hairline-strong': ['rgba(255, 255, 255, 0.32)'],
+		'--accent-fill': ['#3574de'],
+		'--accent-fill-hover': ['#5093f5'],
+	},
+}

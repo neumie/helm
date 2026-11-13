@@ -85,7 +85,8 @@ import { TerminalPreferencesStore, type TerminalPreferencesUpdate } from './term
 import { createTerminalTransferIpcGate } from './terminal-transfer-ipc-gate'
 import { TerminalTransferMainAdapter, type TerminalTransferProfileStorage } from './terminal-transfer-main'
 import { TerminalWarmPool, type WarmProcess } from './terminal-warm'
-import { THEME_PRESETS } from './theme-presets'
+import { listThemes, seedPresetFiles } from './theme-files'
+import { PRESET_EARLIER_VALUES, THEME_PRESETS } from './theme-presets'
 import {
 	type ShortcutRoute,
 	type ShortcutWindowKind,
@@ -2901,75 +2902,24 @@ ipcMain.handle(
 )
 
 // --- Themes (<userData>/themes/*.json, docs/design-system.md §2.8) --------------
-// Main owns the directory: presets are seeded as editable files on first list,
-// any other *.json dropped in the dir shows up in the Appearance theme picker.
-// The renderer bundles THEME_PRESETS as its synchronous fallback, so this IPC
-// is never on the first-paint path.
+// Main owns the directory (theme-files.ts): every list writes missing preset files
+// and rewrites untouched ones with the current presets (§9 ruling 97); any other
+// *.json dropped in the dir shows up in the Appearance theme picker. The renderer
+// bundles THEME_PRESETS as its synchronous fallback, so this IPC is never on the
+// first-paint path.
 
 function themesDir(): string {
 	return path.join(app.getPath('userData'), 'themes')
 }
 
-interface ThemeFileEntry {
-	id: string
-	name: string
-	tokens: Record<string, string>
-}
-
-function readThemeFile(file: string): ThemeFileEntry | null {
-	try {
-		const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>
-		const tokens: Record<string, string> = {}
-		if (typeof raw.tokens === 'object' && raw.tokens !== null) {
-			for (const [key, value] of Object.entries(raw.tokens)) {
-				if (key.startsWith('--') && typeof value === 'string') tokens[key] = value
-			}
-		}
-		if (Object.keys(tokens).length === 0) return null
-		const id = path.basename(file, '.json')
-		return {
-			id,
-			name: typeof raw.name === 'string' && raw.name !== '' ? raw.name : id,
-			tokens,
-		}
-	} catch {
-		return null // unreadable/invalid file — skip, never break the list
-	}
-}
-
 ipcMain.handle('themes:list', () => {
 	const dir = themesDir()
 	try {
-		fs.mkdirSync(dir, { recursive: true })
-		for (const [id, preset] of Object.entries(THEME_PRESETS)) {
-			const file = path.join(dir, `${id}.json`)
-			if (!fs.existsSync(file)) {
-				fs.writeFileSync(file, `${JSON.stringify({ name: preset.name, tokens: preset.tokens }, null, '\t')}\n`)
-			}
-		}
+		seedPresetFiles(dir, THEME_PRESETS, PRESET_EARLIER_VALUES)
 	} catch (err) {
 		console.warn('[helm] theme seeding failed:', err)
 	}
-	let files: string[] = []
-	try {
-		files = fs.readdirSync(dir).filter(name => name.endsWith('.json'))
-	} catch {
-		// dir unreadable — fall through to bundled presets only
-	}
-	const fromDisk = new Map<string, ThemeFileEntry>()
-	for (const name of files) {
-		const entry = readThemeFile(path.join(dir, name))
-		if (entry) fromDisk.set(entry.id, entry)
-	}
-	// Preset order first (a user-edited preset file wins over the bundled copy,
-	// a corrupt one falls back to it), then custom themes alphabetically.
-	const list: ThemeFileEntry[] = Object.entries(THEME_PRESETS).map(
-		([id, preset]) => fromDisk.get(id) ?? { id, name: preset.name, tokens: preset.tokens },
-	)
-	const custom = [...fromDisk.values()]
-		.filter(entry => !THEME_PRESETS[entry.id])
-		.sort((a, b) => a.name.localeCompare(b.name))
-	return [...list, ...custom]
+	return listThemes(dir, THEME_PRESETS)
 })
 
 helmBridge.registerIpc()

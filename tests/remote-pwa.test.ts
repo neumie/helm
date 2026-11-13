@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { test } from 'node:test'
 import { chromium } from 'playwright'
+import themePresetsModule from '../app/src/theme-presets.ts'
 import { createRemoteAssets, startRemoteDevelopment } from '../src/remote/development.js'
+
+const { THEME_PRESETS } = themePresetsModule as typeof import('../app/src/theme-presets.ts')
+const HELM_TOKENS = THEME_PRESETS.helm?.tokens ?? {}
 
 const assetsPath = resolve('app/remote-dist')
 test('PWA assets have exact routes, restrictive headers and credential-free launch metadata', async t => {
@@ -30,7 +34,7 @@ test('PWA assets have exact routes, restrictive headers and credential-free laun
 		icons: Array<{ src: string; sizes: string }>
 	}
 	assert.deepEqual([manifest.id, manifest.start_url, manifest.scope, manifest.display], ['/', '/', '/', 'standalone'])
-	assert.deepEqual([manifest.background_color, manifest.theme_color], ['#0d0d0d', '#0d0d0d'])
+	assert.deepEqual([manifest.background_color, manifest.theme_color], [HELM_TOKENS['--pane'], HELM_TOKENS['--pane']])
 	assert.deepEqual(
 		manifest.icons.map(icon => icon.sizes),
 		['192x192', '512x512'],
@@ -55,6 +59,38 @@ test('PWA assets have exact routes, restrictive headers and credential-free laun
 		html.headers.get('content-security-policy') ?? '',
 		/worker-src 'self'; manifest-src 'self'; img-src 'self' blob:/,
 	)
+})
+
+test('Remote launch colours and the offline page copy the app palette (§9 ruling 96)', () => {
+	const pane = HELM_TOKENS['--pane']
+	assert.ok(pane)
+	const manifest = JSON.parse(readFileSync(resolve('app/assets/remote/manifest.webmanifest'), 'utf8')) as {
+		background_color: string
+		theme_color: string
+	}
+	assert.deepEqual([manifest.background_color, manifest.theme_color], [pane, pane])
+	const shell = readFileSync(resolve('app/scripts/build-remote.mjs'), 'utf8')
+	assert.match(shell, new RegExp(`<meta name="theme-color" content="${pane}">`))
+	// The offline page is served without tokens.css, so it carries a copy of the Helm values it uses.
+	const worker = readFileSync(resolve('app/assets/remote/remote-sw.js'), 'utf8')
+	const offline = /:root\{([^}]*)\}/.exec(worker)?.[1] ?? ''
+	const declared = Object.fromEntries(
+		offline.split(';').map(declaration => declaration.split(':').map(part => part.trim()) as [string, string]),
+	)
+	assert.deepEqual(Object.keys(declared).sort(), ['--accent', '--pane', '--text-0', '--text-1'])
+	for (const [token, value] of Object.entries(declared)) assert.equal(value, HELM_TOKENS[token], token)
+	// Remote re-binds none of the app surface tokens (only its own bubble grey).
+	const css = readFileSync(resolve('app/src/renderer/remote/remote.css'), 'utf8')
+	for (const token of [
+		'--pane',
+		'--chrome',
+		'--well',
+		'--hairline',
+		'--hairline-strong',
+		'--fill-subtle',
+		'--fill-raised',
+	])
+		assert.doesNotMatch(css, new RegExp(`(^|[^-\\w])${token}\\s*:`, 'm'), token)
 })
 
 test(

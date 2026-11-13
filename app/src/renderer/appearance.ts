@@ -96,14 +96,16 @@ export function normalizeAppearance(raw: unknown): AppearanceState {
 	}
 }
 
-/** Helm preset tokens ∪ active theme tokens ∪ per-token overrides. The Helm
- *  base guarantees every known token resolves even for a sparse theme file. */
+/** Helm preset tokens ∪ the bundled preset of the same id ∪ the theme file ∪ per-token overrides. The Helm
+ *  base guarantees every known token resolves even for a sparse user theme; a preset's own file that misses
+ *  tokens (seeded by an older Helm and since edited) gets them from that preset, not from Helm (§9 ruling 97).
+ *  Before the theme list arrives, a user theme resolves from its cached tokens. */
 export function resolveTokens(state: AppearanceState, themes: ThemeListEntry[]): Record<string, string> {
 	const preset = THEME_PRESETS[state.themeId]?.tokens
 	const listed = themes.find(theme => theme.id === state.themeId)?.tokens
-	const base = listed ?? preset ?? state.themeTokensCache ?? THEME_PRESETS[DEFAULT_THEME_ID]?.tokens ?? {}
+	const file = listed ?? (preset ? undefined : (state.themeTokensCache ?? undefined))
 	const helmBase = THEME_PRESETS[DEFAULT_THEME_ID]?.tokens ?? {}
-	return { ...helmBase, ...base, ...state.overrides }
+	return { ...helmBase, ...preset, ...file, ...state.overrides }
 }
 
 /** HSL lightness points the primary fill's hover drops below its rest colour: both presets use this step

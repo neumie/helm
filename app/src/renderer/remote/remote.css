@@ -1,13 +1,12 @@
 :root.remote-page {
-	--remote-page: #0d0d0d;
 	/* Installed WebKit can report a shorter 100dvh than 100vh. Paint the
 	 * physical tail without extending the clipped conversation workspace. */
 	min-height: 100vh;
-	background: var(--remote-page);
+	background: var(--pane);
 }
 body.remote-page,
 #remote-root {
-	background: var(--remote-page, #0d0d0d);
+	background: var(--pane);
 }
 body.remote-page {
 	min-height: 100vh;
@@ -18,21 +17,12 @@ body.remote-page {
 }
 
 /*
- * The remote is a phone chat app, not the desktop cockpit, so it owns its own
- * surface ladder: a near-black page, one step lighter for anything raised above it,
- * and hairlines only where two surfaces actually meet. Scoped to the remote roots
- * because these tokens are shared with the Electron renderer, which keeps its own.
+ * Remote draws on the app's own surface ladder (§9 ruling 96): the shared tokens
+ * resolve exactly as in the cockpit. Its one colour of its own is the bubble.
  */
 .remote-workspace,
 .remote-login,
 .remote-empty {
-	--pane: var(--remote-page, #0d0d0d);
-	--chrome: #1c1c1e;
-	--well: #1a1a1a;
-	--hairline: rgb(255 255 255 / 8%);
-	--hairline-strong: rgb(255 255 255 / 16%);
-	--fill-subtle: rgb(255 255 255 / 5.5%);
-	--fill-raised: rgb(255 255 255 / 11%);
 	/* The one grey that carries a user's own words back to them. */
 	--remote-bubble: #2f2f2f;
 }
