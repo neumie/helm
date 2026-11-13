@@ -431,6 +431,46 @@ test('every repository path AGENTS.md ## Design system names exists', () => {
 	assert.deepEqual(missing, [], 'paths in AGENTS.md ## Design system that do not exist')
 })
 
-test('AGENTS.md carries no guidance for the retired CPU-lease tool', () => {
-	assert.ok(!agents.includes('sysbudget'), 'AGENTS.md mentions sysbudget')
+// Plan notes record history (the research and the S8 stage say the guidance was removed), so they may
+// name the tool. Every other doc is guidance an agent follows. A listed file that no longer names it fails.
+const SYSBUDGET_PENDING = new Map([
+	['docs/remote/README.md', 'Remote runbook commands, outside the design-system stages; rewrite them to run directly'],
+])
+
+test('AGENTS.md and docs carry no guidance for the retired CPU-lease tool', () => {
+	const docs: string[] = []
+	walk('docs', docs)
+	const mentions = ['AGENTS.md', ...docs]
+		.filter(path => !path.startsWith('docs/plans/'))
+		.filter(path => read(path).includes('sysbudget'))
+	assert.deepEqual(
+		mentions.filter(path => !SYSBUDGET_PENDING.has(path)),
+		[],
+		'guidance that names sysbudget (deprecated and uninstalled: run builds and tests directly)',
+	)
+	assert.deepEqual(
+		[...SYSBUDGET_PENDING.keys()].filter(path => !mentions.includes(path)),
+		[],
+		'files listed in SYSBUDGET_PENDING that no longer name sysbudget: remove them from the list',
+	)
+})
+
+/** Stages the plan reports done: its Status line's `Done:` clause and its `- **S<n>** done` progress lines. */
+function doneStages(): Set<number> {
+	const done = new Set<number>()
+	const status = /^Status:.*?\bDone: ([^;\n]*)/m.exec(plan)?.[1] ?? ''
+	for (const [, n] of status.replace(/\([^)]*\)/g, '').matchAll(/\bS(\d+)\b/g)) done.add(Number(n))
+	for (const [, n] of plan.matchAll(/^- \*\*S(\d+)\*\* done\b/gm)) done.add(Number(n))
+	return done
+}
+
+test('the spec names no finished stage as the check still to come', () => {
+	const done = doneStages()
+	assert.ok(done.has(1) && done.has(5), 'the plan reports S1 and S5 done')
+	const stale: string[] = []
+	spec.split('\n').forEach((line, index) => {
+		for (const [, n] of line.matchAll(/\bpending S(\d+)\b/g))
+			if (done.has(Number(n))) stale.push(`${SPEC_PATH}:${index + 1}: pending S${n}`)
+	})
+	assert.deepEqual(stale, [], 'name the check that holds it now, or the unfinished stage that will')
 })

@@ -938,9 +938,9 @@ Protect whole 0–3-space fenced blocks (unfinished through EOF), four-space/tab
 
 #### Remote shared session favorites
 
-Remote live-session rows have one always-visible trailing 44px shared `IconBtn` for **Favorite / Unfavorite <conversation>**, using the exact 16px solid Heroicons Star (MIT attribution in `THIRD_PARTY_NOTICES.md`). It is a sibling of the conversation-opening button, never nested inside it. The star uses `--text-2` at rest and `--accent` when pressed, with `aria-pressed`; the control has 8px top/right placement and the row retains its square full-width hover/selection stripe. No separate favorite heading, card, separator or duplicate row is introduced. Favorite rows sort first, preserving directory order within favorite and ordinary groups, after the existing search and scope filters. Selecting the star never opens the conversation or changes its draft.
+Pin/Unpin lives in each live-session row's action menu (`RemoteSessionMenu`), never as a visible per-row control: holding the row (touch/pen, 500ms, cancelled by 10px of movement) or a `contextmenu` (right-click, trackpad, Shift+F10) opens a `role=menu` with one item, **Pin to top** / **Unpin from top**. The menu is a child of the row entry, a sibling of the conversation-opening button, never nested inside it; the click that completes a hold never opens the conversation, and Escape or an outside pointer closes the menu and returns focus to its row. Pinned conversations appear under a **Pinned** section heading above **Live sessions**, after the existing search and scope filters, each section keeping directory order. Pinning never opens the conversation or changes its draft.
 
-Preferences are shared across paired devices and survive host restart/reconnection under the same conversation/scope identity. They never bypass visibility or command authorization. Read-only devices see disabled stars. All stars are mutation-disabled until an admitted save and its fresh read settle; errors remain visible and no write is automatically replayed. Restore a keyboard-owned star after disable/reorder only if focus fell to the body; newer pointer or focus intent cancels restoration. Legacy hosts retain the ordinary list without stars. Favorites/FavoritesReadOnly own the display states; FavoritesWire is the production-transport test surface, with no change to frozen history/performance fixtures.
+Preferences are shared across paired devices and survive host restart/reconnection under the same conversation/scope identity. They never bypass visibility or command authorization. Read-only devices see the menu item disabled with a one-line note that the device can read but not change the conversation. Every pin item is mutation-disabled until an admitted save and its fresh read settle; errors remain visible and no write is automatically replayed. Pinning moves the row to the other section, so focus returns to the row by its session key after the save settles, only if focus fell to the body; newer pointer or focus intent cancels restoration. Legacy hosts retain the ordinary list with no row menu. Favorites/FavoritesReadOnly own the display states; FavoritesWire is the production-transport test surface, with no change to frozen history/performance fixtures.
 
 #### Remote limited subagent observation
 
@@ -1152,7 +1152,7 @@ Ship-blocking: a UI change is not done until every item that applies to it is ch
 
 **Perception**
 
-- [ ] Text meets WCAG AA contrast on its real background in Helm and High contrast: 4.5:1 body/meta, 3:1 large text and non-text UI (§2.9). Check: `tests/design-contrast.test.ts` (pending S4); today's failures are open as D5.
+- [ ] Text meets WCAG AA contrast on its real background in Helm and High contrast: 4.5:1 body/meta, 3:1 large text and non-text UI (§2.9). Check: `tests/design-contrast.test.ts`; today's failures are open as D5.
 - [ ] State is never color-only: every status has words or an accessible label (§3.5, §4). Check: `tests/helm-model.test.ts` (status words), axe over every story (pending S6).
 - [ ] Icons and icon-only buttons have an accessible name; decorative glyphs are `aria-hidden` (§3.1, §3.18 tab numbers). Check: axe (pending S6).
 - [ ] UI text follows `--ui-scale` (§2.2). Check: `tests/design-lint.test.ts` (font-size-unscaled); unscaled sizes open as D13.
@@ -1161,7 +1161,7 @@ Ship-blocking: a UI change is not done until every item that applies to it is ch
 **Operation**
 
 - [ ] Everything is reachable by keyboard in visual order; lists use Up/Down + Enter, Esc goes back or closes (§4). Check: per-surface browser specs (`app/browser-tests/agent-dock-scroll.spec.ts`, `app/browser-tests/signals.spec.ts`, `app/browser-tests/work-menu.spec.ts`), axe (pending S6).
-- [ ] Every interactive element has a visible focus state: 2px `--accent` ring on `:focus-visible`, fields an accent border (§3.1, §4). Check: StateGrid stories (pending S5), axe (pending S6).
+- [ ] Every interactive element has a visible focus state: 2px `--accent` ring on `:focus-visible`, fields an accent border (§3.1, §4). Check: `tests/design-force-state.test.ts` (every focus rule on a primitive has a forced copy, shown in its `States` story); the ring and border values pending S11; axe (pending S6).
 - [ ] Hit targets are at least 24×24 (28 standard, 44 on Remote) (§4, §3.23). Check: `app/browser-tests/remote-layout.spec.ts` (Remote), pending S6 elsewhere.
 - [ ] Hover never reveals functionality keyboard or touch users cannot reach (§1, §4). Check: pending S6.
 - [ ] Motion respects `prefers-reduced-motion` through the global clamp (§2.5). Check: `app/browser-tests/agent-dock-arrival.spec.ts` (dock), pending S6 per primitive.
@@ -1169,7 +1169,7 @@ Ship-blocking: a UI change is not done until every item that applies to it is ch
 **Understanding**
 
 - [ ] Copy is sentence case, active voice, gives a next step (§5, §3.13). Check: `tests/design-lint.test.ts` (uppercase); copy review by story.
-- [ ] Disabled controls stay legible and explain themselves where the reason is not obvious (§3.1). Check: StateGrid stories (pending S5).
+- [ ] Disabled controls stay legible and explain themselves where the reason is not obvious (§3.1). Check: StateGrid `States` stories show the disabled cells; no assertion yet (pending S11).
 - [ ] Errors and refusals are named next to the control that caused them, not only in a banner (§3.12). Check: per-surface browser specs.
 
 **Robustness**
@@ -1181,7 +1181,7 @@ Ship-blocking: a UI change is not done until every item that applies to it is ch
 **Process**
 
 - [ ] The change updates this document and its stories in the same slice (§7). Check: `tests/design-spec.test.ts`, `tests/helm-storybook-coverage.test.ts`.
-- [ ] Every interactive primitive has a `States` story with forced states (pending S5).
+- [ ] Every interactive primitive has a `States` story with forced states. Check: `tests/design-force-state.test.ts`.
 - [ ] Every story passes axe in each theme or is allowlisted with a decision (pending S6).
 - [ ] A design change with more than one plausible answer goes to `Proposals/` variants and is recorded as a §9 ruling with its check once Jakub picks (§9).
 
@@ -1214,23 +1214,23 @@ Every design decision already made, numbered, with where it came from and what h
 | 19 | Reduced motion | The global clamp applies on every surface; ambient pulses stop or hold statically | d499fd6 2026-07-11 | §2.5, §4 | `app/browser-tests/agent-dock-arrival.spec.ts`; pending S6 |
 | 20 | Elevation | Exactly two shadows; attached surfaces get none | d499fd6 2026-07-11 | §2.6 | pending S10 |
 | 21 | Z-layers | 0 / 10 / 40 / 60 / 100; the max z-index only at the widget's shadow host | d499fd6 2026-07-11 | §2.7 | `tests/design-lint.test.ts` (raw-z-index); pending S2 (z tokens) |
-| 22 | Segmented | 28px track, inset ring, at most 4–5 segments; filters never accent-filled, only a true either/or commit may be, and one per surface | d499fd6 2026-07-11 | §3.2 | pending S5 |
-| 23 | Lifecycle index | Left-aligned 44px targets, 24px gaps, 2px accent underline, no fills, one-tab-stop `radiogroup` | 9cbe937 2026-07-16 (supersedes 45cf682 40px / 18px / accent text) | §3.2 | pending S5 |
+| 22 | Segmented | 28px track, inset ring, at most 4–5 segments; filters never accent-filled, only a true either/or commit may be, and one per surface | d499fd6 2026-07-11 | §3.2 | pending S11 |
+| 23 | Lifecycle index | Left-aligned 44px targets, 24px gaps, 2px accent underline, no fills, one-tab-stop `radiogroup` | 9cbe937 2026-07-16 (supersedes 45cf682 40px / 18px / accent text) | §3.2 | pending S11 |
 | 24 | List row | 64px, no separators, no persistent selection; a running Item shows the activity indicator before its title, no status word | a93a07e 2026-07-21; 9cbe937 2026-07-16 | §3.3 | `tests/helm-model.test.ts` |
-| 25 | Queue ownership | Undecided Queue rows show permanent 28px icon buttons Work manually / Start agent, never hover-revealed | 0c5a105 2026-07-15; AGENTS.md "Manual status override" | §3.3, §3.11 | pending S5 |
-| 26 | Chips | 2×8, 11/500 sentence case, text only, one per row, never interactive; Item detail uses a status text menu instead | 9cbe937 2026-07-16 | §3.4 | pending S5 |
-| 27 | Status dots | A dot means live, never lifecycle; no topbar connection dot or other status jewelry | 9cbe937 2026-07-16 (a dot means live); 4777cdc 2026-07-13 (topbar connection dot retired) | §1, §3.5 | pending S5 |
+| 25 | Queue ownership | Undecided Queue rows show permanent 28px icon buttons Work manually / Start agent, never hover-revealed | 0c5a105 2026-07-15; AGENTS.md "Manual status override" | §3.3, §3.11 | pending S11 |
+| 26 | Chips | 2×8, 11/500 sentence case, text only, one per row, never interactive; Item detail uses a status text menu instead | 9cbe937 2026-07-16 | §3.4 | pending S11 |
+| 27 | Status dots | A dot means live, never lifecycle; no topbar connection dot or other status jewelry | 9cbe937 2026-07-16 (a dot means live); 4777cdc 2026-07-13 (topbar connection dot retired) | §1, §3.5 | pending S11 |
 | 28 | Widget select | No native `<select>` in the widget's closed shadow root; a custom §3.8-style menu | a36116e 2026-07-13; AGENTS.md "inside the widget's closed shadow root" | §3.7, §3.28 | `app/browser-tests/extension-widget.spec.ts` |
 | 29 | Toast | Compact bottom-right notice, 12px inset, `min(320px, 100vw − 32px)`, TTL 4000ms, × dismiss, one action, at most 3 | 483a034 2026-07-22 (supersedes fb2d299 centered notice) | §3.6 | `tests/helm-toast.test.ts` (partial: the 3-toast cap is not implemented, D14) |
-| 30 | Menus | 180–280px, 28px items, a reserved leading icon column, named sections instead of anonymous separators, no submenus, about 8 items | d499fd6 2026-07-11 (panel, items, no submenus); 0c5a105 2026-07-15 (leading column); fab5da1 2026-07-31 (named sections) | §3.8 | `app/browser-tests/work-menu.spec.ts` (partial: sections, label alignment); pending S5 |
+| 30 | Menus | 180–280px, 28px items, a reserved leading icon column, named sections instead of anonymous separators, no submenus, about 8 items | d499fd6 2026-07-11 (panel, items, no submenus); 0c5a105 2026-07-15 (leading column); fab5da1 2026-07-31 (named sections) | §3.8 | `app/browser-tests/work-menu.spec.ts` (partial: sections, label alignment); pending S11 |
 | 31 | Work More | Work / View / Profiles sections; Group by project is one checked item; the toolbar stays project filter + New item + More | fab5da1 2026-07-31; AGENTS.md "Work / View / Profiles" | §3.3, §3.8 | `app/browser-tests/work-menu.spec.ts` |
-| 32 | Sheets | Non-top-layer `<dialog open>` inside the pane, max 400px, three zones, never stacked, never for scrollable content | d499fd6 2026-07-11 | §3.9 | pending S5 |
+| 32 | Sheets | Non-top-layer `<dialog open>` inside the pane, max 400px, three zones, never stacked, never for scrollable content | d499fd6 2026-07-11 | §3.9 | pending S11 |
 | 33 | New item | A real pushed page with Title then Prompt, never a centered sheet | 85f2170 2026-07-30 | §3.10 | `app/browser-tests/item-sheets.spec.ts` |
-| 34 | Push navigation | 36px header, 150ms push / 120ms pop with −25% parallax, every page `isolation: isolate`, at most 3 levels; detail pushes only Task and Plan documents | d499fd6 2026-07-11; 406b794 2026-07-20 (IA flattening: only Task and Plan stay pushed) | §3.10 | pending S5 |
+| 34 | Push navigation | 36px header, 150ms push / 120ms pop with −25% parallax, every page `isolation: isolate`, at most 3 levels; detail pushes only Task and Plan documents | d499fd6 2026-07-11; 406b794 2026-07-20 (IA flattening: only Task and Plan stay pushed) | §3.10 | pending S11 |
 | 35 | Swipe back | 8px axis lock, 2× dominance, release at 140ms quiescence, commit past 50% or a genuine flick, 280ms refractory, never auto-finished mid-gesture | 31d7fcf 2026-07-13 (axis lock, dominance, 280ms refractory); da0b1b2 2026-07-21 (release at 140ms quiescence) | §3.10 | `tests/helm-swipe.test.ts` |
 | 36 | Action bar | 56px, pinned, at most two visible buttons plus overflow, concise icon-led labels, no caption | 9cbe937 2026-07-16 | §3.11 | `tests/helm-detail-actions.test.ts` |
 | 37 | Danger placement | Destructive actions live in the overflow unless the page is about destruction | d499fd6 2026-07-11 | §3.11 | `tests/helm-detail-state.test.ts` |
-| 38 | Banners | Actionable notice = the same Banner with one action slot; 4-line clamp; never a success banner | d499fd6 2026-07-11 | §3.12 | `tests/helm-banner.test.ts` (partial: action slot); pending S5 |
+| 38 | Banners | Actionable notice = the same Banner with one action slot; 4-line clamp; never a success banner | d499fd6 2026-07-11 | §3.12 | `tests/helm-banner.test.ts` (partial: action slot); pending S11 |
 | 39 | Empty terminal pane | Closing the open terminal opens no other; the pane shows the empty card with one New terminal action | 9185dbe 2026-10-13 | §3.13, §3.14 | `app/browser-tests/terminal-workspace.spec.ts` |
 | 40 | Terminal links | Plain click is inert; only ⌘ + left-click opens an http(s) link | 74d4c3d 2026-07-28 | §3.14 | `tests/helm-terminal-links.test.ts` |
 | 41 | Tab rename | A manual rename pins the label, survives relaunch, is never overwritten by OSC titles; empty commit unpins | 973a205 2026-07-13 | §3.14 | `tests/helm-sessions-rename.test.ts`, `tests/helm-tab-title.test.ts` |
@@ -1238,18 +1238,18 @@ Every design decision already made, numbered, with where it came from and what h
 | 43 | Okena action | One full-width quiet 32px button below the hero whose dynamic label states the whole effect; no caption | c90d815 2026-07-20 | §3.15 | `tests/helm-model.test.ts` |
 | 44 | Inline run evidence | Activity, log and solve input are inline on detail; the log is always expanded; the Run details, Run setup and Work hub pages are retired | 406b794 2026-07-20; 1a7dcc6 2026-07-20 (log always expanded) | §3.15, §3.20 | `tests/helm-detail-state.test.ts` |
 | 45 | Disclosure | The Section-header owns one shared small quiet Btn (Show / Hide, Change / Done); content snaps, children unmount while closed | 4ad44e3 2026-07-21 | §3.20 | `tests/helm-disclosure.test.ts` |
-| 46 | Toggle | A toggle only for an immediate boolean; choices go to a segmented control or select | d499fd6 2026-07-11 | §3.15, §3.16 | pending S5; D11 |
+| 46 | Toggle | A toggle only for an immediate boolean; choices go to a segmented control or select | d499fd6 2026-07-11 | §3.15, §3.16 | pending S11; D11 |
 | 47 | Pane scrollbars | Reading and editing panes reserve a stable gutter; row-heavy page/list scrollers and the background popover use the overlay scrollbar with no gutter | 9ff0e82 2026-07-21 | §3.17 | `tests/helm-scrollbar-gutter.test.ts` |
-| 48 | Tab group band | One continuous 28px band (15 / 22 / 30%), outer corners only, no separate highlight, no visible chevron | e7a53f0 2026-07-24 (full band); 6954a28 2026-07-28 | §3.18 | `tests/helm-tab-groups-renderer.test.ts` (partial: zero gap, outer corners); pending S5 |
+| 48 | Tab group band | One continuous 28px band (15 / 22 / 30%), outer corners only, no separate highlight, no visible chevron | e7a53f0 2026-07-24 (full band); 6954a28 2026-07-28 | §3.18 | `tests/helm-tab-groups-renderer.test.ts` (partial: zero gap, outer corners); pending S11 |
 | 49 | Tab numbers | ⌘1–⌘9 select visible tabs in visual order, collapsed members skipped; a dim leading digit on every numbered tab (review picks N1 + B1) | Jakub 2026-11-02; c076d17 2026-11-02 | §3.18 | `tests/helm-tab-numbers.test.ts`, `app/browser-tests/tab-numbers.spec.ts` |
 | 50 | Tab drag | Custom pointer drag (never native DnD), 5px intent, 160ms FLIP, 180ms settle, a folder's leading edge only | 9b1c8ff 2026-07-27; 5b6bf47 2026-11-03 (leading edge only) | §3.18 | `app/browser-tests/tab-drag-folders.spec.ts` |
 | 51 | Window drag | Isolated positive drag regions; never `titleBarStyle: 'hiddenInset'` | 65fc8ee 2026-07-27 | §3.18, §3.30 | `tests/helm-window-drag.test.ts` |
 | 52 | No zoom | Tab-scoped native zoom guard; menus expose neither Zoom nor Toggle Full Screen; titlebar whitespace keeps the macOS gesture | 65fc8ee 2026-07-27; AGENTS.md "Native macOS backstop" | §3.18, §3.30 | `tests/helm-native-window-zoom.test.ts` |
 | 53 | Background popover | 320px editorial list, 44px rows, title-only header, no reserved gutter, flat group rows with the restore action in the row's column | 9ff0e82 2026-07-21; 6954a28 2026-07-28 | §3.18 | `tests/helm-background-terminals.test.ts` |
 | 54 | Sourced icons | Production icons come from an established set at native size (16px Heroicons micro), recorded in `THIRD_PARTY_NOTICES.md`; Folder = groups, Arrow Down on Square Stack = Background | 9b1c8ff 2026-07-27; AGENTS.md "Production icons are sourced" | §3.18 | `tests/helm-background-terminals.test.ts`, `tests/design-icons.test.ts`; D6 |
-| 55 | Background viewing | While a parked terminal is open the Background control takes the active tab's look with its name (variant B3) | Jakub 2026-11-03; 1b914c2 2026-11-03 | §3.18 | pending S5 |
+| 55 | Background viewing | While a parked terminal is open the Background control takes the active tab's look with its name (variant B3) | Jakub 2026-11-03; 1b914c2 2026-11-03 | §3.18 | pending S11 |
 | 56 | Activity indicator | 2×3 Braille dots; progress 1s grayscale, waiting 0.9s `--warn`, attention 1.8s `--accent` wave; never `--success`, no idle indicator, never inferred from output | 5da1e88 2026-07-21; ad8898f 2026-07-21 (attention 1.8s); 7d7c3e7 2026-07-30 (waiting 0.9s) | §3.21 | `tests/helm-terminal-progress.test.ts`; `app/browser-tests/terminal-workspace.spec.ts` |
-| 57 | Run context window | Standalone 980×760 window; a 236px rail with only the title and source attachment names, hidden below 820px | 2e3d598 2026-07-21 | §3.22 | `tests/helm-run-context-window.test.ts` (rail content); pending S5 (sizes) |
+| 57 | Run context window | Standalone 980×760 window; a 236px rail with only the title and source attachment names, hidden below 820px | 2e3d598 2026-07-21 | §3.22 | `tests/helm-run-context-window.test.ts` (rail content); pending S11 (sizes) |
 | 58 | Remote web exceptions | 16px form text (no iOS focus zoom) and 44px targets are web-only; native sidebar fields keep §3.7 | 9c577eb 2026-09-07 | §3.23 | `app/browser-tests/remote-layout.spec.ts` |
 | 59 | Remote thinking | Assistant thinking is always-visible literal text, never behind a disclosure or toggle | fc7cf7e 2026-09-18; AGENTS.md "Remote web UX" | §3.23 | `app/browser-tests/remote-reading.spec.ts` |
 | 60 | Dock type | One typeface (the UI's): 12/18 row and meta, 13/20 what is read; mono only for literal commands, code, plans, previews | f013e9c 2026-11-02 | §3.24 | `app/browser-tests/agent-dock.spec.ts` |
@@ -1269,13 +1269,13 @@ Every design decision already made, numbered, with where it came from and what h
 | 74 | Signals weight | No bold anywhere in the Signals column | 555a120 2026-11-05 | §3.25 | `app/browser-tests/signals.spec.ts` |
 | 75 | Done today | One `Done today N` line closes the list; `D` or the count opens Done today in place of the list (replaces the inline expand); at rest the line sits on the column's bottom edge and hidden key hints take no room | Jakub 2026-11-10; 6bf8166 2026-11-10; Jakub 2026-11-12; 85da2f3 2026-11-12; f77443a 2026-11-12 | §3.25 | `app/browser-tests/signals-done.spec.ts` |
 | 76 | Ask rows | Agent ask rows always show a third, dim body line with the link count | Jakub 2026-11-10; 54ff5ca 2026-11-10 | §3.25 | `app/browser-tests/signals-asks.spec.ts` |
-| 77 | Slack reply | The Slack reply flow shows heads only (variant A) | Jakub 2026-11-11; f724fb1 2026-11-11 | §3.25 | `app/browser-tests/signals.spec.ts` (Slack rows); pending S5 |
+| 77 | Slack reply | The Slack reply flow shows heads only (variant A) | Jakub 2026-11-11; f724fb1 2026-11-11 | §3.25 | `app/browser-tests/signals.spec.ts` (Slack rows); pending S11 |
 | 78 | Reading width | 680px prose measure; tables and code fit their content between the measure and the column, capped at 1280px (variant D) | Jakub 2026-11-09; 254a082 2026-11-09 | §3.26, Native document review workspace | `app/browser-tests/document-review-content-width.spec.ts` |
 | 79 | Passage chat | 560px wide, content-sized to at most 640px high, 15px replies, a 64px editor floor | fc7cf7e 2026-09-18; AGENTS.md "Document Review passage chat" | §3.26, Native document review workspace | `app/browser-tests/document-review-passage-chat.spec.ts` |
 | 80 | Send activity | After Send, one quiet activity line with the §3.21 indicator under the newest message; no success panel (E5, helm open D14) | Jakub 2026-11-09; `docs/plans/helm-open/spec.md` D14 | §3.21, §3.26 | `app/browser-tests/helm-open-send-receipt.spec.ts` |
 | 81 | Selection on close | Closing a passage chat by any route clears its selection marks ("a selection left behind a closed chat is a bug") | Jakub 2026-11-11; 4836402 2026-11-11 | §3.26 | `app/browser-tests/document-review-passage-chat.spec.ts` |
 | 82 | Storybook | Storybook is the workbench (over an in-app gallery); Views sort first; every §3 family has a story on real CSS; terminal stories mount the production workspace | Jakub 2026-07-16; 9cbe937 2026-07-16 | §7 | `tests/helm-storybook-coverage.test.ts`, `tests/design-spec.test.ts` |
-| 83 | Focus | 2px `--accent` ring, offset 2, on `:focus-visible` only; fields signal focus with an accent border | d499fd6 2026-07-11 | §3.1, §3.7, §4 | pending S5; pending S6 |
+| 83 | Focus | 2px `--accent` ring, offset 2, on `:focus-visible` only; fields signal focus with an accent border | d499fd6 2026-07-11 | §3.1, §3.7, §4 | `tests/design-force-state.test.ts` (every focus rule on a primitive has a forced copy); pending S11 (ring and border values); pending S6 |
 | 84 | Hover | Hover changes fills only; it never reveals functionality keyboard or touch users cannot reach | d499fd6 2026-07-11 | §1, §4 | pending S6 |
 | 85 | Hit targets | At least 24×24, 28 standard; drag hairlines get an invisible ≥8px hit area | d499fd6 2026-07-11 | §4 | pending S6 |
 | 86 | Copy voice | Sentence case, active voice, state then direction, "…" only when more input follows, relative times under 24h | d499fd6 2026-07-11 | §5 | `tests/design-lint.test.ts` (uppercase); pending S10 (the rest of the voice) |
@@ -1294,7 +1294,7 @@ Which check holds each rule family, and its state. **enforced** = a check in the
 | Storybook coverage of §3 families and views | §7 | `tests/helm-storybook-coverage.test.ts` | enforced |
 | Token values from one source (CSS `:root`, extension `--vg-`, Remote, native window backgrounds) | §2.1, §2.8, §3.28, §3.30 | `app/src/design/` tokens + generated CSS check | pending S2 |
 | Undefined tokens used in CSS | §2.1 | token lint | D4 |
-| Literal colors, off-scale spacing/radii/sizes/weights, letter-spacing, uppercase, unscaled sidebar type, durations and easings | §2.1–§2.5, §5 | `tests/design-lint.test.ts` (the scanner in app/src/design/lint.ts over every production stylesheet, HTML style and inline TS/TSX style in app/ and extension/; ratchet baseline app/src/design/lint-allowlist.ts; npm run lint:design prints it) | enforced; D8; D13 |
+| Literal colors, off-scale spacing/radii/sizes/weights, letter-spacing, uppercase, unscaled sidebar type, durations and easings | §2.1–§2.5, §5 | `tests/design-lint.test.ts` (the scanner in app/src/design/lint.ts over every production stylesheet, HTML style and inline TS/TSX style in app/ and extension/; ratchet baseline app/src/design/lint-allowlist.ts; npm run lint:design prints counts plus any new or stale finding, npm run lint:design -- --all every finding) | enforced; D8; D13 |
 | Buttons draw no border in any tone | §3.1 | `tests/design-lint.test.ts` (every button rule of the app and the widget stylesheet) | enforced |
 | A shared primitive's base rules only in its owner file (`button.css` for buttons, `sidebar/sidebar.css` for segmented, list row, chips, fields, menus, action rows, toggle and icon button, `sidebar/detail-redesign.css` for disclosure); surface modifiers (`.agent-dock-key.btn`) and descendant overrides stay with their surface | §3 | `tests/design-lint.test.ts` (primitive-outside-owner; the PRIMITIVES table in app/src/design/lint.ts) | enforced |
 | Measured contrast of every drawn token pair | §2.9 | `tests/design-contrast.test.ts` | enforced; D5 |
