@@ -17,6 +17,21 @@ const preview: Preview = {
 				// Proposals/ (design variants waiting for Jakub's pick) come first so a link lands next to its siblings.
 				order: [
 					'Proposals',
+					// Numeric D order (the sidebar sorts by text, which put D10 before D4); tests/design-proposals-order.test.ts holds it.
+					[
+						'D4 Radius',
+						'D4 Accent text',
+						'D5 Contrast',
+						'D6 Icons',
+						'D7 Surface reach',
+						'D8 Scale',
+						'D9 Extension popup',
+						'D10 Theme files',
+						'D11 Toggles',
+						'D12 Widget height',
+						'D13 UI scale',
+						'D14 Toast cap',
+					],
 					'Views',
 					['Sidebar', 'Terminal workspace', 'Run context editor'],
 					'Compositions',
