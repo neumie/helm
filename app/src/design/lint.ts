@@ -2003,11 +2003,13 @@ const isReview = (file: string) =>
 export function defaultReason(f: FindingKey): string {
 	switch (f.rule) {
 		case 'raw-color':
-			return isRemote(f.file) ? 'D7 Remote palette' : 'S2 gives the literal a token (§9 ruling 9)'
+			return isRemote(f.file)
+				? 'D16 Remote values outside the palette (D7 A settled only the seven surface tokens)'
+				: 'S2 gives the literal a token (§9 ruling 9)'
 		case 'token-definition':
 			if (f.property === '--ui-scale') return 'D7 surface reach (Review keeps its own text scale)'
 			if (isReview(f.file)) return '§2.8 Review light scope (§9 ruling 10)'
-			if (isRemote(f.file)) return 'D7 Remote palette'
+			if (isRemote(f.file)) return '§9 ruling 96 (Remote re-binds no app token): needs a fix'
 			return 'S2 token pipeline (core tokens are defined in their source only)'
 		case 'raw-z-index':
 		case 'raw-duration':

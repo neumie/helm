@@ -10,6 +10,13 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import pairsModule from '../app/src/design/contrast-pairs.ts'
+import allowlistModule from '../app/src/design/lint-allowlist.ts'
+
+type PairsModule = typeof import('../app/src/design/contrast-pairs.ts')
+type AllowlistModule = typeof import('../app/src/design/lint-allowlist.ts')
+const { OPEN } = pairsModule as unknown as PairsModule
+const { DESIGN_LINT_ALLOWLIST } = allowlistModule as unknown as AllowlistModule
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const SPEC_PATH = 'docs/design-system.md'
@@ -170,6 +177,21 @@ test('every ruling citation names an existing ruling', () => {
 
 const TEST_PATH = /^(?:tests|app\/browser-tests)\/.+\.(?:test|spec)\.tsx?$/
 
+/**
+ * The plan's open decisions: the bold `- **D<n> …**` items of its `## Open decisions` section, above the
+ * `### Rozhodnuto` list of decided ones (a decided decision moves there and must not be cited as still open).
+ */
+function openDecisions(): Set<number> {
+	const start = plan.indexOf('\n## Open decisions')
+	assert.notEqual(start, -1, `${PLAN_PATH} has a ## Open decisions section`)
+	const rest = plan.slice(start + 1)
+	const ends = [rest.indexOf('\n## '), rest.indexOf('\n### Rozhodnuto')].filter(at => at !== -1)
+	const text = ends.length === 0 ? rest : rest.slice(0, Math.min(...ends))
+	return new Set([...text.matchAll(/^- \*\*D(\d+)\b/gm)].map(match => Number(match[1])))
+}
+
+const OPEN_DECISIONS = openDecisions()
+
 /** Problems with the check references in one cell: test files that exist, `pending S<n>` for a planned stage, `D<n>` for an open decision. */
 function checkProblems(cell: string): string[] {
 	const problems: string[] = []
@@ -180,7 +202,7 @@ function checkProblems(cell: string): string[] {
 	for (const [, stage] of cell.matchAll(/\bpending S(\d+)\b/g))
 		if (!plan.includes(`**S${stage} `)) problems.push(`no stage S${stage} in the plan`)
 	for (const [, decision] of cell.matchAll(/\bD(\d+)\b/g))
-		if (!plan.includes(`**D${decision} `)) problems.push(`no open decision D${decision} in the plan`)
+		if (!OPEN_DECISIONS.has(Number(decision))) problems.push(`no open decision D${decision} in the plan`)
 	for (const token of checkTokens(cell))
 		if (!/^`[^`]+`$/.test(token) && !/^pending S\d+$/.test(token) && !/^D\d+$/.test(token))
 			problems.push(`not a test, pending stage or decision: ${token}`)
@@ -223,6 +245,48 @@ test('the enforcement map names existing checks for enforced rules', () => {
 		}
 	}
 	assert.deepEqual(problems, [])
+})
+
+// A decision another document numbers (the helm-open plan's D1–D14), named as such right before it.
+const OTHER_PLAN_DECISION = /helm[ -]open(?: spec)?[^\n;,.]{0,12}$/
+
+/** Every `D<n>` in a text, skipping the ones another plan owns. */
+function citedDecisions(text: string): number[] {
+	const out: number[] = []
+	for (const match of text.matchAll(/\bD(\d+)\b/g)) {
+		const before = text.slice(Math.max(0, (match.index ?? 0) - 24), match.index)
+		if (!OTHER_PLAN_DECISION.test(before)) out.push(Number(match[1]))
+	}
+	return out
+}
+
+test('every decision cited as still open is an open decision in the plan, and no decided one lingers', () => {
+	assert.ok(OPEN_DECISIONS.size > 0, `${PLAN_PATH} lists open decisions`)
+	const cited: { where: string; decision: number }[] = []
+	for (const entry of DESIGN_LINT_ALLOWLIST)
+		for (const decision of citedDecisions(entry.reason))
+			cited.push({ where: `lint baseline ${entry.file} ${entry.selector} ${entry.property}`, decision })
+	for (const pair of OPEN)
+		for (const decision of citedDecisions(pair.decision))
+			cited.push({ where: `contrast OPEN ${pair.palette} ${pair.fg} on ${pair.bg.join(' over ')}`, decision })
+	for (const row of rulingRows)
+		for (const decision of citedDecisions(row[5])) cited.push({ where: `ruling ${row[0]} Enforced by`, decision })
+	for (const row of tableRows(section('## 10. Enforcement map')))
+		for (const decision of citedDecisions(row.join(' | '))) cited.push({ where: `enforcement map ${row[0]}`, decision })
+	agents.split('\n').forEach((line, index) => {
+		for (const decision of citedDecisions(line)) cited.push({ where: `AGENTS.md:${index + 1}`, decision })
+	})
+	const decisionsPage = read('app/src/renderer/proposals/all-decisions/decisions.ts')
+	for (const [, decision] of decisionsPage.matchAll(/\bdecision: 'D(\d+)'/g))
+		cited.push({ where: 'Proposals / All decisions (decisions.ts)', decision: Number(decision) })
+	const lingering = cited
+		.filter(({ decision }) => !OPEN_DECISIONS.has(decision))
+		.map(({ where, decision }) => `D${decision}: ${where}`)
+	assert.deepEqual(
+		lingering,
+		[],
+		'decided or unknown decisions still cited as open: retag them to their ruling or to an open decision',
+	)
 })
 
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

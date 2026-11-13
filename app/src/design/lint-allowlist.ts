@@ -458,16 +458,16 @@ html | markup | <svg viewBox="0 0 24 24"> | §9 ruling 54: static first-paint co
 ### app/src/renderer/sidebar/sidebar.css
 .select | background-image | url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' … #3f163f2b | §9 ruling 95: the outline Chevron Down as a CSS data URI (listed in ICONS_OUTSIDE_MODULE, held to the set by tests/design-icons.test.ts)
 ### extension/src/Widget.tsx
-in ModelSelect | jsx | <svg viewBox="0 0 24 24"> | §9 ruling 95: outline Chevron Down in the SolidJS extension (D1: it keeps its own icons, held to the set by tests/design-icons.test.ts)
-in ModelSelect | jsx | <svg viewBox="0 0 24 24"> | §9 ruling 95: outline Check in the SolidJS extension (D1: it keeps its own icons, held to the set by tests/design-icons.test.ts)
+in ModelSelect | jsx | <svg viewBox="0 0 24 24"> | §9 ruling 95: outline Chevron Down in the SolidJS extension (§9 ruling 104: it keeps its own icons, held to the set by tests/design-icons.test.ts)
+in ModelSelect | jsx | <svg viewBox="0 0 24 24"> | §9 ruling 95: outline Check in the SolidJS extension (§9 ruling 104: it keeps its own icons, held to the set by tests/design-icons.test.ts)
 
 ## primitive-outside-owner
 ### extension/src/widget.styles.ts
-.chip-amber | chip | .chip-amber | D1 the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
-.chip-blue | chip | .chip-blue | D1 the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
-.chip-gray | chip | .chip-gray | D1 the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
-.chip-green | chip | .chip-green | D1 the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
-.chip-red | chip | .chip-red | D1 the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
+.chip-amber | chip | .chip-amber | §9 ruling 104: the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
+.chip-blue | chip | .chip-blue | §9 ruling 104: the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
+.chip-gray | chip | .chip-gray | §9 ruling 104: the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
+.chip-green | chip | .chip-green | §9 ruling 104: the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
+.chip-red | chip | .chip-red | §9 ruling 104: the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
 
 ## button-border
 ### app/src/renderer/sidebar/sidebar.css

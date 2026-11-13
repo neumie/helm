@@ -1,4 +1,4 @@
-// D7 / D10 proposal helpers: token sets, Remote's own palette and the stacked-surface frame. The REAL Document Review
+// D7 proposal helpers: token sets, Remote's surface tokens and the stacked-surface frame. The REAL Document Review
 // and Helm Remote harnesses are imported by the story files themselves (stories stay out of the app tsc pass), and
 // this module imports no story. Nothing here is imported by production code.
 import type { ReactNode } from 'react'
@@ -8,7 +8,7 @@ import type { TokenOverrides } from '../proposal'
 export const HELM = (THEME_PRESETS.helm?.tokens ?? {}) as TokenOverrides
 export const HIGH_CONTRAST = (THEME_PRESETS['high-contrast']?.tokens ?? {}) as TokenOverrides
 
-/** remote.css L26-37: the seven surface tokens Remote re-binds on its roots (plus its bubble grey). */
+/** The seven surface tokens Remote re-bound on its roots before §9 ruling 96 (it uses the app palette now); the keys name what a variant overrides. */
 export const REMOTE_OWN = {
 	'--pane': '#0d0d0d',
 	'--chrome': '#1c1c1e',

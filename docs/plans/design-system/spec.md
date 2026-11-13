@@ -1,6 +1,6 @@
 # Helm design system: one spec, one token source, every rule checked
 
-Status: in progress (2026-11-12). Done: S1, S3, S4, S5 (StateGrid and forced states; the rest moved to S11), S7 (the parts that need no pick), S8; Jakub picked the D1–D14 Proposals on 2026-11-13 (two D7 questions still open); S9 implements the picks (§ Progress). S2 waits on D2, S6, S10 and S11 are not started, S9 is in progress. Details under § Progress. Branch `feat/design-system`; the dispatcher merges each stage into local `main` with `--no-ff`.
+Status: in progress (2026-11-13). Done: S1, S3, S4, S5 (StateGrid and forced states; the rest moved to S11), S7 (the parts that need no pick), S8; Jakub picked the D1–D14 Proposals on 2026-11-13 and S9 shipped every pick except two D7 questions that stay open (§ Progress, § Open decisions → Rozhodnuto). S2 waits on D2's package shape (Jakub picked a separate package `packages/helm-ui`; its shape is being clarified with him). S6, S10 and S11 are not started. Branch `feat/design-system`; the dispatcher merges each stage into local `main` with `--no-ff`.
 
 Jakub (2026-11-12): "jak děláme ten design system pro tally a jvs, tak chci jeden i pro helm." Earlier, about JVS: "udělej na to worktree, kterej to celý spojí a udělá pořádný jako má tally. chci všechno aby bylo dokonalý a dodržovalo se."
 
@@ -56,7 +56,7 @@ tests/design-*.test.ts            node checks (below), part of `npm test`
 npm run check:design              tokens --check, design tests, coverage, biome; a11y (needs a Storybook build) joins in S6
 ```
 
-Where the design system lives and how app and extension share it are open decisions (D1, D2); the plan above assumes the recommendation (tokens shared by generation, components per framework) and changes only paths if Jakub picks otherwise.
+How app and extension share the system is settled (D1 a, §9 ruling 104: tokens shared by generation, components per framework). Where it lives is D2: Jakub picked (b), a separate package `packages/helm-ui`, so the `app/src/design/` paths above move into that package once its shape is settled.
 
 ## Stages
 
@@ -86,8 +86,8 @@ Order: S1 → S2 → S3/S4 (parallel) → S5 → S6 → S7 → S8 → S10 → S1
 - **S5** done (`1a9bce3`): StateGrid, `data-force-state` selectors, `tests/design-force-state.test.ts`. Not delivered, moved to S11: the theme toolbar, the stories for unstoried states, `tests/design-stories.test.ts`, and the checks for the rulings §9 had marked as waiting on S5.
 - **S7** done for the parts that need no pick: `styles.css` is an ordered `@import` manifest with every rule beside its component, dock/Signals CSS in `agent-dock/agent-dock.css` and `signals/signals.css` (`f9ae194`); dock and Signals keys and choices share one rule (`74fa65c`); one icon module `app/src/renderer/icons/` with every glyph moved as-is and its source (`2d761b8`, `tests/design-icons.test.ts`). Lint: inline SVG outside the icon module, and a primitive's base rules only in its owner file (`primitive-outside-owner`, 0 violations), plus no border on any button (§9 ruling 4). Not merged, because they are not pixel-identical: `.viewer-search-field` vs `.input` (font shorthand, a transition, full width, a hover media query; the viewer's own field is part of D7 surface reach). The terminal tab context menu had no duplicated menu CSS to merge (`terminal-context-menu.css` only positions the panel and styles its name form). The 22 hand-drawn icons moved onto Heroicons 24 outline with D6 (§9 ruling 95).
 - **S8** done (`0bec1ca`; `THIRD_PARTY_NOTICES.md` corrected in `2d761b8`): AGENTS.md § Design system, `npm run check:design`, no `sysbudget` guidance left in AGENTS.md, the design-system docs or the Remote runbook `docs/remote/README.md`; `tests/design-spec.test.ts` checks the section, its scripts and its paths.
-- **S9** picks from 2026-11-13 implemented (`52e2402`): D4 (radius tokens on `:root`, group-name field 6px, `--accent-text`), D11 (on toggles exempt from the one-filled-accent rule), D12 (widget buttons 32), D13 (`.menu-hint` follows `--ui-scale`), D14 (no toast cap; Undo stays its whole grace). D6 (`cdc970a`): one icon set, Heroicons 24 outline at stroke 2 in today's sizes, including the former micro icons, the select chevron and the extension's two SVGs; only the Remote PWA launcher asset stays 16 solid. D7 Remote palette A (`4838acd`): Remote uses the app palette (§9 ruling 96; D7 keeps High contrast and UI scale open, Remote's other literals are D16). D10 A (`4838acd`): installed preset files nobody edited follow the bundled presets, edited ones fill missing tokens from their preset (§9 ruling 97). D8 (`be23f2a`, §9 rulings 15, 17, 98–102): buttons keep md 8 / sm 6 (§2.4 row corrected); count badges 11/600; written weights 400/500/600 only; +0.04em only for key symbols and codes; Remote phone radii `--radius-touch` 12 / `--radius-float` 18 / `--radius-capsule` 28 and phone type step 16 (14 → 13, 20 → 21); spacing gains in-component 6 and 10, odd values rounded. What they did not settle is D17. D9 B (`7eb0605`, §9 ruling 103): the extension popup uses Helm colours (a `:root` copy held equal to `HELM_TOKENS`) and the type and spacing scale, status through a class; its placeholder joins D15; story Views / Extension popup.
-- **S2** waits on D2. **S6** not started. **S10** not started (the families it lists show `pending S10` in §10). **S11** not started (the rulings it lists show `pending S11` in §9 and §8).
+- **S9** picks from 2026-11-13 implemented (`52e2402`): D4 (radius tokens on `:root`, group-name field 6px, `--accent-text`), D11 (on toggles exempt from the one-filled-accent rule), D12 (widget buttons 32), D13 (`.menu-hint` follows `--ui-scale`), D14 (no toast cap; Undo stays its whole grace). D6 (`cdc970a`): one icon set, Heroicons 24 outline at stroke 2 in today's sizes, including the former micro icons, the select chevron and the extension's two SVGs; only the Remote PWA launcher asset stays 16 solid. D7 Remote palette A (`4838acd`): Remote uses the app palette (§9 ruling 96; D7 keeps High contrast and UI scale open, Remote's other literals are D16). D10 A (`4838acd`): installed preset files nobody edited follow the bundled presets, edited ones fill missing tokens from their preset (§9 ruling 97). D8 (`be23f2a`, §9 rulings 15, 17, 98–102): buttons keep md 8 / sm 6 (§2.4 row corrected); count badges 11/600; written weights 400/500/600 only; +0.04em only for key symbols and codes; Remote phone radii `--radius-touch` 12 / `--radius-float` 18 / `--radius-capsule` 28 and phone type step 16 (14 → 13, 20 → 21); spacing gains in-component 6 and 10, odd values rounded. What they did not settle is D17. D9 B (`7eb0605`, §9 ruling 103): the extension popup uses Helm colours (a `:root` copy held equal to `HELM_TOKENS`) and the type and spacing scale, status through a class; its placeholder joins D15; story Views / Extension popup. D1 a and D3 a became §9 rulings 104 (tokens shared by generation, components per framework) and 105 (`npm run check:design` mandatory, fast parts in `npm test`, no pre-commit hook); D2 b is picked, its shape still open. The Proposals stories of every decided group are deleted; Proposals / All decisions keeps only D7 High contrast and UI scale, and `tests/design-spec.test.ts` fails on any `D<n>` cited in the lint baseline, the contrast OPEN entries, §9 Enforced by, §10 or AGENTS.md that is not an open decision below.
+- **S2** waits on D2's package shape (picked b, `packages/helm-ui`, 2026-11-13). **S6** not started. **S10** not started (the families it lists show `pending S10` in §10). **S11** not started (the rulings it lists show `pending S11` in §9 and §8).
 
 ### Install
 
@@ -95,11 +95,11 @@ AGENTS.md forbids installs through the symlinked `node_modules`. `axe-core` 4.13
 
 ## Open decisions (Jakub's)
 
+Open entries are the bold `- **D<n> …**` items in this section, above the Rozhodnuto list; `tests/design-spec.test.ts` reads them.
+
 Structural:
 
-- **D1 How app and extension share the system.** (a) *Recommended:* tokens shared by generation (one source writes the extension's `--vg-*` file), components stay per framework (React app, SolidJS extension), each tested against the spec. Cheap, no build coupling; component look kept equal by spec + story review, not by shared code. (b) One framework-free CSS package of component classes both import; the extension ships it inside its shadow root. Removes CSS duplication but couples the extension build to app CSS and grows the widget bundle. (c) Rewrite the widget in React to share components. Largest; changes the extension's AGENTS.md rule (SolidJS).
-- **D2 Where it lives.** (a) *Recommended:* `app/src/design/` + `app/src/renderer/{icons,storybook}` inside the app package (no new workspace wiring; app already owns Storybook). (b) A workspace package `packages/helm-ui` like `@tally/ui`, with its own Storybook, tsconfig and exports. Cleaner boundary, but Helm's three packages use different package managers (npm root, bun app, npm extension) and the app build would need a new step.
-- **D3 Gate without CI.** (a) *Recommended:* `npm run check:design` mandatory in AGENTS.md before any UI handoff, fast parts inside `npm test`. (b) Also a local git pre-commit hook running the fast parts (slows every commit by ~2 s; agents in worktrees would hit it too).
+- **D2 Where it lives: the package shape.** Jakub picked (b) on 2026-11-13: a separate workspace package `packages/helm-ui` (like `@tally/ui`) instead of `app/src/design/` inside the app. Still open with him: its exact shape (what moves into it: tokens, generator, icons, StateGrid, Storybook; how the npm root, the bun app and the npm extension consume it; whether it owns its own Storybook and tsconfig). S2 waits on it; the lint baseline's `S2 adds z/motion tokens (pending D2)` entries name it.
 
 Visible (each gets Proposals stories and a link before anything changes; S9):
 
@@ -107,6 +107,25 @@ Visible (each gets Proposals stories and a link before anything changes; S9):
 - **D15 Contrast pairs the D5 picks did not cover.** Still under their need after D5 (§9 rulings 89–94): `--text-2` on fills (hovered, selected, pressed rows, the dock's open entry, Remote's hovered row, field placeholders including the extension popup's, §9 ruling 103; Helm's `--text-2` on `--fill-strong` may be unpainted like High contrast's, §9 ruling 92), `--dock-dim` on the dock's selected entry, scroll thumbs (`--thumb`, `--term-scroll-thumb`), the terminal's `--ansi-bright-black`, `--accent`/`--danger`/`--neutral` on their soft fills over a hovered or selected row, and the terminal-group band (`--text-2`/`--text-1`, the name, its hover and the count). Lift each to AA, or rule it exempt and record it. No proposal yet; the pairs are `open D15` in docs/design-system.md §2.9.
 - **D16 Remote values outside the palette.** D7 A (§9 ruling 96) moved Remote onto the app's surface tokens but did not cover its other literals: the white Send button (`#fff` with `#0d0d0d` text, 88% white hover), four larger shadows (`0 16px 44px` / `20px 0 60px` at 48%, `0 20px 60px` at 55%, a `0 8px 24px` 35% copy of `--shadow-1`), the 58% scrims (the token `--scrim` is 55%), and the offline page's 16/24px type and 48/24px padding (it cannot load `tokens.css`). Map each onto tokens or rule it a Remote exception. No proposal yet; the lint baseline entries name D16.
 - **D17 Off-scale values the scale picks did not settle.** The D8 picks (§9 rulings 15, 17, 98–102) ruled 6/10 spacing, odd values, the count badges, weights, letter-spacing and Remote radii/type; still open are 2px spacing steps, radii under 4px (1, 1.5, 2, 3) with the color swatch's concentric 3px padding, component dimensions on the spacing scale (14 button and term-holder insets, 18/22/28/36/40/44/48/68, the 80/84/90 traffic-light reserve), and type outside Remote and the badges (icon glyph sizes 9/14/16, Run Context 10/14/15, the viewer's 14, the project-group count 10, inline code 0.92em). Snap each, or rule it a component metric in its own §3 spec. No proposal yet; the lint baseline entries name D17.
+
+### Rozhodnuto 2026-11-13
+
+Jakub's picks from Proposals / All decisions; the § Progress S9 entry names the commits.
+
+- D1 Sdílení: a · tokeny generované, komponenty zvlášť (§9 ruling 104).
+- D2 Umístění: b · samostatný balík `packages/helm-ui`; its shape is the open D2 above.
+- D3 Kontrola: a · `npm run check:design` povinně podle AGENTS.md, fast parts in `npm test` (§9 ruling 105).
+- D4 Rohy: A2 · tokeny podle §2.4 + pole jména 6px (§9 ruling 17); Barva odkazu: A · `--accent-text` = `--accent` (§9 ruling 87).
+- D5 Šedý meta text A, Hlavní tlačítko A, Okraje polí B, Preset High contrast B, Remote meta text A, Světlé čtení dokumentu A (§9 rulings 89–94); the pairs they did not cover are D15.
+- D6 Ikony: D · Heroicons outline, tah 2 (§9 ruling 95).
+- D7 Paleta Remote: A · paleta aplikace (§9 ruling 96); Remote's other literals are D16, High contrast and UI scale stay open as D7.
+- D8 Rohy tlačítek Current, Počty v odznacích A, Tučnost písma A, Prostrkání B, Rohy v Remote B, Písmo v Remote B, Mezery B (§9 rulings 15, 17, 98–102); what they did not settle is D17.
+- D9 Popup rozšíření: B · Helm colours + type and spacing scale (§9 ruling 103).
+- D10 Soubory motivů: A · jak je přibalený (§9 ruling 97).
+- D11 Přepínače: A · výjimka pro stavové prvky (§9 rulings 5, 46).
+- D12 Výška ovládání: C · tlačítka 32, segmented a model 28 (§9 ruling 88).
+- D13 Pevné velikosti písma: A · `calc()` i pro hint (§9 ruling 13).
+- D14 Strop toastů: C · strop ze specifikace pryč (§9 ruling 29).
 
 ## Non-goals
 
