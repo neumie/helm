@@ -1,5 +1,6 @@
 import * as path from 'node:path'
 import { BrowserWindow, ipcMain, shell } from 'electron'
+import { WINDOW_BACKGROUNDS } from './design-tokens.generated'
 import type { HelmBridge } from './helm-bridge'
 import { RunContextAccess, type RunContextDrainResult } from './run-context-access'
 import type { RunContextDraft } from './shared-helm'
@@ -148,7 +149,7 @@ export class RunContextWindows {
 			minHeight: 520,
 			title: 'Run context — Helm',
 			show: false,
-			backgroundColor: '#141517',
+			backgroundColor: WINDOW_BACKGROUNDS.dark,
 			titleBarStyle: 'hiddenInset',
 			trafficLightPosition: { x: 14, y: 14 },
 			webPreferences: {

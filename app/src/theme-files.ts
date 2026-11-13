@@ -13,7 +13,10 @@
 import { createHash, randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import type { ThemeDefinition } from './theme-presets'
+import { THEME_TOKEN_NAMES, type ThemeDefinition } from './theme-presets'
+
+/** The only names a theme file may set: the preset keys (§2.8). Anything else in a file is ignored. */
+const KNOWN_TOKENS: ReadonlySet<string> = new Set(THEME_TOKEN_NAMES)
 
 /** Fingerprints of the preset files main wrote: `{ "version": 1, "files": { "<id>": "<sha256 hex>" } }`. */
 export const SEED_RECORD = '.seeded.json'
@@ -192,7 +195,7 @@ export function readThemeFile(file: string): ThemeFileEntry | null {
 		const tokens: Record<string, string> = {}
 		if (typeof raw.tokens === 'object' && raw.tokens !== null) {
 			for (const [key, value] of Object.entries(raw.tokens)) {
-				if (key.startsWith('--') && typeof value === 'string') tokens[key] = value
+				if (KNOWN_TOKENS.has(key) && typeof value === 'string') tokens[key] = value
 			}
 		}
 		if (Object.keys(tokens).length === 0) return null

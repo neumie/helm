@@ -1,25 +1,29 @@
-// Measured contrast (docs/design-system.md, section 2.9): every pair in app/src/design/contrast-pairs.ts
+// Measured contrast (docs/design-system.md, section 2.9): every pair in packages/helm-ui/contrast-pairs.ts
 // meets its need or is open under a named decision, every stored ratio is the measured one, every
 // copied colour still matches its source file, and the spec's generated table is fresh. Fix the token,
 // the pair list or the decision, never this test, when it fails; regenerate the table with
-// `node --import tsx app/scripts/contrast-table.ts`.
+// `node --import tsx packages/helm-ui/scripts/contrast-table.ts`.
 // CJS default-import pattern per the other app tests (app sources load as CommonJS under tsx).
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
-import pairsModule from '../app/src/design/contrast-pairs.ts'
-import contrastModule from '../app/src/design/contrast.ts'
 import themePresetsModule from '../app/src/theme-presets.ts'
+import {
+	EXEMPT,
+	NEED,
+	OPEN,
+	PALETTES,
+	ROWS,
+	SOURCES,
+	measure,
+	rowKey,
+	spliceContrastTable,
+} from '../packages/helm-ui/contrast-pairs.ts'
+import { contrast, paint, resolveValue, truncate2 } from '../packages/helm-ui/contrast.ts'
 
-type ContrastModule = typeof import('../app/src/design/contrast.ts')
-type PairsModule = typeof import('../app/src/design/contrast-pairs.ts')
 type ThemePresetsModule = typeof import('../app/src/theme-presets.ts')
-
-const { contrast, resolveValue, paint, truncate2 } = contrastModule as unknown as ContrastModule
-const { ROWS, OPEN, EXEMPT, NEED, PALETTES, SOURCES, measure, rowKey, spliceContrastTable } =
-	pairsModule as unknown as PairsModule
 const { THEME_PRESETS } = themePresetsModule as unknown as ThemePresetsModule
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
@@ -258,7 +262,11 @@ test('the extension popup copies the app type family and writes no inline colour
 
 test('the measured-contrast table in docs/design-system.md is fresh', () => {
 	const spec = read('docs/design-system.md')
-	assert.equal(spliceContrastTable(spec), spec, 'regenerate with node --import tsx app/scripts/contrast-table.ts')
+	assert.equal(
+		spliceContrastTable(spec),
+		spec,
+		'regenerate with node --import tsx packages/helm-ui/scripts/contrast-table.ts',
+	)
 })
 
 test('the .select chevron data URI strokes the Helm --text-2 value (a token cannot reach inside the URI)', () => {

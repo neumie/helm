@@ -11,12 +11,13 @@
 		"test": "node --import tsx --test tests/**/*.test.ts",
 		"build": "node scripts/write-build-id.mjs && tsc",
 		"typecheck:contracts": "tsc -p tests/contracts/tsconfig.json",
-		"typecheck:all": "tsc --noEmit && npm run typecheck:contracts && npm --prefix app run typecheck && npm --prefix app run typecheck:storybook && npm --prefix extension run typecheck",
+		"typecheck:all": "tsc --noEmit && tsc --noEmit -p packages/helm-ui/tsconfig.json && npm run typecheck:contracts && npm --prefix app run typecheck && npm --prefix app run typecheck:storybook && npm --prefix extension run typecheck",
 		"start": "node scripts/start.mjs",
 		"start:daemon": "node dist/index.js",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",
-		"lint:design": "node --import tsx app/scripts/design-lint.ts",
+		"lint:design": "node --import tsx packages/helm-ui/scripts/design-lint.ts",
+		"tokens:write": "node --import tsx packages/helm-ui/scripts/tokens.ts",
 		"check:design": "node app/scripts/check-design.mjs"
 	},
 	"dependencies": {

@@ -1,23 +1,18 @@
 // Token-only design lint (docs/design-system.md, section 10; plan stage S3). Every finding of
-// app/src/design/lint.ts must be in the baseline app/src/design/lint-allowlist.ts with a reason that names
+// packages/helm-ui/lint.ts must be in the baseline packages/helm-ui/lint-allowlist.ts with a reason that names
 // an open decision, a ruling or a plan stage; a baseline entry whose finding is gone fails too (the value
 // was fixed: remove the entry). Fix the value or get a ruling, never this test; regenerate the baseline with
-// `node --import tsx app/scripts/design-lint.ts --write-baseline` (it refuses new entries without
+// `node --import tsx packages/helm-ui/scripts/design-lint.ts --write-baseline` (it refuses new entries without
 // `--allow-new`, and marks those `TODO:` until a person writes the reason). BASELINE_CAPS below only go down.
-// CJS default-import pattern per the other app tests (app sources load as CommonJS under tsx).
+// packages/helm-ui is an ES module package, so this test imports it by name.
 // The section sign is escaped in this file so it cites no section itself.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
-import allowlistModule from '../app/src/design/lint-allowlist.ts'
-import lintModule from '../app/src/design/lint.ts'
-
-type LintModule = typeof import('../app/src/design/lint.ts')
-type AllowlistModule = typeof import('../app/src/design/lint-allowlist.ts')
-const lint = lintModule as unknown as LintModule
-const { DESIGN_LINT_ALLOWLIST, DESIGN_LINT_BASELINE } = allowlistModule as unknown as AllowlistModule
+import { DESIGN_LINT_ALLOWLIST, DESIGN_LINT_BASELINE } from '../packages/helm-ui/lint-allowlist.ts'
+import * as lint from '../packages/helm-ui/lint.ts'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8')
@@ -76,9 +71,11 @@ const BASELINE_CAPS: Record<(typeof lint.RULES)[number], number> = {
 	'raw-color': 10,
 	// 36: §9 ruling 94 adds the Review light scope's --neutral and its recomputed --neutral-soft (2026-11-13).
 	// 29: §9 ruling 96 removed Remote's seven surface-token overrides (2026-11-13).
-	'token-definition': 29,
+	// 25: S2 generates the Remote offline page's :root, a token source now.
+	'token-definition': 25,
 	'raw-z-index': 45,
-	'raw-duration': 98,
+	// 97: --motion-state is a token now, so the viewer's 140ms fallback is no finding.
+	'raw-duration': 97,
 	'raw-easing': 89,
 	// 8 / 58 / 20: §9 rulings 15, 98, 100 and 101 (D8 picks) fixed or ruled the rest (2026-11-13).
 	// 7 / 55 / 19: §9 ruling 103 put the extension popup on the scale (2026-11-13).
@@ -679,7 +676,7 @@ test('the scan covers production modules outside the scan roots and the Remote o
 	for (const file of outside) assert.ok(sources.includes(`ts ${file}`), `${file} is scanned`)
 	for (const { file } of lint.EMBEDDED_HTML) assert.ok(sources.includes(`embedded-html ${file}`), `${file} is scanned`)
 	assert.ok(
-		findings.some(f => f.file === 'app/assets/remote/remote-sw.js' && f.rule === 'token-definition'),
+		findings.some(f => f.file === 'app/assets/remote/remote-sw.js' && f.rule === 'spacing-off-scale'),
 		'the offline page HTML is linted',
 	)
 	assert.throws(() => lint.embeddedConstant('x.js', 'const A = 1', 'OFFLINE'), /not found/)

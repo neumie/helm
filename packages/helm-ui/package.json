@@ -1,0 +1,7 @@
+{
+	"name": "@neumie/helm-ui",
+	"version": "0.0.1",
+	"private": true,
+	"description": "Helm's design data and its checks: the token source and generator, the token lint with its ratchet baseline, and the measured contrast pairs (docs/design-system.md, §9 ruling 106). No dependencies; consumed by relative path and through generated files.",
+	"type": "module"
+}

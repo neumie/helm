@@ -29,6 +29,7 @@ import { createAgentDockMain } from './agent-dock-main'
 import { agentDockNotifyOptions } from './agent-dock-notify-main'
 import { APP_NAME, macApplicationMenu } from './app-menu'
 import { BufferStore } from './buffers'
+import { WINDOW_BACKGROUNDS } from './design-tokens.generated'
 import { createReviewControl } from './document-review/control'
 import { helmPrivatePaths, plistWorkingDirectory } from './document-review/viewer-file'
 import type { HelmPrivatePaths } from './document-review/viewer-file'
@@ -1106,7 +1107,7 @@ function createWindow(): BrowserWindow {
 		minHeight: MIN_HEIGHT,
 		title: launchPolicy.windowTitle,
 		show: false,
-		backgroundColor: '#141517',
+		backgroundColor: WINDOW_BACKGROUNDS.dark,
 		// Keep native traffic lights while rendering the cockpit into the titlebar.
 		// AppKit zoom is disabled by installNativeWindowZoomGuard() before creation;
 		// CSS no-drag and BrowserWindow capability flags cannot enforce that alone.

@@ -1,13 +1,13 @@
-// Design lint baseline: every finding of app/src/design/lint.ts that is allowed to stay, with the decision
+// Design lint baseline: every finding of packages/helm-ui/lint.ts that is allowed to stay, with the decision
 // (docs/plans/design-system/spec.md D<n>), ruling (docs/design-system.md §9 ruling N) or plan stage (S<n>) that
 // keeps it. tests/design-lint.test.ts fails on a finding missing here, on an entry with no finding left (the
 // value was fixed: remove it), on a `TODO:` reason and on a rule count above its cap. Regenerate with
-// `node --import tsx app/scripts/design-lint.ts --write-baseline`, which keeps the reasons below for entries
+// `node --import tsx packages/helm-ui/scripts/design-lint.ts --write-baseline`, which keeps the reasons below for entries
 // that still match and refuses new entries unless `--allow-new` is given; edit reasons by hand. Never add an
 // entry to let new code through: use a token, or get a ruling first.
 //
 // Format, under `## <rule>` and `### <file>` headers: <selector> | <property> | <value> | <reason>
-import { type AllowlistEntry, parseBaseline } from './lint'
+import { type AllowlistEntry, parseBaseline } from './lint.ts'
 
 export const DESIGN_LINT_BASELINE = String.raw`
 ## raw-color
@@ -25,11 +25,6 @@ export const DESIGN_LINT_BASELINE = String.raw`
 .viewer-pdf-paper | background | #fff | S2 gives the literal a token (§9 ruling 9)
 
 ## token-definition
-### app/assets/remote/remote-sw.js
-:root | --accent | #4c9aff | §9 ruling 96 (the offline page cannot load tokens.css; its colours copy the Helm preset, held by tests/remote-pwa.test.ts)
-:root | --pane | #141517 | §9 ruling 96 (the offline page cannot load tokens.css; its colours copy the Helm preset, held by tests/remote-pwa.test.ts)
-:root | --text-0 | #ececee | §9 ruling 96 (the offline page cannot load tokens.css; its colours copy the Helm preset, held by tests/remote-pwa.test.ts)
-:root | --text-1 | #9a9ea6 | §9 ruling 96 (the offline page cannot load tokens.css; its colours copy the Helm preset, held by tests/remote-pwa.test.ts)
 ### app/src/renderer/document-review/document-review.css
 .document-review[data-review-theme="light"] | --accent | #176ac1 | §2.8 Review light scope (§9 ruling 10; value §9 ruling 94)
 .document-review[data-review-theme="light"] | --accent-fill | #176ac1 | §2.8 Review light scope (§9 ruling 10; value §9 ruling 94)
@@ -216,7 +211,6 @@ preview.animate() in settleTabPreview | animation-duration | 180ms | §9 ruling 
 .toast | transition | opacity 150ms ease-out, transform 150ms ease-out | S2 adds z/motion tokens
 .toast.leaving | transition-duration | 120ms | S2 adds z/motion tokens
 ### app/src/renderer/viewer/viewer.css
-.viewer-grid-letter, .viewer-grid-number | transition | color var(--motion-state, 140ms) ease-out | S2 adds z/motion tokens: --motion-state is not defined yet, so the 140ms fallback renders
 .viewer-pdf-canvas | transition | opacity 150ms ease-out | S2 adds z/motion tokens
 ### extension/src/widget.styles.ts
 .vg-agent__option | transition | background-color 140ms ease-out, color 140ms ease-out | S2 adds z/motion tokens

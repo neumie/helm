@@ -10,13 +10,8 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
-import pairsModule from '../app/src/design/contrast-pairs.ts'
-import allowlistModule from '../app/src/design/lint-allowlist.ts'
-
-type PairsModule = typeof import('../app/src/design/contrast-pairs.ts')
-type AllowlistModule = typeof import('../app/src/design/lint-allowlist.ts')
-const { OPEN } = pairsModule as unknown as PairsModule
-const { DESIGN_LINT_ALLOWLIST } = allowlistModule as unknown as AllowlistModule
+import { OPEN } from '../packages/helm-ui/contrast-pairs.ts'
+import { DESIGN_LINT_ALLOWLIST } from '../packages/helm-ui/lint-allowlist.ts'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const SPEC_PATH = 'docs/design-system.md'
@@ -394,7 +389,7 @@ test('every file the index names exists', () => {
 			for (const [, token] of cell.matchAll(/`([^`]+)`/g)) {
 				const path = token.replace(/\/$/, '')
 				if (path.includes(' ')) continue
-				const found = /^(?:app|extension|src|tests|docs)\//.test(path)
+				const found = /^(?:app|extension|packages|src|tests|docs)\//.test(path)
 					? existsSync(join(ROOT, path))
 					: files.some(file => file.endsWith(`/${path}`)) || [...dirs].some(dir => dir.endsWith(`/${path}`))
 				if (!found) missing.push(token)
@@ -451,7 +446,7 @@ test('AGENTS.md names the design gate, the spec, the rulings and the proposal pr
 		'docs/design-system.md',
 		'§9',
 		'Proposals/',
-		'app/src/design/lint-allowlist.ts',
+		'packages/helm-ui/lint-allowlist.ts',
 		'visual-diff.mjs',
 	])
 		assert.ok(text.includes(phrase), `AGENTS.md ## Design system names ${phrase}`)

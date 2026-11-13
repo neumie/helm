@@ -2,6 +2,7 @@
 // story-local styles. styles.css carries the :root token ladder and body type;
 // sidebar.css (+ its detail-redesign.css import) carries every component rule.
 import type { Preview } from '@storybook/react-vite'
+import { BACKGROUNDS } from './backgrounds.generated'
 
 import '../src/renderer/styles.css'
 import '../src/renderer/sidebar/sidebar.css'
@@ -28,16 +29,9 @@ const preview: Preview = {
 				],
 			},
 		},
-		// Canvas backgrounds mirror the app's background ladder (§2.1); the
-		// default matches the sidebar's --pane so components sit on the exact
-		// surface they ship on.
-		backgrounds: {
-			options: {
-				pane: { name: 'Pane', value: '#141517' },
-				chrome: { name: 'Chrome', value: '#1a1c1f' },
-				well: { name: 'Well', value: '#0f1113' },
-			},
-		},
+		// Canvas backgrounds mirror the app's background ladder (§2.1), generated from the token source; the
+		// default matches the sidebar's --pane so components sit on the exact surface they ship on.
+		backgrounds: { options: BACKGROUNDS },
 	},
 	initialGlobals: {
 		backgrounds: { value: 'pane' },

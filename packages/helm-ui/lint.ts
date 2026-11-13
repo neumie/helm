@@ -13,13 +13,13 @@
 // §9 ruling 4 (no border on any button: `buttonBorders`).
 //
 // A finding is keyed by {file, selector, property, value, rule}; line numbers are only for display because
-// they move. `app/src/design/lint-allowlist.ts` is the ratchet baseline, `tests/design-lint.test.ts` holds it
-// (with per-rule caps that only go down), and `node --import tsx app/scripts/design-lint.ts --write-baseline`
+// they move. `packages/helm-ui/lint-allowlist.ts` is the ratchet baseline, `tests/design-lint.test.ts` holds it
+// (with per-rule caps that only go down), and `node --import tsx packages/helm-ui/scripts/design-lint.ts --write-baseline`
 // regenerates it (new entries only with `--allow-new`, marked `TODO:` until a person writes the reason).
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import ts from 'typescript'
-import { THEME_PRESETS } from '../theme-presets'
+import { THEME_TOKEN_NAMES } from './tokens/index.ts'
 
 export const RULES = [
 	'raw-color',
@@ -136,19 +136,21 @@ export const EMBEDDED_HTML: readonly { file: string; constant: string }[] = [
 export const SCALED_TYPE_DIRS = ['app/src/renderer/sidebar/'] as const
 
 /**
- * Blocks that ARE a token source: their custom-property definitions may hold literals (§2.8). The app's
- * `:root` mirrors `HELM_TOKENS` for the pre-JS first paint; the extension's `:host` holds the `--vg-` copy and its
- * popup's `:root` the plain-name copy (§9 ruling 103).
+ * Blocks that ARE a token source: their custom-property definitions may hold literals (§2.8). Each is a copy
+ * `npm run tokens:write` generates from packages/helm-ui/tokens (§9 ruling 106): the app `:root`, the extension's
+ * `--vg-` `:host` copy and its popup's plain-name `:root` (§9 rulings 103, 104), and the Remote offline page's
+ * `:root` (§9 ruling 96).
  */
 export const TOKEN_SOURCES: readonly { file: string; selector: string }[] = [
 	// `styles.css` is only the ordered @import manifest (S7); the app `:root` lives in tokens.css.
 	{ file: 'app/src/renderer/tokens.css', selector: ':root' },
 	{ file: 'extension/src/widget.styles.ts', selector: ':host' },
 	{ file: 'extension/src/popup.html', selector: ':root' },
+	{ file: 'app/assets/remote/remote-sw.js', selector: ':root' },
 ]
 
 /**
- * Documented scoped palettes (the ones `app/src/design/contrast-pairs.ts` measures). A custom property they
+ * Documented scoped palettes (the ones `packages/helm-ui/contrast-pairs.ts` measures). A custom property they
  * define that is not a core token is a scoped token and may hold a literal; a core token they redefine is
  * reported as `token-definition` (allowlisted under the decision that keeps the palette).
  */
@@ -1877,10 +1879,8 @@ export function compareFindings(a: FindingKey, b: FindingKey): number {
 	return 0
 }
 
-/** Every token name a bundled preset sets (`app/src/theme-presets.ts`): core even where no CSS source defines it. */
-export const PRESET_TOKENS: readonly string[] = [
-	...new Set(Object.values(THEME_PRESETS).flatMap(preset => Object.keys(preset.tokens))),
-].sort()
+/** Every token name a bundled preset sets (packages/helm-ui/tokens): core even where no CSS source defines it. */
+export const PRESET_TOKENS: readonly string[] = [...THEME_TOKEN_NAMES].sort()
 
 /** Scans the whole repository. */
 export function scanRepository(root: string): Finding[] {
@@ -1891,7 +1891,7 @@ export function scanRepository(root: string): Finding[] {
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// The baseline (app/src/design/lint-allowlist.ts): a ratchet, one line per allowlisted finding.
+// The baseline (packages/helm-ui/lint-allowlist.ts): a ratchet, one line per allowlisted finding.
 //
 // Format, under `## <rule>` and `### <file>` headers:  `<selector> | <property> | <value> | <reason>`.
 // A finding that occurs twice (same key) has two lines.

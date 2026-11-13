@@ -1,17 +1,14 @@
 // Storybook StateGrid contract (docs/design-system.md §7): every interactive
 // state selector on a primitive has a `[data-force-state]` alternative in the
 // SAME rule, so a StateGrid cell renders the state from the real CSS. Rules are
-// read with the design lint's CSS parser (app/src/design/lint.ts parseCss:
+// read with the design lint's CSS parser (packages/helm-ui/lint.ts parseCss:
 // nesting, strings and at-rules), over every production stylesheet the lint scans.
 // CJS default-import pattern per the other app tests (app sources load as CommonJS under tsx).
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import lintModule from '../app/src/design/lint.ts'
-
-type LintModule = typeof import('../app/src/design/lint.ts')
-const lint = lintModule as unknown as LintModule
+import * as lint from '../packages/helm-ui/lint.ts'
 
 const ROOT = join(import.meta.dirname, '..')
 const RENDERER = join(ROOT, 'app', 'src', 'renderer')

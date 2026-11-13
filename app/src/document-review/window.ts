@@ -22,6 +22,7 @@ import {
 	splitScreenshotPayload,
 } from '../../../src/document-review/screenshot-format'
 import type { StagedScreenshot } from '../../../src/document-review/screenshot-format'
+import { WINDOW_BACKGROUNDS } from '../design-tokens.generated'
 import { parseExternalHttpUrl } from '../external-url'
 import { sendToLiveRenderer } from '../renderer-lifecycle'
 import type { SessionRegistry } from '../sessions'
@@ -58,8 +59,8 @@ export const PLAIN_WINDOW_LIMIT = 32
 /** HEIC conversion time one `view` batch may spend; below the CLI's 30 s deadline for the batch's answer. */
 export const VIEW_CONVERT_BUDGET_MS = 24_000
 /** The review surface (`--pane`) in the dark and light review themes: painted until a view's first frame. */
-const REVIEW_DARK_BACKGROUND = '#141517'
-const REVIEW_LIGHT_BACKGROUND = '#faf9f6'
+const REVIEW_DARK_BACKGROUND = WINDOW_BACKGROUNDS.dark
+const REVIEW_LIGHT_BACKGROUND = WINDOW_BACKGROUNDS.reviewLight
 /**
  * One document = one `WebContentsView` (docs/plans/helm-open/spec.md, Per-view access keys). Every access and
  * lifecycle decision uses the view's own `webContents`; the container only shows, focuses, titles and parents

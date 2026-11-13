@@ -5,33 +5,39 @@
 // its need without an `OPEN` or `EXEMPT` entry, or when such an entry starts passing (stale). An open entry
 // names the decision in docs/plans/design-system/spec.md that owns it; an exempt entry names the
 // docs/design-system.md §9 ruling that exempts it. Either leaves only by a token change or a ruling, never
-// quietly. `app/scripts/contrast-table.ts` writes the §2.9 table from `ROWS`.
+// quietly. `packages/helm-ui/scripts/contrast-table.ts` writes the §2.9 table from `ROWS`.
 //
 // Values come from the current sources (until stage S2 generates them from one token module):
 // the bundled presets (`app/src/theme-presets.ts`), and verbatim copies of the CSS declarations
 // below, each pinned to its file by `SOURCES` (the test fails when a source changes). A palette is a
 // list of CSS scopes, outermost first, so `var()` inside a declaration resolves where the browser
 // resolves it (contrast.ts). Translucent fills are composited over the surface named under them.
-import { TAB_GROUP_COLORS, type TabGroupColor, tabGroupColorCssVar } from '../tab-group-colors'
-import { THEME_PRESETS } from '../theme-presets'
-import { type Scopes, contrast, paint, truncate2 } from './contrast'
+import { type Scopes, contrast, paint, truncate2 } from './contrast.ts'
+import {
+	DERIVED_COLOR_TOKENS,
+	GROUP_COLORS,
+	POPUP_ROOT,
+	REVIEW_LIGHT_TOKENS,
+	SURFACE_TOKENS,
+	THEME_PRESETS,
+} from './tokens/index.ts'
 
 function presetTokens(id: string): Record<string, string> {
-	const preset = THEME_PRESETS[id]
+	const preset = THEME_PRESETS[id as keyof typeof THEME_PRESETS]
 	if (!preset) throw new Error(`Missing theme preset ${id}`)
 	return preset.tokens
 }
 
-/** `app/src/renderer/tokens.css` `:root`: colours derived from the tones (§2.8): soft fills, the Run Context banner's border, and the accent-text alias (§9 ruling 87). */
-const ROOT_DERIVED = {
-	'--accent-text': 'var(--accent)',
-	'--accent-soft': 'color-mix(in srgb, var(--accent) 15%, transparent)',
-	'--success-soft': 'color-mix(in srgb, var(--success) 15%, transparent)',
-	'--warn-soft': 'color-mix(in srgb, var(--warn) 15%, transparent)',
-	'--danger-soft': 'color-mix(in srgb, var(--danger) 15%, transparent)',
-	'--neutral-soft': 'color-mix(in srgb, var(--neutral) 15%, transparent)',
-	'--danger-strong': 'color-mix(in srgb, var(--danger) 50%, transparent)',
-}
+/** The terminal group colours (§3.18); app/src/tab-group-colors.ts lists the same (tests/design-tokens.test.ts). */
+const TAB_GROUP_COLORS = GROUP_COLORS
+type TabGroupColor = (typeof GROUP_COLORS)[number]
+const tabGroupColorCssVar = (color: TabGroupColor) => `var(--group-${color})`
+
+/**
+ * `app/src/renderer/tokens.css` `:root` colours beside the preset: those derived from the tones (§2.8: soft fills,
+ * the Run Context banner's border, the accent-text alias, §9 ruling 87) and the PDF paper white (§3.27).
+ */
+const ROOT_DERIVED = { ...DERIVED_COLOR_TOKENS, '--paper': SURFACE_TOKENS['--paper'] }
 
 /** `agent-dock/agent-dock.css` `.agent-dock` and `signals/signals.css` `.signals` (each declares it): the dim text of the dock and Signals (§3.24). */
 const DOCK = {
@@ -43,32 +49,8 @@ const REMOTE = {
 	'--remote-bubble': '#2f2f2f',
 }
 
-/** `app/src/renderer/document-review/document-review.css`: the scoped light reading palette. */
-const REVIEW_LIGHT = {
-	'--chrome': '#f1f0ed',
-	'--pane': '#faf9f6',
-	'--well': '#ebeae6',
-	'--text-0': '#24272c',
-	'--text-1': '#60646c',
-	'--text-2': '#62666e',
-	'--hairline': 'rgba(0, 0, 0, 0.07)',
-	'--hairline-strong': 'rgba(0, 0, 0, 0.16)',
-	'--thumb': 'color-mix(in srgb, var(--text-0) 14%, transparent)',
-	'--thumb-hover': 'color-mix(in srgb, var(--text-0) 24%, transparent)',
-	'--fill-subtle': 'rgba(0, 0, 0, 0.05)',
-	'--fill-raised': 'rgba(0, 0, 0, 0.09)',
-	'--fill-strong': 'rgba(0, 0, 0, 0.13)',
-	'--accent': '#176ac1',
-	'--accent-fill': '#176ac1',
-	'--accent-fill-hover': '#125ba8',
-	'--danger': '#b91c1c',
-	'--warn': '#8a5a0a',
-	'--success': '#267347',
-	'--neutral': '#656a73',
-	'--danger-soft': 'color-mix(in srgb, var(--danger) 15%, transparent)',
-	'--warn-soft': 'color-mix(in srgb, var(--warn) 15%, transparent)',
-	'--neutral-soft': 'color-mix(in srgb, var(--neutral) 15%, transparent)',
-}
+/** `app/src/renderer/document-review/document-review.css`: the scoped light reading palette (generated there). */
+const REVIEW_LIGHT = REVIEW_LIGHT_TOKENS
 
 /** `app/src/renderer/viewer/viewer.css` `.viewer-window`: syntax colours (dark uses the ANSI ladder). */
 const VIEWER_SYNTAX = {
@@ -93,20 +75,8 @@ const VIEWER_SYNTAX_LIGHT = {
 	'--syntax-invalid': '#b91c1c',
 }
 
-/** The Helm tokens `extension/src/popup.html` copies into its own `:root` (§3.28, §9 ruling 103). */
-const POPUP_TOKENS = [
-	'--pane',
-	'--hairline',
-	'--hairline-strong',
-	'--fill-subtle',
-	'--text-0',
-	'--text-1',
-	'--text-2',
-	'--accent',
-	'--accent-fill',
-	'--success',
-	'--danger',
-] as const
+/** The Helm colour tokens `extension/src/popup.html` carries in its own `:root` (§3.28, §9 ruling 103). */
+const POPUP_TOKENS = POPUP_ROOT.filter(name => name !== '--font-ui')
 
 /**
  * `terminal-tabs.css` and `background-terminals.css` terminal groups (§3.18): the group's colour comes from `--group-color`, set inline to
@@ -828,7 +798,7 @@ export function contrastTable(): string {
 		.map(n => `§9 ruling ${n}: ${EXEMPT.filter(entry => entry.ruling === n).length}`)
 		.join(', ')
 	const lines = [
-		`${ROWS.length} pairs, ${open.length} open (${counts}), ${exempt.length} exempt (${exemptCounts}). Palettes: ${BASE_PALETTE_LABELS}, and one per terminal group colour in each preset. High contrast is the bundled preset; an installed preset file nobody edited is rewritten with it at startup, and an edited one keeps its own values and fills the rest from the same preset (§9 ruling 97), so only the values a user changed can measure differently. Remote is the Helm preset plus its bubble grey (§9 ruling 96). Need: text 4.5, large text and \`ui\` (control edges, focus ring, a filled control against its surface) 3, decorative n/a. Ratios are WCAG 2.x, two decimals, truncated; translucent fills are composited over the surface named under them. The extension widget's \`--vg-*\` values are checked equal to Helm's, so its pairs are the Helm rows. Generated by \`node --import tsx app/scripts/contrast-table.ts\`.`,
+		`${ROWS.length} pairs, ${open.length} open (${counts}), ${exempt.length} exempt (${exemptCounts}). Palettes: ${BASE_PALETTE_LABELS}, and one per terminal group colour in each preset. High contrast is the bundled preset; an installed preset file nobody edited is rewritten with it at startup, and an edited one keeps its own values and fills the rest from the same preset (§9 ruling 97), so only the values a user changed can measure differently. Remote is the Helm preset plus its bubble grey (§9 ruling 96). Need: text 4.5, large text and \`ui\` (control edges, focus ring, a filled control against its surface) 3, decorative n/a. Ratios are WCAG 2.x, two decimals, truncated; translucent fills are composited over the surface named under them. The extension widget's \`--vg-*\` values are checked equal to Helm's, so its pairs are the Helm rows. Generated by \`node --import tsx packages/helm-ui/scripts/contrast-table.ts\`.`,
 		'',
 		'| Palette | Foreground | Background | Use | Need | Ratio | Status |',
 		'| --- | --- | --- | --- | --- | --- | --- |',

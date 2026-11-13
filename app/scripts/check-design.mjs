@@ -16,10 +16,9 @@ const designTests = readdirSync(new URL('../../tests', import.meta.url))
 const steps = [
 	{
 		name: 'contrast table is fresh',
-		command: ['node', '--import', 'tsx', 'app/scripts/contrast-table.ts', '--check'],
+		command: ['node', '--import', 'tsx', 'packages/helm-ui/scripts/contrast-table.ts', '--check'],
 	},
-	// Reserved for S2: the generated token files are fresh.
-	// { name: 'tokens are fresh', command: ['node', '--import', 'tsx', 'app/scripts/tokens.ts', '--check'] },
+	{ name: 'tokens are fresh', command: ['node', '--import', 'tsx', 'packages/helm-ui/scripts/tokens.ts', '--check'] },
 	{
 		name: 'design tests',
 		command: ['node', '--import', 'tsx', '--test', ...designTests, 'tests/helm-storybook-coverage.test.ts'],
