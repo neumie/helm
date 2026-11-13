@@ -135,3 +135,18 @@ test('the accent well derives a darker hover exactly as both presets step it (re
 	assert.equal(accentFillHover('#808080'), '#767676')
 	assert.equal(accentFillHover('var(--accent)'), 'var(--accent)')
 })
+
+test('a lighter accent hover the old Appearance well stored becomes the darker derived hover (§9 ruling 90)', () => {
+	const old = normalizeAppearance({
+		overrides: { '--accent-fill': '#3b82f6', '--accent-fill-hover': 'color-mix(in srgb, #3b82f6 78%, white)' },
+	})
+	assert.equal(old.overrides['--accent-fill-hover'], '#2776f5')
+	assert.equal(old.overrides['--accent-fill'], '#3b82f6')
+	// A hover mixed from another colour, or written by hand, is the user's and stays.
+	const other = { '--accent-fill': '#3b82f6', '--accent-fill-hover': 'color-mix(in srgb, #ff0000 78%, white)' }
+	assert.deepEqual(normalizeAppearance({ overrides: other }).overrides, other)
+	const hand = { '--accent-fill': '#3b82f6', '--accent-fill-hover': '#123456' }
+	assert.deepEqual(normalizeAppearance({ overrides: hand }).overrides, hand)
+	const hoverOnly = { '--accent-fill-hover': 'color-mix(in srgb, #3b82f6 78%, white)' }
+	assert.deepEqual(normalizeAppearance({ overrides: hoverOnly }).overrides, hoverOnly)
+})

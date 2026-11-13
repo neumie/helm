@@ -101,8 +101,10 @@ function readRecord(dir: string): Record<string, string> {
 }
 
 /**
- * True when `content` is a preset file Helm wrote and nobody edited: its bytes match the recorded fingerprint, or
- * it holds only `name` (the preset's) and `tokens`, each token equal to the current preset or an earlier release.
+ * True when `content` is a preset file Helm wrote and nobody edited. With a recorded fingerprint the bytes alone
+ * decide: any change is the user's, even one that restores an earlier preset value. Only a file with no record
+ * (seeded before `.seeded.json` existed) falls back to the token check: it holds only `name` (the preset's) and
+ * `tokens`, each token equal to the current preset or an earlier release.
  */
 export function isUntouchedPresetFile(
 	content: Buffer,
@@ -110,7 +112,7 @@ export function isUntouchedPresetFile(
 	earlier: Readonly<Record<string, readonly string[]>> = {},
 	recorded?: string,
 ): boolean {
-	if (recorded !== undefined && fingerprint(content) === recorded) return true
+	if (recorded !== undefined) return fingerprint(content) === recorded
 	let raw: unknown
 	try {
 		raw = JSON.parse(content.toString('utf8'))

@@ -123,6 +123,20 @@ test('a preset file the user changed is never overwritten, with or without a fin
 	assert.deepEqual(seedPresetFiles(dir, { helm: HELM }, PRESET_EARLIER_VALUES), { written: [], kept: ['helm'] })
 })
 
+test('an edit that restores an earlier preset value is kept once a fingerprint is recorded', t => {
+	const dir = themesDir(t)
+	seedPresetFiles(dir, THEME_PRESETS, PRESET_EARLIER_VALUES)
+	const earlierText2 = PRESET_EARLIER_VALUES.helm?.['--text-2']?.[0]
+	assert.ok(earlierText2, 'helm --text-2 has an earlier value')
+	assert.notEqual(earlierText2, HELM.tokens['--text-2'])
+	const edited = fileOf({ name: HELM.name, tokens: { ...HELM.tokens, '--text-2': earlierText2 } })
+	writeFileSync(join(dir, 'helm.json'), edited)
+	const before = record(dir)
+	assert.deepEqual(seedPresetFiles(dir, THEME_PRESETS, PRESET_EARLIER_VALUES), { written: [], kept: ['helm'] })
+	assert.equal(read(dir, 'helm.json'), edited)
+	assert.deepEqual(record(dir), before)
+})
+
 test('a symlinked preset path, a corrupt record and user themes are left alone', t => {
 	const dir = themesDir(t)
 	seedPresetFiles(dir, {}, {})

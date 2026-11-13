@@ -81,11 +81,25 @@ function isTokenMap(raw: unknown): raw is Record<string, string> {
 	)
 }
 
+/** The hover the Appearance accent well stored before §9 ruling 90: `color-mix(in srgb, #rrggbb 78%, white)`. */
+const LIGHTER_ACCENT_HOVER = /^color-mix\(in srgb, (#[0-9a-f]{6}) 78%, white\)$/i
+
+/** A stored accent hover the old well derived (lighter than rest) from the stored `--accent-fill` becomes the
+ *  darker hover the well derives today (§9 ruling 90). Any other hover is the user's and stays. */
+function migrateAccentHover(overrides: Record<string, string>): Record<string, string> {
+	const hover = overrides['--accent-fill-hover']
+	const fill = overrides['--accent-fill']
+	if (hover === undefined || fill === undefined) return overrides
+	const hex = LIGHTER_ACCENT_HOVER.exec(hover)?.[1]
+	if (hex === undefined || hex.toLowerCase() !== fill.trim().toLowerCase()) return overrides
+	return { ...overrides, '--accent-fill-hover': accentFillHover(fill.trim()) }
+}
+
 export function normalizeAppearance(raw: unknown): AppearanceState {
 	const source = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {}
 	return {
 		themeId: typeof source.themeId === 'string' && source.themeId !== '' ? source.themeId : DEFAULT_THEME_ID,
-		overrides: isTokenMap(source.overrides) ? source.overrides : {},
+		overrides: isTokenMap(source.overrides) ? migrateAccentHover(source.overrides) : {},
 		termFontSize: clampTermFont(typeof source.termFontSize === 'number' ? source.termFontSize : TERM_FONT_DEFAULT),
 		uiScale: normalizeUiScale(source.uiScale),
 		themeTokensCache: isTokenMap(source.themeTokensCache) ? source.themeTokensCache : null,
