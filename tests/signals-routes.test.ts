@@ -212,7 +212,7 @@ test('single thread reads and writes validate ids and bodies', async () => {
 		assert.equal((await post(`/signals/${id}`, '{not json')).status, 400)
 		assert.equal((await post(`/signals/${id}`, { state: 'snoozed' })).status, 400, 'snooze needs a time')
 		assert.equal((await post('/signals/9999', { state: 'seen' })).status, 404)
-		const big = await post(`/signals/${id}`, { managedBy: 'x'.repeat(20_000) })
+		const big = await post(`/signals/${id}`, { managedBy: 'x'.repeat(50_000) })
 		assert.equal(big.status, 413)
 
 		const managed = await data<SignalThread>(await post(`/signals/${id}`, { owner: 'managed', managedBy: 'agent-a' }))
@@ -729,7 +729,7 @@ test('a new agent ask beyond the open cap is refused with 429; its key can still
 		const refused = await post('/signals/asks', { title: 'One too many' })
 		assert.equal(refused.status, 429)
 		assert.deepEqual(await refused.json(), {
-			error: 'Too many open agent asks (50). Close some with helm signal done.',
+			error: 'Too many open agent asks and answers (50). Close some with helm signal done.',
 		})
 		assert.equal(db.signals.list({ source: 'agent' }, NOW).length, SIGNAL_OPEN_ASKS_MAX, 'nothing was stored')
 		const renewed = await data<SignalAskResult>(await post('/signals/asks', { key: 'ask-0', title: 'Ask 0, again' }))
@@ -763,7 +763,10 @@ test('agent ask routes validate their bodies and map errors', async () => {
 		await bad('/signals/asks', { title: 'T', terminal: 'pane-1' })
 		await bad('/signals/asks', { title: 'T', extra: true })
 		await bad('/signals/asks', '{not json')
-		await bad('/signals/asks', { title: 'T', body: 'x'.repeat(20_000) }, 413)
+		await bad('/signals/asks', { title: 'T', body: 'x'.repeat(50_000) }, 413)
+		await bad('/signals/asks', { title: 'T', body: 'x'.repeat(4001), kind: 'answer' })
+		await bad('/signals/asks', { title: 'T', kind: 'reply' })
+		await bad('/signals/asks', { title: 'T', kind: 'answer', terminal: '01234567-89ab-4def-8123-456789abcdef' })
 		assert.equal(db.signals.list({ source: 'agent' }, NOW).length, 0, 'nothing was stored')
 
 		await bad('/signals/asks/done', {})
@@ -784,6 +787,12 @@ test('agent ask routes validate their bodies and map errors', async () => {
 		const notAsk = await post(`/signals/${prId}/reply`, { text: 'hi' }, { jakub: true })
 		assert.equal(notAsk.status, 400)
 		assert.deepEqual(await notAsk.json(), { error: 'Only agent asks take a reply' })
+		const answer = db.signals.upsertAsk({ kind: 'answer', title: 'A' }, NOW).thread
+		const noReply = await post(`/signals/${answer.id}/reply`, { text: 'thanks' }, { jakub: true })
+		assert.equal(noReply.status, 400)
+		assert.deepEqual(await noReply.json(), { error: 'An answer takes no reply' })
+		const noRoute = await post(`/signals/${answer.id}/routed`, { agent: 'dispatcher', how: 'replied' }, { jakub: true })
+		assert.equal(noRoute.status, 400)
 		// A GitHub thread can still be closed with done.
 		assert.equal((await data<SignalThread>(await post(`/signals/${prId}/done`, {}))).closedReason, null)
 	})
@@ -830,5 +839,30 @@ test('an ask closes as answered in its terminal: Helm only, compare-and-set on i
 		assert.equal(closed.state, 'done')
 		assert.equal(closed.closedReason, 'answered in the terminal')
 		assert.equal(closed.closedBy, 'jakub')
+	})
+})
+
+test('agent answers: filed through /asks with kind answer, a long body, closed once read', async () => {
+	await withSignalsApi(async ({ request, post }) => {
+		const body = Array.from({ length: 40 }, (_, i) => `Řádek ${i}: proxy ${'ž'.repeat(60)}`).join('\n')
+		const links = Array.from({ length: 8 }, (_, n) => `https://storybook.test/${'p'.repeat(1900)}/${n}`)
+		const created = await data<SignalAskResult>(
+			await post('/signals/asks', { kind: 'answer', key: 'remote-proxy', title: 'Proxy blokuje Remote', body, links }),
+		)
+		assert.equal(created.outcome, 'created')
+		assert.equal(created.thread.kind, 'answer')
+		assert.equal(created.thread.body, body)
+		assert.equal(created.thread.askTerminal, null)
+		const listed = await data<SignalsSnapshot>(await request('/signals?source=agent'))
+		assert.deepEqual(
+			listed.threads.map(thread => thread.kind),
+			['answer'],
+		)
+		const read = await data<SignalThread>(
+			await post(`/signals/${created.thread.id}`, { state: 'done' }, { jakub: true }),
+		)
+		assert.equal(read.state, 'done')
+		assert.equal(read.closedBy, 'jakub')
+		assert.equal(read.closedReason, null)
 	})
 })

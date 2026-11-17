@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
 import { boundText, oneLine } from '../agent-dock/text.js'
 import {
+	SIGNAL_AGENT_KINDS,
 	SIGNAL_ASK_KEY,
 	SIGNAL_CLOSERS,
 	SIGNAL_EVENT_TYPES,
@@ -22,6 +23,7 @@ import {
 	SIGNAL_SOURCE_STATUSES,
 	SIGNAL_STATES,
 	SIGNAL_TERMINAL_ID,
+	type SignalAgentKind,
 	type SignalAsk,
 	type SignalAskOutcome,
 	type SignalAskResult,
@@ -283,6 +285,8 @@ function parseLinks(raw: string | null): string[] {
 /** An ask as it would be stored, every field cleaned; title is never empty. */
 interface CleanAsk {
 	threadKey: string
+	/** `ask` waits on Jakub; `answer` is an informational reply (no reply, no terminal). */
+	kind: SignalAgentKind
 	title: string
 	body: string | null
 	links: string[]
@@ -295,19 +299,27 @@ function cleanAsk(input: SignalAsk): CleanAsk {
 		throw new SignalInvalidError('Invalid ask key')
 	}
 	const title = clean(String(input.title ?? ''), SIGNAL_LIMITS.askTitle)
-	if (title === '') throw new SignalInvalidError('An ask needs a title')
+	if (title === '') throw new SignalInvalidError('An ask or answer needs a title')
 	const links: string[] = []
 	for (const raw of Array.isArray(input.links) ? input.links : []) {
 		const url = signalAskLinkUrl(raw)
 		if (url !== null && !links.includes(url)) links.push(url)
 		if (links.length === SIGNAL_LIMITS.askLinks) break
 	}
+	const kind: SignalAgentKind = input.kind === undefined ? 'ask' : input.kind
+	if (!oneOf(SIGNAL_AGENT_KINDS, kind)) throw new SignalInvalidError('Unknown agent signal kind')
+	const answer = kind === 'answer'
 	const terminal =
 		typeof input.terminal === 'string' && SIGNAL_TERMINAL_ID.test(input.terminal) ? input.terminal.toLowerCase() : null
+	// An answer expects nothing back, so it has no delivery target (and never closes from a terminal).
+	if (answer && terminal !== null) throw new SignalInvalidError('An answer takes no reply, so no terminal')
 	return {
 		threadKey: `agent:${input.key ?? randomUUID()}`,
+		kind,
 		title,
-		body: cleanMultiline(input.body, SIGNAL_LIMITS.askBody, SIGNAL_LIMITS.askBodyLines),
+		body: answer
+			? cleanMultiline(input.body, SIGNAL_LIMITS.answerBody, SIGNAL_LIMITS.answerBodyLines)
+			: cleanMultiline(input.body, SIGNAL_LIMITS.askBody, SIGNAL_LIMITS.askBodyLines),
 		links,
 		from: cleanOptional(input.from, SIGNAL_LIMITS.actor) ?? 'agent',
 		terminal,
@@ -935,6 +947,9 @@ export class SignalStore {
 		if (!oneOf(SIGNAL_ROUTES, routed.how)) throw new SignalInvalidError('Unknown route')
 		return this.transaction(() => {
 			const row = this.requireRow(id)
+			// `replied` means Jakub's answer was typed into the asking agent: an answer has no reply.
+			if (routed.how === 'replied' && (row.source !== 'agent' || row.kind !== 'ask'))
+				throw new SignalInvalidError('Only an agent ask is replied to')
 			const state = row.state === 'new' ? 'seen' : row.state
 			this.db
 				.prepare(
@@ -1031,9 +1046,11 @@ export class SignalStore {
 	// ---------- agent asks ----------
 
 	/**
-	 * File an ask (`helm signal add`). With a key it upserts `agent:<key>`: a changed title or
-	 * body or of the asking terminal makes it new again (an earlier reply no longer answers it), a change of links or label
-	 * refreshes it in place, identical input writes nothing. Without a key it always creates.
+	 * File an ask or an answer (`helm signal add [--kind answer]`). With a key it upserts
+	 * `agent:<key>`: a changed kind, title or body or of the asking terminal makes it new again (an
+	 * earlier reply no longer answers it), a change of links or label refreshes it in place,
+	 * identical input writes nothing. Without a key it always creates. Asks and answers share the
+	 * open-row cap and the key space (one key is one thread, whichever kind it is now).
 	 */
 	upsertAsk(input: SignalAsk, now: Date): SignalAskResult {
 		const at = now.toISOString()
@@ -1049,7 +1066,10 @@ export class SignalStore {
 			// A new delivery target is a new ask too: Jakub's answer must never move to another agent unseen.
 			const renews =
 				row !== undefined &&
-				(row.title !== ask.title || (row.body ?? null) !== ask.body || (row.ask_terminal ?? null) !== ask.terminal)
+				(row.kind !== ask.kind ||
+					row.title !== ask.title ||
+					(row.body ?? null) !== ask.body ||
+					(row.ask_terminal ?? null) !== ask.terminal)
 			// A new ask, or a done one opened again, takes a slot; renewing an open ask does not.
 			if (!row || (renews && row.state === 'done')) {
 				const open = this.db
@@ -1057,7 +1077,7 @@ export class SignalStore {
 					.get() as { n: number }
 				if (open.n >= SIGNAL_OPEN_ASKS_MAX)
 					throw new SignalLimitError(
-						`Too many open agent asks (${SIGNAL_OPEN_ASKS_MAX}). Close some with helm signal done.`,
+						`Too many open agent asks and answers (${SIGNAL_OPEN_ASKS_MAX}). Close some with helm signal done.`,
 					)
 			}
 			if (!row) {
@@ -1067,17 +1087,19 @@ export class SignalStore {
 						   thread_key, source, kind, reasons, ref, full_ref, title, head, actor, url, repo, number, branch,
 						   state, owner, activity_key, last_activity_at, active, missed_polls,
 						   body, links, ask_terminal, created_at, updated_at
-						 ) VALUES (?, 'agent', 'ask', '["ask"]', ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL,
+						 ) VALUES (?, 'agent', ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL,
 						   'new', 'jakub', ?, ?, 1, 0, ?, ?, ?, ?, ?)`,
 					)
 					.run(
 						ask.threadKey,
+						ask.kind,
+						JSON.stringify([ask.kind]),
 						labels.ref,
 						labels.full_ref,
 						ask.title,
 						ask.title,
 						labels.actor,
-						`ask:${at}`,
+						`${ask.kind}:${at}`,
 						at,
 						ask.body,
 						links,
@@ -1086,18 +1108,21 @@ export class SignalStore {
 						at,
 					)
 				id = Number(info.lastInsertRowid)
-				this.insertEvent(id, 'created', { owner: 'jakub', kind: 'ask', head: ask.title }, at)
+				this.insertEvent(id, 'created', { owner: 'jakub', kind: ask.kind, head: ask.title }, at)
 				outcome = 'created'
 			} else if (renews) {
 				id = row.id
 				this.db
 					.prepare(
-						`UPDATE signal_threads SET title = ?, head = ?, body = ?, links = ?, ref = ?, full_ref = ?, actor = ?,
-						   ask_terminal = ?, activity_key = ?, last_activity_at = ?, state = 'new', snoozed_until = NULL,
-						   closed_reason = NULL, closed_by = NULL, reply = NULL, reply_at = NULL, updated_at = ?
+						`UPDATE signal_threads SET kind = ?, reasons = ?, title = ?, head = ?, body = ?, links = ?, ref = ?,
+						   full_ref = ?, actor = ?, ask_terminal = ?, activity_key = ?, last_activity_at = ?, state = 'new',
+						   snoozed_until = NULL, closed_reason = NULL, closed_by = NULL, reply = NULL, reply_at = NULL,
+						   updated_at = ?
 						 WHERE id = ?`,
 					)
 					.run(
+						ask.kind,
+						JSON.stringify([ask.kind]),
 						ask.title,
 						ask.title,
 						ask.body,
@@ -1106,12 +1131,12 @@ export class SignalStore {
 						labels.full_ref,
 						labels.actor,
 						ask.terminal,
-						`ask:${at}`,
+						`${ask.kind}:${at}`,
 						at,
 						at,
 						id,
 					)
-				this.insertEvent(id, 'activity', { owner: row.owner, kind: 'ask', head: ask.title, state: 'new' }, at)
+				this.insertEvent(id, 'activity', { owner: row.owner, kind: ask.kind, head: ask.title, state: 'new' }, at)
 				outcome = 'renewed'
 			} else if (
 				row.links !== links ||
@@ -1186,6 +1211,7 @@ export class SignalStore {
 		return this.transaction(() => {
 			const row = this.requireRow(id)
 			if (row.source !== 'agent') throw new SignalInvalidError('Only agent asks take a reply')
+			if (row.kind === 'answer') throw new SignalInvalidError('An answer takes no reply')
 			if (answer === null) throw new SignalInvalidError('The reply is empty')
 			const state = row.state === 'new' ? 'seen' : row.state
 			this.db

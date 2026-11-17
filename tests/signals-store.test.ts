@@ -1159,7 +1159,7 @@ test('open asks are bounded; renewing or updating an existing key always works',
 		for (let n = 0; n < SIGNAL_OPEN_ASKS_MAX; n++) db.signals.upsertAsk({ key: `ask-${n}`, title: `Ask ${n}` }, T0)
 		const full = () => db.signals.upsertAsk({ title: 'One too many' }, at(1))
 		assert.throws(full, SignalLimitError)
-		assert.throws(full, { message: 'Too many open agent asks (50). Close some with helm signal done.' })
+		assert.throws(full, { message: 'Too many open agent asks and answers (50). Close some with helm signal done.' })
 		assert.throws(() => db.signals.upsertAsk({ key: 'new-key', title: 'Also too many' }, at(1)), SignalLimitError)
 		assert.equal(db.signals.list({ source: 'agent' }, at(1)).length, SIGNAL_OPEN_ASKS_MAX)
 
@@ -1549,4 +1549,94 @@ test('migration 41 keeps every thread, id and event, and ids continue after the 
 	} finally {
 		rmSync(root, { recursive: true, force: true })
 	}
+})
+
+// ---------- agent answers ----------
+
+test('an answer is an agent thread of kind answer: no terminal, no reply, a longer body', () => {
+	withDb(db => {
+		const body = Array.from({ length: 30 }, (_, i) => `Line ${i}: ${'x'.repeat(58)}`).join('\n')
+		const created = db.signals.upsertAsk(
+			{ kind: 'answer', key: 'remote-proxy', title: 'Proxy blocks Remote', body, from: 'dispatcher' },
+			T0,
+		)
+		assert.equal(created.outcome, 'created')
+		const answer = created.thread
+		assert.equal(answer.source, 'agent')
+		assert.equal(answer.kind, 'answer')
+		assert.deepEqual(answer.reasons, ['answer'])
+		assert.equal(answer.state, 'new')
+		assert.equal(answer.owner, 'jakub')
+		assert.equal(answer.body, body, 'an answer keeps more than an ask body')
+		assert.equal(answer.askTerminal, null)
+		assert.equal(db.signals.getAskByKey('remote-proxy')?.id, answer.id)
+		assert.deepEqual(
+			db.signals.events(0).map(event => [event.type, event.detail]),
+			[['created', { owner: 'jakub', kind: 'answer', head: 'Proxy blocks Remote' }]],
+		)
+
+		// An answer is bounded by its own limits (60 lines, 4000 units), an ask by the ask's.
+		const huge = db.signals.upsertAsk(
+			{ kind: 'answer', title: 'Long', body: Array.from({ length: 80 }, (_, i) => `l${i}`).join('\n') },
+			T0,
+		).thread
+		assert.equal((huge.body ?? '').split('\n').length, 60)
+		const asked = db.signals.upsertAsk({ title: 'Ask', body: body }, T0).thread
+		assert.ok((asked.body ?? '').length <= 1000)
+
+		// It takes no terminal and no reply; it never closes from a terminal.
+		assert.throws(
+			() => db.signals.upsertAsk({ kind: 'answer', title: 'x', terminal: '5d3f8a2e-1b4c-4e8a-9f21-6c0d7e9b3a14' }, T0),
+			/An answer takes no reply/,
+		)
+		assert.throws(() => db.signals.reply(answer.id, 'thanks', at(1)), /An answer takes no reply/)
+		assert.throws(
+			() => db.signals.setRouted(answer.id, { agent: 'dispatcher', how: 'replied' }, at(1)),
+			/Only an agent ask is replied to/,
+		)
+		assert.throws(
+			() => db.signals.answered(answer.id, { activityAt: answer.lastActivityAt, promptAt: at(1).toISOString() }, at(2)),
+			/bound to a terminal/,
+		)
+		assert.equal(db.signals.get(answer.id)?.reply, null)
+
+		// Jakub closes it once read (through Helm: closed by jakub, no reason).
+		const read = db.signals.update(answer.id, { state: 'done' }, at(3), 'jakub')
+		assert.equal(read.state, 'done')
+		assert.equal(read.closedBy, 'jakub')
+		assert.equal(read.closedReason, null)
+	})
+})
+
+test('one key is one agent thread: changing its kind renews it; the open cap counts asks and answers', () => {
+	withDb(db => {
+		const ask = db.signals.upsertAsk({ key: 'proxy', title: 'Proxy blocks Remote' }, T0).thread
+		db.signals.reply(ask.id, 'Why?', at(1))
+		const unchanged = db.signals.upsertAsk({ key: 'proxy', title: 'Proxy blocks Remote', kind: 'ask' }, at(2))
+		assert.equal(unchanged.outcome, 'unchanged', 'an explicit ask is the default kind')
+
+		// The same key filed as an answer: the same thread, new again, kind answer, the reply cleared.
+		const renewed = db.signals.upsertAsk({ key: 'proxy', kind: 'answer', title: 'Proxy blocks Remote' }, at(3))
+		assert.equal(renewed.outcome, 'renewed')
+		assert.equal(renewed.thread.id, ask.id)
+		assert.equal(renewed.thread.kind, 'answer')
+		assert.deepEqual(renewed.thread.reasons, ['answer'])
+		assert.equal(renewed.thread.state, 'new')
+		assert.equal(renewed.thread.reply, null)
+		assert.deepEqual(db.signals.events(0).at(-1)?.detail, {
+			owner: 'jakub',
+			kind: 'answer',
+			head: 'Proxy blocks Remote',
+			state: 'new',
+		})
+		assert.equal(
+			db.signals.upsertAsk({ key: 'proxy', kind: 'answer', title: 'Proxy blocks Remote' }, at(4)).outcome,
+			'unchanged',
+		)
+
+		for (let i = 1; i < SIGNAL_OPEN_ASKS_MAX; i++)
+			db.signals.upsertAsk({ kind: i % 2 === 0 ? 'answer' : 'ask', title: `Row ${i}` }, at(5))
+		assert.throws(() => db.signals.upsertAsk({ kind: 'answer', title: 'One more' }, at(6)), SignalLimitError)
+		assert.throws(() => db.signals.upsertAsk({ title: 'One more ask' }, at(6)), /asks and answers/)
+	})
 })

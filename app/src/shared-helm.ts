@@ -754,7 +754,17 @@ export interface ProfilesApi {
 export type SignalSource = 'github' | 'mail' | 'agent' | 'slack'
 /** Sources a poller reads and reports health for (agent asks are pushed, never polled). */
 export type SignalPollSource = 'github' | 'mail' | 'slack'
-export type SignalKind = 'review' | 'comments' | 'ci' | 'mention' | 'mail' | 'sentry' | 'ask' | 'dm' | 'thread'
+export type SignalKind =
+	| 'review'
+	| 'comments'
+	| 'ci'
+	| 'mention'
+	| 'mail'
+	| 'sentry'
+	| 'ask'
+	| 'dm'
+	| 'thread'
+	| 'answer'
 export type SignalState = 'new' | 'seen' | 'snoozed' | 'done'
 export type SignalOwner = 'jakub' | 'managed'
 export type SignalRouteHow = 'sent' | 'started' | 'replied'
@@ -792,7 +802,7 @@ export interface SignalThread {
 	routedAgent: string | null
 	routedHow: SignalRouteHow | null
 	routedAt: string | null
-	/** Agent asks only (null/[] otherwise): short body (line breaks kept), http(s) links, the asking Okena terminal. */
+	/** Agent asks and answers only (null/[] otherwise): body (line breaks kept), http(s) links, the asking Okena terminal (asks only). */
 	body: string | null
 	links: string[]
 	askTerminal: string | null
