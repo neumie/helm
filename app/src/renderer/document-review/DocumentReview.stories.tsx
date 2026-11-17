@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { StrictMode, useEffect, useMemo, useState } from 'react'
+import { type ReactNode, StrictMode, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import type { ReviewApi } from '../../document-review/types'
 import './document-review.css'
 import '../styles.css'
@@ -58,6 +58,20 @@ function CanvasReviewFixture({ scenario }: { scenario: CanvasFixtureScenario }) 
 		}
 	}, [fixture])
 	return <DocumentReview api={fixture.api} />
+}
+
+/** The window at the cockpit's UI scale: production sets `--ui-scale` on the document root (§9 ruling 108). */
+function AtUiScale({ scale, children }: { scale: number; children: ReactNode }) {
+	useLayoutEffect(() => {
+		const root = document.documentElement
+		const before = root.style.getPropertyValue('--ui-scale')
+		root.style.setProperty('--ui-scale', String(scale))
+		return () => {
+			if (before) root.style.setProperty('--ui-scale', before)
+			else root.style.removeProperty('--ui-scale')
+		}
+	}, [scale])
+	return children
 }
 
 const meta = {
@@ -128,6 +142,19 @@ export const Editorial: Story = {
 			description: {
 				story:
 					'A single connected conversation shows only its bounded name and status. Empty chat has no setup or help block; the existing composer is the invitation to write.',
+			},
+		},
+	},
+}
+export const EditorialLargeUiScale: Story = {
+	name: 'Editorial at Large UI scale',
+	args: { scenario: 'editorial' },
+	decorators: [Story => <AtUiScale scale={1.08}>{Story()}</AtUiScale>],
+	parameters: {
+		docs: {
+			description: {
+				story:
+					'Settings → Appearance → Large (1.08) in the cockpit: the window follows it (§9 ruling 108). Text, line heights and the 680px reading measure scale by 1.08 (734px); padding, icons and hit targets stay in px. Reading zoom multiplies on top.',
 			},
 		},
 	},
@@ -231,6 +258,16 @@ export const PlainViewing: Story = {
 				story:
 					'A `helm open` window: the file read-only, with no conversation, comments or saved state. Selecting text only copies it; ⌘= / ⌘- / ⌘0 zoom the reading area. Document options keeps Read, Source and Changes.',
 			},
+		},
+	},
+}
+export const PlainViewingLargeUiScale: Story = {
+	name: 'Plain viewing at Large UI scale',
+	args: { scenario: 'plain' },
+	decorators: [Story => <AtUiScale scale={1.08}>{Story()}</AtUiScale>],
+	parameters: {
+		docs: {
+			description: { story: 'A `helm open` window follows the cockpit UI scale too (§9 ruling 108).' },
 		},
 	},
 }

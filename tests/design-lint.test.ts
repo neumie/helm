@@ -73,7 +73,8 @@ const BASELINE_CAPS: Record<(typeof lint.RULES)[number], number> = {
 	// 36: §9 ruling 94 adds the Review light scope's --neutral and its recomputed --neutral-soft (2026-11-13).
 	// 29: §9 ruling 96 removed Remote's seven surface-token overrides (2026-11-13).
 	// 25: S2 generates the Remote offline page's :root, a token source now.
-	'token-definition': 25,
+	// 23: §9 ruling 108 rules the reading zoom's --ui-scale re-binding in Document Review and the viewer (2026-11-17).
+	'token-definition': 23,
 	// 5 / 7 / 7: S2 put every z-index and motion literal a token holds on that token; the rest is D19.
 	'raw-z-index': 5,
 	'raw-duration': 7,
@@ -204,6 +205,20 @@ test('raw-color: literals, names and fallbacks; tokens, keywords, masks and toke
 		),
 		['.remote-workspace, .remote-login, .remote-empty | --pane: #111 | token-definition'],
 	)
+	// §9 ruling 108: only the reading zoom re-binds --ui-scale, to the cockpit scale times the zoom, and only in
+	// the Document Review reading area and the viewer stage.
+	const zoom = '--ui-scale: calc(var(--review-ui-scale) * var(--review-zoom, 1))'
+	const scaled = (text: string, file: string) =>
+		lint
+			.lintCss(file, text, { coreTokens: new Set([...CORE, '--ui-scale']) })
+			.map(f => `${f.selector} | ${f.property}: ${f.value} | ${f.rule}`)
+	const review = 'app/src/renderer/document-review/document-review.css'
+	assert.deepEqual(scaled(`.review-reading { ${zoom} }`, review), [])
+	assert.deepEqual(scaled(`.viewer-stage { ${zoom} }`, 'app/src/renderer/viewer/viewer.css'), [])
+	assert.deepEqual(scaled(`.review-header { ${zoom} }`, review), [`.review-header | ${zoom} | token-definition`])
+	assert.deepEqual(scaled('.review-reading { --ui-scale: 1.2 }', review), [
+		'.review-reading | --ui-scale: 1.2 | token-definition',
+	])
 })
 
 test('raw-z-index, raw-duration and raw-easing; var() and the reduced-motion clamp pass', () => {

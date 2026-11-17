@@ -13,6 +13,7 @@
 
 import type { ThemeListEntry } from '../shared'
 import { DEFAULT_THEME_ID, THEME_PRESETS } from '../theme-presets'
+import { uiScaleOrDefault } from '../ui-scale'
 
 // --- terminal font size (cmd+= / cmd+- / cmd+0) -------------------------------
 
@@ -42,7 +43,7 @@ export const UI_SCALES = [
 export type UiScale = (typeof UI_SCALES)[number]['value']
 
 function normalizeUiScale(raw: unknown): UiScale {
-	return UI_SCALES.find(s => s.value === raw)?.value ?? 1
+	return uiScaleOrDefault(raw)
 }
 
 // --- state ---------------------------------------------------------------------
@@ -225,6 +226,8 @@ class AppearanceStore {
 	private appliedKeys = new Set<string>()
 	/** macOS Increase Contrast, read through `prefers-contrast: more`. */
 	private prefersContrast = false
+	/** The UI scale last told to main, which relays it to the document windows (§9 ruling 108). */
+	private reportedUiScale: UiScale | null = null
 
 	constructor() {
 		let raw: unknown = null
@@ -372,6 +375,17 @@ class AppearanceStore {
 		for (const [key, value] of Object.entries(tokens)) root.style.setProperty(key, value)
 		this.appliedKeys = new Set(Object.keys(tokens))
 		root.style.setProperty('--ui-scale', String(this.state.uiScale))
+		this.reportUiScale()
+	}
+
+	/** Document Review and the file viewer follow the cockpit's UI scale; they run in their own in-memory session,
+	 *  so main relays it (§9 ruling 108). Only the cockpit's preload offers the call; other windows skip it. */
+	private reportUiScale(): void {
+		if (this.state.uiScale === this.reportedUiScale) return
+		const report = typeof window !== 'undefined' ? window.helm?.appearance?.setUiScale : undefined
+		if (typeof report !== 'function') return
+		this.reportedUiScale = this.state.uiScale
+		report(this.state.uiScale)
 	}
 }
 

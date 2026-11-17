@@ -12,15 +12,15 @@ import { type AllowlistEntry, parseBaseline } from './lint.ts'
 export const DESIGN_LINT_BASELINE = String.raw`
 ## raw-color
 ### app/src/renderer/remote/remote.css
-.remote-composer-actions .menu-panel | box-shadow | 0 16px 44px rgb(0 0 0 / 48%) | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
-.remote-composer-actions .remote-send.btn-primary | background | #fff | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
-.remote-composer-actions .remote-send.btn-primary | color | #0d0d0d | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
-.remote-navigation-dismiss | background | rgb(0 0 0 / 58%) | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
-.remote-navigation-menu | box-shadow | 20px 0 60px rgb(0 0 0 / 48%) | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
-.remote-row-menu | box-shadow | 0 8px 24px rgb(0 0 0 / 35%) | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
-.remote-sheet | box-shadow | 0 20px 60px rgb(0 0 0 / 55%) | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
-.remote-sheet-dismiss | background | rgb(0 0 0 / 58%) | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
-@media (hover: hover) .remote-composer-actions .remote-send.btn-primary:hover:not(:disabled), .remote-composer-actions .remote-send.btn-primary[data-force-state="hover"]:not(:disabled) | background | rgb(255 255 255 / 88%) | D16 Remote values outside the palette (D7 A settled only the seven surface tokens)
+.remote-composer-actions .menu-panel | box-shadow | 0 16px 44px rgb(0 0 0 / 48%) | D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)
+.remote-composer-actions .remote-send.btn-primary | background | #fff | D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)
+.remote-composer-actions .remote-send.btn-primary | color | #0d0d0d | D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)
+.remote-navigation-dismiss | background | rgb(0 0 0 / 58%) | D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)
+.remote-navigation-menu | box-shadow | 20px 0 60px rgb(0 0 0 / 48%) | D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)
+.remote-row-menu | box-shadow | 0 8px 24px rgb(0 0 0 / 35%) | D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)
+.remote-sheet | box-shadow | 0 20px 60px rgb(0 0 0 / 55%) | D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)
+.remote-sheet-dismiss | background | rgb(0 0 0 / 58%) | D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)
+@media (hover: hover) .remote-composer-actions .remote-send.btn-primary:hover:not(:disabled), .remote-composer-actions .remote-send.btn-primary[data-force-state="hover"]:not(:disabled) | background | rgb(255 255 255 / 88%) | D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)
 
 ## token-definition
 ### app/src/renderer/document-review/document-review.css
@@ -47,9 +47,6 @@ export const DESIGN_LINT_BASELINE = String.raw`
 .document-review[data-review-theme="light"] | --warn | #8a5a0a | §2.8 Review light scope (§9 ruling 10)
 .document-review[data-review-theme="light"] | --warn-soft | color-mix(in srgb, var(--warn) 15%, transparent) | §2.8 Review light scope (§9 ruling 10)
 .document-review[data-review-theme="light"] | --well | #ebeae6 | §2.8 Review light scope (§9 ruling 10)
-.review-reading | --ui-scale | calc(var(--review-ui-scale) * var(--review-zoom, 1)) | D7 surface reach (Review keeps its own text scale)
-### app/src/renderer/viewer/viewer.css
-.viewer-stage | --ui-scale | calc(var(--review-ui-scale) * var(--review-zoom, 1)) | D7 surface reach (Review keeps its own text scale)
 
 ## raw-z-index
 ### app/src/renderer/remote/remote.css

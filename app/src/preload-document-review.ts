@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { ReviewApi, ReviewResult } from './document-review/types'
+import type { ReviewApi, ReviewAppearanceApi, ReviewResult } from './document-review/types'
 const token = ipcRenderer.sendSync('document-review:bootstrap') as string | null
 function invoke<T>(channel: string, ...args: unknown[]): Promise<ReviewResult<T>> {
 	if (!token) return Promise.resolve({ error: 'This document review is no longer available. Reopen it in Helm.' })
@@ -43,3 +43,13 @@ const api: ReviewApi = {
 	close: () => ipcRenderer.send('document-review:close', token),
 }
 contextBridge.exposeInMainWorld('documentReview', api)
+// The cockpit's UI scale (§9 ruling 108): read once for the first paint, then followed. Display only.
+const appearance: ReviewAppearanceApi = {
+	uiScale: () => ipcRenderer.sendSync('document-review:ui-scale') as unknown,
+	onUiScale: listener => {
+		const handler = (_event: unknown, scale: unknown) => listener(scale)
+		ipcRenderer.on('document-review:ui-scale', handler)
+		return () => ipcRenderer.removeListener('document-review:ui-scale', handler)
+	},
+}
+contextBridge.exposeInMainWorld('documentReviewAppearance', appearance)

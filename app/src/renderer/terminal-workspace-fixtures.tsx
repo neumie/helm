@@ -476,7 +476,7 @@ export function createTerminalWorkspaceFixture(
 		},
 		buffers,
 		external: { open: async () => true },
-		appearance: { listThemes: async () => [], onFontStep: () => noOpUnsubscribe },
+		appearance: { listThemes: async () => [], onFontStep: () => noOpUnsubscribe, setUiScale: () => {} },
 		terminalPreferences: {
 			get: async () => preferences,
 			update: async update => {

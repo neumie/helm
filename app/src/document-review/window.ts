@@ -26,6 +26,7 @@ import { WINDOW_BACKGROUNDS } from '../design-tokens.generated'
 import { parseExternalHttpUrl } from '../external-url'
 import { sendToLiveRenderer } from '../renderer-lifecycle'
 import type { SessionRegistry } from '../sessions'
+import { type UiScaleValue, uiScaleOrDefault } from '../ui-scale'
 import { requireReviewAccess } from './access'
 import { type ActivitySources, ReviewActivityWatcher } from './activity-watcher'
 import { appendReviewArtifact, parseReviewArtifact } from './canvas-artifact'
@@ -180,6 +181,8 @@ export class DocumentReviewWindows {
 	private suspending = false
 	/** True only while requestCloseAll closes containers, so their close handlers know it is the quit. */
 	private quitClosing = false
+	/** The cockpit's Settings → Appearance UI scale, which every document view follows (§9 ruling 108). */
+	private uiScale: UiScaleValue = 1
 	constructor(private readonly deps: ReviewWindowDependencies) {
 		this.activity = new ReviewActivityWatcher(
 			() => this.sessions.entries(),
@@ -351,6 +354,12 @@ export class DocumentReviewWindows {
 		ipcMain.on('document-review:bootstrap', event => {
 			const state = this.windows.get(event.sender.id)
 			event.returnValue = this.optional(event, state?.token)?.token ?? null
+		})
+		// Display only: the view reads the scale before its first paint, then follows `document-review:ui-scale`.
+		ipcMain.on('document-review:ui-scale', event => {
+			const state = this.windows.get(event.sender.id)
+			event.returnValue =
+				state && state.contents === event.sender && event.senderFrame === state.contents.mainFrame ? this.uiScale : 1
 		})
 		ipcMain.handle('document-review:open', async (event, token: unknown, itemId?: unknown, name?: unknown) => {
 			const win = this.deps.mainWindow()
@@ -1036,6 +1045,18 @@ export class DocumentReviewWindows {
 		for (const state of this.windows.values())
 			if (open(state) && state.contents.isDevToolsFocused()) return { contents: state.contents }
 		return null
+	}
+	/**
+	 * The cockpit's UI scale changed (or the cockpit loaded): every open document view follows it, whatever its
+	 * profile, since appearance is shared across profiles. An unknown value means Default.
+	 */
+	setUiScale(raw: unknown): void {
+		const next = uiScaleOrDefault(raw)
+		if (next === this.uiScale) return
+		this.uiScale = next
+		for (const state of this.windows.values())
+			if (!state.closed && !state.contents.isDestroyed())
+				sendToLiveRenderer(state.contents, 'document-review:ui-scale', next)
 	}
 	/** Viewer zoom for ⌘= / ⌘- / ⌘0 in a document view; the renderer scales its own reading surface. */
 	zoom(contents: WebContents, step: -1 | 0 | 1): void {

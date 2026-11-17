@@ -2923,6 +2923,15 @@ ipcMain.handle('themes:list', () => {
 	return listThemes(dir, THEME_PRESETS)
 })
 
+// UI scale reach (§9 ruling 108): the cockpit reports its Settings → Appearance scale, and Document Review and the
+// file viewer follow it. They run in their own in-memory session, so the cockpit's localStorage never reaches them.
+ipcMain.on('appearance:ui-scale', (event, scale: unknown) => {
+	const win = mainWindow
+	if (!win || win.isDestroyed() || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame)
+		return
+	documentReviewWindows.setUiScale(scale)
+})
+
 helmBridge.registerIpc()
 runContextWindows.registerIpc()
 documentReviewWindows.registerIpc()

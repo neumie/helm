@@ -4,16 +4,21 @@
 // helm test convention.
 
 import assert from 'node:assert/strict'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join, sep } from 'node:path'
 import test from 'node:test'
 import appearanceModule from '../app/src/renderer/appearance.ts'
 import themePresetsModule from '../app/src/theme-presets.ts'
+import uiScaleModule from '../app/src/ui-scale.ts'
 
 type AppearanceModule = typeof import('../app/src/renderer/appearance.ts')
 type ThemePresetsModule = typeof import('../app/src/theme-presets.ts')
+type UiScaleModule = typeof import('../app/src/ui-scale.ts')
 const {
 	TERM_FONT_DEFAULT,
 	TERM_FONT_MAX,
 	TERM_FONT_MIN,
+	UI_SCALES,
 	accentFillHover,
 	clampTermFont,
 	effectiveAppearance,
@@ -23,6 +28,7 @@ const {
 	termThemeFromTokens,
 } = appearanceModule as AppearanceModule
 const { THEME_PRESETS, DEFAULT_THEME_ID } = themePresetsModule as ThemePresetsModule
+const { UI_SCALE_VALUES, uiScaleOrDefault } = uiScaleModule as UiScaleModule
 
 test('terminal font size clamps to 9..24 and steps by 1', () => {
 	assert.equal(clampTermFont(4), TERM_FONT_MIN)
@@ -52,6 +58,16 @@ test('normalizeAppearance survives garbage and clamps persisted values', () => {
 	assert.equal(cleaned.uiScale, 1) // off-scale value falls back to Default
 	// a non-token key poisons the map → dropped wholesale (never applied to :root)
 	assert.deepEqual(cleaned.overrides, {})
+})
+
+test('the UI scales the cockpit offers are the ones main relays to document windows (§9 ruling 108)', () => {
+	assert.deepEqual(
+		UI_SCALES.map(scale => scale.value),
+		[...UI_SCALE_VALUES],
+	)
+	assert.equal(uiScaleOrDefault(1.08), 1.08)
+	assert.equal(uiScaleOrDefault('1.08'), 1)
+	assert.equal(uiScaleOrDefault(undefined), 1)
 })
 
 test('resolveTokens layers theme over the Helm base and overrides over both', () => {
@@ -149,4 +165,27 @@ test('a lighter accent hover the old Appearance well stored becomes the darker d
 	assert.deepEqual(normalizeAppearance({ overrides: hand }).overrides, hand)
 	const hoverOnly = { '--accent-fill-hover': 'color-mix(in srgb, #3b82f6 78%, white)' }
 	assert.deepEqual(normalizeAppearance({ overrides: hoverOnly }).overrides, hoverOnly)
+})
+
+test('theme tokens apply in the cockpit and Run Context only; document windows and Remote never run them (§9 ruling 107)', () => {
+	const rendererDir = 'app/src/renderer'
+	const sources = (readdirSync(rendererDir, { recursive: true }) as string[])
+		.filter(file => /\.tsx?$/.test(file) && !/\.stories\.tsx?$/.test(file) && !file.startsWith('proposals/'))
+		.map(file => ({ file: file.split(sep).join('/'), text: readFileSync(join(rendererDir, file), 'utf8') }))
+	assert.deepEqual(
+		sources
+			.filter(source => /\bappearance\.init\(\)/.test(source.text))
+			.map(source => source.file)
+			.sort(),
+		['renderer.ts', 'run-context-editor.tsx'],
+	)
+	const windowCode = sources.filter(source =>
+		/^(document-review\/|viewer\/|remote\/|document-review\.tsx$)/.test(source.file),
+	)
+	assert.ok(windowCode.length > 20, 'the document window and Remote sources are scanned')
+	const importsAppearance = windowCode.filter(source => /from '(?:\.\.?\/)+(?:\.\.\/)*appearance'/.test(source.text))
+	assert.deepEqual(
+		importsAppearance.map(source => source.file),
+		[],
+	)
 })

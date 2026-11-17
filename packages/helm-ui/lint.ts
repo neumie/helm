@@ -150,6 +150,27 @@ export const TOKEN_SOURCES: readonly { file: string; selector: string }[] = [
 ]
 
 /**
+ * §9 ruling 108: Document Review and the file viewer follow the cockpit's UI scale, and their reading zoom
+ * (⌘= / ⌘- / ⌘0) multiplies on top, so the reading area and the viewer stage re-bind `--ui-scale` to exactly this
+ * product. Any other re-binding of `--ui-scale` is still a `token-definition` finding.
+ */
+export const READING_ZOOM_SCALE = {
+	value: 'calc(var(--review-ui-scale) * var(--review-zoom, 1))',
+	blocks: [
+		{ file: 'app/src/renderer/document-review/document-review.css', selector: '.review-reading' },
+		{ file: 'app/src/renderer/viewer/viewer.css', selector: '.viewer-stage' },
+	],
+} as const
+
+function isReadingZoomScale(property: string, value: string, ctx: DeclarationContext): boolean {
+	return (
+		property === '--ui-scale' &&
+		value.trim() === READING_ZOOM_SCALE.value &&
+		READING_ZOOM_SCALE.blocks.some(block => block.file === ctx.file && block.selector === ctx.selector)
+	)
+}
+
+/**
  * Documented scoped palettes (the ones `packages/helm-ui/contrast-pairs.ts` measures). A custom property they
  * define that is not a core token is a scoped token and may hold a literal; a core token they redefine is
  * reported as `token-definition` (allowlisted under the decision that keeps the palette).
@@ -692,8 +713,9 @@ export function lintDeclaration(property: string, value: string, ctx: Declaratio
 	if (property.startsWith('--')) {
 		if (ctx.tokenSource) {
 			// The token source itself.
-		} else if (ctx.coreTokens.has(property)) rules.add('token-definition')
-		else if (!ctx.scopedPalette && hasRawColor(nodes, property)) rules.add('raw-color')
+		} else if (ctx.coreTokens.has(property)) {
+			if (!isReadingZoomScale(property, value, ctx)) rules.add('token-definition')
+		} else if (!ctx.scopedPalette && hasRawColor(nodes, property)) rules.add('raw-color')
 	} else if (!prop.startsWith('mask') && !prop.startsWith('-webkit-mask') && hasRawColor(nodes, prop)) {
 		// Mask images use only the alpha channel: their colour stops are not paint.
 		rules.add('raw-color')
@@ -2004,10 +2026,11 @@ export function defaultReason(f: FindingKey): string {
 	switch (f.rule) {
 		case 'raw-color':
 			return isRemote(f.file)
-				? 'D16 Remote values outside the palette (D7 A settled only the seven surface tokens)'
+				? 'D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)'
 				: 'S2 gives the literal a token (§9 ruling 9)'
 		case 'token-definition':
-			if (f.property === '--ui-scale') return 'D7 surface reach (Review keeps its own text scale)'
+			if (f.property === '--ui-scale')
+				return '§9 ruling 108 (only the reading zoom re-binds --ui-scale, to the cockpit scale times the zoom): needs a fix'
 			if (isReview(f.file)) return '§2.8 Review light scope (§9 ruling 10)'
 			if (isRemote(f.file)) return '§9 ruling 96 (Remote re-binds no app token): needs a fix'
 			return 'S2 token pipeline (core tokens are defined in their source only)'

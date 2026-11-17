@@ -255,6 +255,42 @@ test('access is the view’s own sender: a sibling, a forged sender or a stray v
 	}
 })
 
+test('every open view follows the cockpit UI scale; a stray sender reads Default (§9 ruling 108)', async () => {
+	const f = await fixture()
+	try {
+		const a = await f.edit(await f.file('a.md'))
+		const [p] = await f.plain(await f.file('p.txt', 'plain\n'))
+		const read = (sender: unknown, frame?: unknown) => {
+			const event: { sender: unknown; senderFrame: unknown; returnValue?: unknown } = {
+				sender,
+				senderFrame: frame ?? (sender as FixtureContents).mainFrame,
+			}
+			ipcEvents.emit('document-review:ui-scale', event)
+			return event.returnValue
+		}
+		const scaleSent = (state: ViewInternals) =>
+			f.contents(state).sent.filter(channel => channel === 'document-review:ui-scale').length
+		assert.equal(read(f.contents(a)), 1, 'Default until the cockpit reports')
+		f.manager.setUiScale(1.08)
+		assert.equal(read(f.contents(a)), 1.08)
+		assert.equal(read(f.contents(p)), 1.08, 'a plain viewer follows it too')
+		assert.equal(scaleSent(a), 1)
+		assert.equal(scaleSent(p), 1)
+		// Unchanged: nothing is sent again.
+		f.manager.setUiScale(1.08)
+		assert.equal(scaleSent(a), 1)
+		// A stray sender and a view's own id with another frame read Default.
+		assert.equal(read(new FixtureView().webContents), 1)
+		assert.equal(read(f.contents(a), f.contents(p).mainFrame), 1)
+		// An off-scale value is Default.
+		f.manager.setUiScale(3)
+		assert.equal(read(f.contents(a)), 1)
+		assert.equal(scaleSent(a), 2)
+	} finally {
+		await f.close()
+	}
+})
+
 test('document-review:close and ⌘W close one view; its window’s other view stays open and is shown', async () => {
 	const f = await fixture()
 	try {

@@ -308,6 +308,7 @@ const api: HelmApi = {
 	appearance: {
 		listThemes: () => ipcRenderer.invoke('themes:list') as Promise<ThemeListEntry[]>,
 		onFontStep: listener => subscribe('font:step', listener),
+		setUiScale: scale => ipcRenderer.send('appearance:ui-scale', scale),
 	},
 	daemon: {
 		subscribe: () => ipcRenderer.invoke('daemon:subscribe') as Promise<HelmSnapshot>,

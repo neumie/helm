@@ -392,6 +392,8 @@ export interface AppearanceApi {
 	listThemes(): Promise<ThemeListEntry[]>
 	/** View menu Bigger/Smaller/Reset text (cmd+= / cmd+- / cmd+0): +1 / -1 / 0. */
 	onFontStep(listener: (step: number) => void): () => void
+	/** Settings → Appearance UI scale, relayed by main to Document Review and the file viewer (§9 ruling 108). */
+	setUiScale(scale: number): void
 }
 
 /** helm://item/<id> deep links (main's open-url handler) land here. */
