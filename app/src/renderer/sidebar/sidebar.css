@@ -1796,6 +1796,8 @@ button.banner {
 	justify-content: space-between;
 	gap: 12px;
 	min-height: 48px;
+	/* A fieldset: clear the browser's default 2px groove before drawing the one rule between rows. */
+	border: 0;
 	border-top: 1px solid var(--hairline);
 }
 .shortcut-row:first-of-type {

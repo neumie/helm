@@ -12,6 +12,34 @@ test('terminal settings show the selected folder and reset new terminals to Home
 	await expect(page.getByRole('button', { name: 'Use Home folder' })).toHaveCount(0)
 })
 
+test('shortcut rows draw only the hairline between rows, never the fieldset groove', async ({ page }) => {
+	await page.goto('/iframe.html?id=views-sidebar--terminal-settings&viewMode=story')
+	await expect(page.getByRole('group', { name: 'New terminal' })).toBeVisible()
+	const rows = await page.locator('fieldset.shortcut-row').evaluateAll(fieldsets =>
+		fieldsets.map(fieldset => {
+			const style = getComputedStyle(fieldset)
+			return {
+				first: fieldset === fieldset.parentElement?.querySelector('fieldset.shortcut-row'),
+				top: style.borderTopWidth,
+				right: style.borderRightWidth,
+				bottom: style.borderBottomWidth,
+				left: style.borderLeftWidth,
+				topStyle: style.borderTopStyle,
+			}
+		}),
+	)
+	expect(rows.length).toBeGreaterThan(1)
+	for (const row of rows) {
+		expect({ right: row.right, bottom: row.bottom, left: row.left }).toEqual({
+			right: '0px',
+			bottom: '0px',
+			left: '0px',
+		})
+		expect(row.top).toBe(row.first ? '0px' : '1px')
+		if (!row.first) expect(row.topStyle).toBe('solid')
+	}
+})
+
 test('terminal keyboard preferences toggle, disable, and reset through the production page', async ({ page }) => {
 	await page.goto('/iframe.html?id=views-sidebar--terminal-settings&viewMode=story')
 	const optionAsMeta = page.getByRole('switch', { name: 'Option acts as Meta' })
