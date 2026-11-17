@@ -9,6 +9,8 @@ import { createRemoteAssets, startRemoteDevelopment } from '../src/remote/develo
 
 const { THEME_PRESETS } = themePresetsModule as typeof import('../app/src/theme-presets.ts')
 const HELM_TOKENS = THEME_PRESETS.helm?.tokens ?? {}
+/** The UI family as the generated app :root defines it (tokens.css). */
+const FONT_UI = /--font-ui: ([^;]+);/.exec(readFileSync(resolve('app/src/renderer/tokens.css'), 'utf8'))?.[1]
 
 const assetsPath = resolve('app/remote-dist')
 test('PWA assets have exact routes, restrictive headers and credential-free launch metadata', async t => {
@@ -77,8 +79,15 @@ test('Remote launch colours and the offline page copy the app palette (§9 rulin
 	const declared = Object.fromEntries(
 		offline.split(';').map(declaration => declaration.split(':').map(part => part.trim()) as [string, string]),
 	)
-	assert.deepEqual(Object.keys(declared).sort(), ['--accent', '--pane', '--text-0', '--text-1'])
-	for (const [token, value] of Object.entries(declared)) assert.equal(value, HELM_TOKENS[token], token)
+	assert.deepEqual(Object.keys(declared).sort(), ['--accent', '--font-ui', '--pane', '--text-0', '--text-1'])
+	for (const [token, value] of Object.entries(declared))
+		assert.equal(value, token === '--font-ui' ? FONT_UI : HELM_TOKENS[token], token)
+	// Its type and spacing are Remote's own steps (§9 ruling 117): reading 16, heading 21 at 600, padding 32 24.
+	assert.match(
+		worker,
+		/body\{margin:0;padding:32px 24px;[^}]*font:16px\/1\.6 var\(--font-ui\);letter-spacing:-0\.01em\}/,
+	)
+	assert.match(worker, /h1\{font-size:21px;font-weight:600;line-height:1\.3\}/)
 	// Remote re-binds none of the app surface tokens (only its own bubble grey).
 	const css = readFileSync(resolve('app/src/renderer/remote/remote.css'), 'utf8')
 	for (const token of [

@@ -10,18 +10,6 @@
 import { type AllowlistEntry, parseBaseline } from './lint.ts'
 
 export const DESIGN_LINT_BASELINE = String.raw`
-## raw-color
-### app/src/renderer/remote/remote.css
-.remote-composer-actions .menu-panel | box-shadow | 0 16px 44px rgb(0 0 0 / 48%) | D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)
-.remote-composer-actions .remote-send.btn-primary | background | #fff | D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)
-.remote-composer-actions .remote-send.btn-primary | color | #0d0d0d | D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)
-.remote-navigation-dismiss | background | rgb(0 0 0 / 58%) | D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)
-.remote-navigation-menu | box-shadow | 20px 0 60px rgb(0 0 0 / 48%) | D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)
-.remote-row-menu | box-shadow | 0 8px 24px rgb(0 0 0 / 35%) | D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)
-.remote-sheet | box-shadow | 0 20px 60px rgb(0 0 0 / 55%) | D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)
-.remote-sheet-dismiss | background | rgb(0 0 0 / 58%) | D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)
-@media (hover: hover) .remote-composer-actions .remote-send.btn-primary:hover:not(:disabled), .remote-composer-actions .remote-send.btn-primary[data-force-state="hover"]:not(:disabled) | background | rgb(255 255 255 / 88%) | D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)
-
 ## token-definition
 ### app/src/renderer/document-review/document-review.css
 .document-review[data-review-theme="light"] | --accent | #176ac1 | §2.8 Review light scope (§9 ruling 10; value §9 ruling 94)
@@ -92,8 +80,6 @@ export const DESIGN_LINT_BASELINE = String.raw`
 .viewer-pdf-paper | border-radius | 2px | D17 off-scale values the scale picks did not settle (radii under 4px)
 
 ## spacing-off-scale
-### app/assets/remote/remote-sw.js
-body | padding | 48px 24px | D16 Remote offline page type and spacing (served by remote-sw.js; cannot load tokens.css)
 ### app/src/renderer/agent-dock/agent-dock.css
 .agent-dock-agents-bar | gap | 2px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
 .agent-dock-md :is(ul, ol) | padding-left | 18px | D17 off-scale values the scale picks did not settle (2px steps and component dimensions)
@@ -163,9 +149,6 @@ body | padding | 48px 24px | D16 Remote offline page type and spacing (served by
 .vg-pr | padding | 0 14px | §9 ruling 88 widget buttons are the §3.1 md button (0 14 as .btn; the 14 itself is D17, a component dimension the scale picks did not settle)
 
 ## font-size-off-scale
-### app/assets/remote/remote-sw.js
-body | font | 16px/1.6 -apple-system,BlinkMacSystemFont,sans-serif | D16 Remote offline page type and spacing (served by remote-sw.js; cannot load tokens.css)
-h1 | font-size | 24px | D16 Remote offline page type and spacing (served by remote-sw.js; cannot load tokens.css)
 ### app/src/renderer/agent-dock/agent-dock.css
 .agent-dock-message-mark | font-size | calc(9px * var(--ui-scale)) | D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)
 ### app/src/renderer/background-terminals.css

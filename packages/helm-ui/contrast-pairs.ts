@@ -49,6 +49,11 @@ const REMOTE = {
 	'--remote-bubble': '#2f2f2f',
 }
 
+/** `remote.css` `.remote-compose-surface::before`: the writing capsule Send sits on (§3.23, §9 ruling 114). */
+const REMOTE_COMPOSER = {
+	'composer capsule': 'color-mix(in srgb, var(--chrome) 68%, transparent)',
+}
+
 /** `app/src/renderer/document-review/document-review.css`: the scoped light reading palette (generated there). */
 const REVIEW_LIGHT = REVIEW_LIGHT_TOKENS
 
@@ -118,7 +123,7 @@ const BASE_PALETTES = {
 	},
 	remote: {
 		label: 'Remote',
-		scopes: [{ ...presetTokens('helm'), ...ROOT_DERIVED }, REMOTE],
+		scopes: [{ ...presetTokens('helm'), ...ROOT_DERIVED }, REMOTE, REMOTE_COMPOSER],
 	},
 	'review-light': {
 		label: 'Review light',
@@ -243,6 +248,30 @@ export const SOURCES: readonly SourceCheck[] = [
 	...declarations('helm', DOCK_CSS, '.agent-dock {', DOCK),
 	...declarations('helm', SIGNALS_CSS, '.signals {', DOCK),
 	...declarations('remote', REMOTE_CSS, '.remote-workspace, .remote-login, .remote-empty {', REMOTE),
+	{
+		palette: 'remote',
+		file: REMOTE_CSS,
+		block: '.remote-compose-surface::before {',
+		property: 'background',
+		key: 'composer capsule',
+	},
+	// Send (§9 ruling 114): a --text-0 circle with a --pane arrow.
+	{
+		palette: 'remote',
+		file: REMOTE_CSS,
+		block: '.remote-composer-actions .remote-send.btn-primary {',
+		property: 'background',
+		key: '--text-0',
+		expect: 'var(--text-0)',
+	},
+	{
+		palette: 'remote',
+		file: REMOTE_CSS,
+		block: '.remote-composer-actions .remote-send.btn-primary {',
+		property: 'color',
+		key: '--pane',
+		expect: 'var(--pane)',
+	},
 	...declarations('review-light', REVIEW_CSS, '.document-review[data-review-theme="light"] {', REVIEW_LIGHT),
 	...declarations('viewer-dark', VIEWER_CSS, '.viewer-window {', VIEWER_SYNTAX),
 	...declarations('review-light', VIEWER_CSS, '.viewer-window[data-review-theme="light"] {', VIEWER_SYNTAX_LIGHT),
@@ -342,6 +371,7 @@ const CHROME_HOVER = ['--chrome', '--fill-subtle']
 const TERMINAL = ['--term-bg']
 const BAND = ['--chrome', 'group band']
 const BUBBLE = ['--remote-bubble']
+const CAPSULE = ['--pane', 'composer capsule']
 const POPUP_INPUT = ['--pane', '--fill-subtle']
 
 const row = (palette: PaletteId, fg: string, bg: readonly string[], use: Use, ratio: number): ContrastRow => ({
@@ -585,6 +615,9 @@ export const ROWS: readonly ContrastRow[] = [
 	row('remote', '--accent', PANE, 'ui', 6.41),
 	row('remote', '--text-2', CHROME_HOVER, 'text', 3.96),
 	row('remote', '--warn', ['--pane', '--warn-soft'], 'text', 7),
+	// Send (§9 ruling 114): its arrow on the fill, and the fill against the capsule it sits on.
+	row('remote', '--pane', ['--text-0'], 'ui', 15.48),
+	row('remote', '--text-0', CAPSULE, 'ui', 14.8),
 	// review light
 	row('review-light', '--text-0', PANE, 'text', 14.23),
 	row('review-light', '--text-1', PANE, 'text', 5.63),

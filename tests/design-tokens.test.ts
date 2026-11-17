@@ -66,6 +66,7 @@ const RULED_SINCE_S2: Record<string, Record<string, string>> = {
 	'high-contrast': { '--thumb': 'rgba(255, 255, 255, 0.36)', '--thumb-hover': 'rgba(255, 255, 255, 0.5)' },
 }
 const WIDGET_NAMES: Record<string, string> = { '--vg-red': '--danger', '--vg-gray': '--neutral' }
+const OFFLINE_FONT = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif'
 
 function ruled(snapshot: typeof SNAPSHOT): typeof SNAPSHOT {
 	const helm = RULED_SINCE_S2.helm ?? {}
@@ -94,6 +95,8 @@ function ruled(snapshot: typeof SNAPSHOT): typeof SNAPSHOT {
 		presetEarlierValues,
 		extensionHost: patch(snapshot.extensionHost, WIDGET_NAMES),
 		popupRoot: patch(snapshot.popupRoot),
+		// §9 ruling 117: the offline page's :root also carries the UI family its type steps are set in.
+		remote: { ...snapshot.remote, offlineRoot: [...snapshot.remote.offlineRoot, ['--font-ui', OFFLINE_FONT]] },
 	}
 }
 const BEFORE = ruled(SNAPSHOT)

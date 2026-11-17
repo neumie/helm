@@ -301,6 +301,8 @@ export const SURFACE_FONT_SIZE_PX: readonly { dir: string; px: readonly number[]
 	// Helm Remote (§9 ruling 101): 16 is the phone reading step (messages, titles, navigation, sheet, and the
 	// iOS no-zoom form text of §9 ruling 58); Markdown h3 takes the Document Review heading step 21.
 	{ dir: REMOTE_DIR, px: [16, 21] },
+	// The Remote PWA's offline page takes the same two steps: reading 16, heading 21 (§9 ruling 117).
+	{ dir: 'app/assets/remote/', px: [16, 21] },
 ]
 
 const TIMING_KEYWORDS = new Set(['ease', 'ease-in', 'ease-out', 'ease-in-out', 'linear', 'step-start', 'step-end'])
@@ -2037,7 +2039,7 @@ export function defaultReason(f: FindingKey): string {
 	switch (f.rule) {
 		case 'raw-color':
 			return isRemote(f.file)
-				? 'D16 Remote values outside the palette (§9 ruling 96 settled only the seven surface tokens)'
+				? '§9 rulings 96 and 114-116 (Remote paints with the app tokens): needs a fix'
 				: 'S2 gives the literal a token (§9 ruling 9)'
 		case 'token-definition':
 			if (f.property === '--ui-scale')

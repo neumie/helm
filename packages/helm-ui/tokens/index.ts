@@ -138,8 +138,11 @@ export const POPUP_ROOT: readonly string[] = [
 	'--font-ui',
 ]
 
-/** The Remote PWA's offline page `:root` (`app/assets/remote/remote-sw.js`; it cannot load tokens.css, §9 ruling 96). */
-export const REMOTE_OFFLINE_ROOT: readonly string[] = ['--pane', '--text-0', '--text-1', '--accent']
+/**
+ * The Remote PWA's offline page `:root` (`app/assets/remote/remote-sw.js`; it cannot load tokens.css): the colours of
+ * §9 ruling 96 and the UI family its Remote type steps are set in (§9 ruling 117).
+ */
+export const REMOTE_OFFLINE_ROOT: readonly string[] = ['--pane', '--text-0', '--text-1', '--accent', '--font-ui']
 
 /** Storybook's canvas backgrounds (`app/.storybook/backgrounds.generated.ts`): the §2.1 ladder; Pane is the default. */
 export const STORYBOOK_BACKGROUNDS: readonly { id: string; name: string; token: ThemeToken }[] = [

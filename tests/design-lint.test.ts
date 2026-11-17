@@ -69,7 +69,8 @@ test('every baseline reason names an existing open decision, ruling or plan stag
 const BASELINE_CAPS: Record<(typeof lint.RULES)[number], number> = {
 	// 10: §9 ruling 103 moved the extension popup onto Helm tokens (2026-11-13).
 	// 9: S2 gave the PDF paper white its token, --paper.
-	'raw-color': 9,
+	// 0: §9 rulings 114-116 put Remote's Send, shadows and scrims on tokens (2026-11-17).
+	'raw-color': 0,
 	// 36: §9 ruling 94 adds the Review light scope's --neutral and its recomputed --neutral-soft (2026-11-13).
 	// 29: §9 ruling 96 removed Remote's seven surface-token overrides (2026-11-13).
 	// 25: S2 generates the Remote offline page's :root, a token source now.
@@ -81,9 +82,10 @@ const BASELINE_CAPS: Record<(typeof lint.RULES)[number], number> = {
 	'raw-easing': 7,
 	// 8 / 58 / 20: §9 rulings 15, 98, 100 and 101 (D8 picks) fixed or ruled the rest (2026-11-13).
 	// 7 / 55 / 19: §9 ruling 103 put the extension popup on the scale (2026-11-13).
+	// 54 / 17: §9 ruling 117 put the Remote offline page on Remote's type steps and the spacing scale (2026-11-17).
 	'radius-off-scale': 7,
-	'spacing-off-scale': 55,
-	'font-size-off-scale': 19,
+	'spacing-off-scale': 54,
+	'font-size-off-scale': 17,
 	'font-size-unscaled': 0,
 	uppercase: 0,
 	// 0 / 0: §9 rulings 99 and 102 (D8 picks, 2026-11-13).
@@ -700,9 +702,23 @@ test('the scan covers production modules outside the scan roots and the Remote o
 	assert.ok(outside.length > 0, 'renderer entries import modules outside the scan roots')
 	for (const file of outside) assert.ok(sources.includes(`ts ${file}`), `${file} is scanned`)
 	for (const { file } of lint.EMBEDDED_HTML) assert.ok(sources.includes(`embedded-html ${file}`), `${file} is scanned`)
+	// The offline page is on Remote's steps and the spacing scale (§9 ruling 117), so it has no finding left; the
+	// same page with its old 48px padding back is still reported.
+	const worker = read('app/assets/remote/remote-sw.js')
+	assert.ok(worker.includes('padding:32px 24px'), 'the offline page padding is 32px 24px')
+	const offline = lint.embeddedConstant(
+		'remote-sw.js',
+		worker.replace('padding:32px 24px', 'padding:48px 24px'),
+		'OFFLINE',
+	)
 	assert.ok(
-		findings.some(f => f.file === 'app/assets/remote/remote-sw.js' && f.rule === 'spacing-off-scale'),
+		lint.lintHtml('app/assets/remote/remote-sw.js', offline.text).some(f => f.rule === 'spacing-off-scale'),
 		'the offline page HTML is linted',
+	)
+	assert.deepEqual(
+		findings.filter(f => f.file === 'app/assets/remote/remote-sw.js'),
+		[],
+		'the offline page HTML has no finding',
 	)
 	assert.throws(() => lint.embeddedConstant('x.js', 'const A = 1', 'OFFLINE'), /not found/)
 })
@@ -738,4 +754,24 @@ test('baseline format: parse/format round trip, multiset matching, reasons kept 
 	)
 	assert.throws(() => lint.parseBaseline('## not-a-rule'))
 	assert.throws(() => lint.formatBaseline([{ ...f('a | b'), reason: 'D8' }]))
+})
+
+test("Remote's Send, floating shadows and scrims are the app tokens (§9 rulings 114-116)", () => {
+	const declared = new Map<string, string>()
+	for (const d of lint.parseCss(read('app/src/renderer/remote/remote.css')))
+		declared.set(`${d.selector} | ${d.property}`, d.value)
+	const send = '.remote-composer-actions .remote-send.btn-primary'
+	const expected: Record<string, string> = {
+		[`${send} | background`]: 'var(--text-0)',
+		[`${send} | color`]: 'var(--pane)',
+		[`@media (hover: hover) ${send}:hover:not(:disabled), ${send}[data-force-state="hover"]:not(:disabled) | background`]:
+			'color-mix(in srgb, var(--text-0) 88%, transparent)',
+		'.remote-composer-actions .menu-panel | box-shadow': 'var(--shadow-1)',
+		'.remote-row-menu | box-shadow': 'var(--shadow-1)',
+		'.remote-sheet | box-shadow': 'var(--shadow-2)',
+		'.remote-navigation-menu | box-shadow': 'var(--shadow-2)',
+		'.remote-sheet-dismiss | background': 'var(--scrim)',
+		'.remote-navigation-dismiss | background': 'var(--scrim)',
+	}
+	for (const [key, value] of Object.entries(expected)) assert.equal(declared.get(key), value, key)
 })

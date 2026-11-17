@@ -803,18 +803,19 @@ body.remote-page {
 	border-radius: 999px;
 }
 /*
- * Send is white rather than the app accent: on this surface it is the one committed
- * action, and the accent is already spoken for by the tab bar and links. With nothing
- * to send the shared quiet tone leaves it a dim grey circle, which is the whole signal.
+ * Send is the brightest text tone rather than the app accent: on this surface it is the
+ * one committed action, and the accent is already spoken for by the tab bar and links.
+ * Its arrow takes the page colour (§9 ruling 114). With nothing to send the shared quiet
+ * tone leaves it a dim grey circle, which is the whole signal.
  */
 .remote-composer-actions .remote-send.btn-primary {
-	background: #fff;
-	color: #0d0d0d;
+	background: var(--text-0);
+	color: var(--pane);
 }
 @media (hover: hover) {
 	.remote-composer-actions .remote-send.btn-primary:hover:not(:disabled),
 	.remote-composer-actions .remote-send.btn-primary[data-force-state="hover"]:not(:disabled) {
-		background: rgb(255 255 255 / 88%);
+		background: color-mix(in srgb, var(--text-0) 88%, transparent);
 	}
 }
 .remote-composer-actions .remote-mode-trigger {
@@ -852,7 +853,7 @@ body.remote-page {
 	padding: 6px;
 	border-color: var(--hairline-strong);
 	border-radius: var(--radius-float);
-	box-shadow: 0 16px 44px rgb(0 0 0 / 48%);
+	box-shadow: var(--shadow-1);
 	transform-origin: bottom right;
 	animation: remote-popover-in var(--motion-state) var(--ease-out) both;
 }
@@ -1348,7 +1349,7 @@ body.remote-page {
 	appearance: none;
 	border: 0;
 	padding: 0;
-	background: rgb(0 0 0 / 58%);
+	background: var(--scrim);
 	-webkit-backdrop-filter: blur(3px);
 	backdrop-filter: blur(3px);
 	cursor: pointer;
@@ -1364,7 +1365,7 @@ body.remote-page {
 	box-sizing: border-box;
 	padding: env(safe-area-inset-top, 0px) 8px max(12px, env(safe-area-inset-bottom, 0px));
 	background: var(--chrome);
-	box-shadow: 20px 0 60px rgb(0 0 0 / 48%);
+	box-shadow: var(--shadow-2);
 	animation: remote-navigation-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 @keyframes remote-scrim-in {
@@ -1557,7 +1558,7 @@ body.remote-page {
 	border: 1px solid var(--hairline);
 	border-radius: var(--radius-md, 6px);
 	background: var(--pane);
-	box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+	box-shadow: var(--shadow-1);
 	transform-origin: top center;
 	animation: remote-popover-in var(--motion-state) var(--ease-out) both;
 }
@@ -1609,7 +1610,7 @@ body.remote-page {
 	appearance: none;
 	border: 0;
 	padding: 0;
-	background: rgb(0 0 0 / 58%);
+	background: var(--scrim);
 	-webkit-backdrop-filter: blur(3px);
 	backdrop-filter: blur(3px);
 	cursor: pointer;
@@ -1626,7 +1627,7 @@ body.remote-page {
 	border: 1px solid var(--hairline-strong);
 	border-radius: var(--radius-float);
 	background: var(--chrome, var(--pane));
-	box-shadow: 0 20px 60px rgb(0 0 0 / 55%);
+	box-shadow: var(--shadow-2);
 	overflow: hidden;
 	transform-origin: bottom center;
 	animation: remote-sheet-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
