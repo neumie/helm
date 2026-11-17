@@ -468,11 +468,14 @@
 @media (hover: hover) {
 	.item-row:hover,
 	.item-row[data-force-state="hover"] {
+		/* A filled row steps its faint text up one rung (§9 ruling 109). */
+		--text-2: var(--text-1);
 		background: var(--fill-subtle);
 	}
 }
 .item-row:active,
 .item-row[data-force-state="active"] {
+	--text-2: var(--text-1);
 	background: var(--fill-raised);
 }
 
@@ -1554,7 +1557,8 @@ button.banner {
 	transition: border-color var(--motion-state) var(--ease-out);
 }
 .input::placeholder {
-	color: var(--text-2);
+	/* On the field's fill --text-2 is under 4.5:1 (§9 ruling 109). */
+	color: var(--text-1);
 }
 @media (hover: hover) {
 	.input:hover,

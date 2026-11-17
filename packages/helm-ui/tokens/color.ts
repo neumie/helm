@@ -27,8 +27,8 @@ export const HELM_TOKENS = {
 	'--on-accent': '#ffffff',
 	'--success': '#4ec98a',
 	'--warn': '#e0b341',
-	'--danger': '#f2585b',
-	'--neutral': '#8a8f98',
+	'--danger': '#f46e70',
+	'--neutral': '#969ba3',
 	// User-selectable terminal group palette (§3.18)
 	'--group-blue': '#4c9aff',
 	'--group-purple': '#c08ae0',
@@ -61,7 +61,7 @@ export const HELM_TOKENS = {
 	'--ansi-magenta': '#c08ae0',
 	'--ansi-cyan': '#54c6d6',
 	'--ansi-white': '#c9ccd1',
-	'--ansi-bright-black': '#5b6068',
+	'--ansi-bright-black': '#767c86',
 	'--ansi-bright-red': '#ff7477',
 	'--ansi-bright-green': '#6fe0a8',
 	'--ansi-bright-yellow': '#f2cd6d',
@@ -104,8 +104,8 @@ const HIGH_CONTRAST_OVERRIDES: Partial<Record<ThemeToken, string>> = {
 	'--group-orange': '#f0a35a',
 	'--group-green': '#5fe3a1',
 	'--group-cyan': '#6ee2f0',
-	'--thumb': 'rgba(255, 255, 255, 0.28)',
-	'--thumb-hover': 'rgba(255, 255, 255, 0.44)',
+	'--thumb': 'rgba(255, 255, 255, 0.36)',
+	'--thumb-hover': 'rgba(255, 255, 255, 0.5)',
 	'--term-scroll-thumb': 'rgba(255, 255, 255, 0.35)',
 	'--term-scroll-thumb-hover': 'rgba(255, 255, 255, 0.5)',
 	'--scrim': 'rgba(0, 0, 0, 0.55)',
@@ -157,17 +157,22 @@ export const PRESET_EARLIER_VALUES: Record<
 	keyof typeof THEME_PRESETS,
 	Partial<Record<ThemeToken, readonly string[]>>
 > = {
-	// Before D5 (§9 rulings 89, 90, 92; 0b4934b 2026-11-13).
+	// Before D5 (§9 rulings 89, 90, 92; 0b4934b 2026-11-13) and before D15 (§9 rulings 110–112, 2026-11-17).
 	helm: {
 		'--text-2': ['#62666e'],
 		'--accent-fill': ['#3b82f6'],
 		'--accent-fill-hover': ['#5a9dff'],
+		'--danger': ['#f2585b'],
+		'--neutral': ['#8a8f98'],
+		'--ansi-bright-black': ['#5b6068'],
 	},
 	'high-contrast': {
 		'--hairline': ['rgba(255, 255, 255, 0.16)'],
 		'--hairline-strong': ['rgba(255, 255, 255, 0.32)'],
 		'--accent-fill': ['#3574de'],
 		'--accent-fill-hover': ['#5093f5'],
+		'--thumb': ['rgba(255, 255, 255, 0.28)'],
+		'--thumb-hover': ['rgba(255, 255, 255, 0.44)'],
 	},
 }
 

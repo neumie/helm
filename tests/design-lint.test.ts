@@ -219,6 +219,15 @@ test('raw-color: literals, names and fallbacks; tokens, keywords, masks and toke
 	assert.deepEqual(scaled('.review-reading { --ui-scale: 1.2 }', review), [
 		'.review-reading | --ui-scale: 1.2 | token-definition',
 	])
+	// §9 rulings 109 and 113: a filled row (or a tab in a group band) steps --text-2 up one rung, never anywhere else.
+	assert.deepEqual(
+		css('.item-row:hover { --text-2: var(--text-1) } .tab-group-section .tab:hover { --text-2: var(--text-0) }'),
+		[],
+	)
+	assert.deepEqual(css('.item-row:hover { --text-2: var(--accent) } .x { --text-2: #fff }'), [
+		'.item-row:hover | --text-2: var(--accent) | token-definition',
+		'.x | --text-2: #fff | token-definition',
+	])
 })
 
 test('raw-z-index, raw-duration and raw-easing; var() and the reduced-motion clamp pass', () => {

@@ -171,6 +171,17 @@ function isReadingZoomScale(property: string, value: string, ctx: DeclarationCon
 }
 
 /**
+ * §9 rulings 109 and 113: a row with a fill (and a terminal tab in a group's colour band) steps its faint text up one
+ * rung, so `--text-2` may be re-bound to `--text-1` or `--text-0` there. Any other re-binding of `--text-2` is still a
+ * `token-definition` finding.
+ */
+export const META_STEP_UP = { property: '--text-2', values: ['var(--text-1)', 'var(--text-0)'] } as const
+
+function isMetaStepUp(property: string, value: string): boolean {
+	return property === META_STEP_UP.property && (META_STEP_UP.values as readonly string[]).includes(value.trim())
+}
+
+/**
  * Documented scoped palettes (the ones `packages/helm-ui/contrast-pairs.ts` measures). A custom property they
  * define that is not a core token is a scoped token and may hold a literal; a core token they redefine is
  * reported as `token-definition` (allowlisted under the decision that keeps the palette).
@@ -714,7 +725,7 @@ export function lintDeclaration(property: string, value: string, ctx: Declaratio
 		if (ctx.tokenSource) {
 			// The token source itself.
 		} else if (ctx.coreTokens.has(property)) {
-			if (!isReadingZoomScale(property, value, ctx)) rules.add('token-definition')
+			if (!isReadingZoomScale(property, value, ctx) && !isMetaStepUp(property, value)) rules.add('token-definition')
 		} else if (!ctx.scopedPalette && hasRawColor(nodes, property)) rules.add('raw-color')
 	} else if (!prop.startsWith('mask') && !prop.startsWith('-webkit-mask') && hasRawColor(nodes, prop)) {
 		// Mask images use only the alpha channel: their colour stops are not paint.

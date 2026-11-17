@@ -68,7 +68,8 @@
 	border: 0;
 	border-radius: 0;
 	background: transparent;
-	color: color-mix(in srgb, var(--group-color) 55%, var(--text-1));
+	/* Text in the band sits one rung up the ladder (§9 ruling 113). */
+	color: color-mix(in srgb, var(--group-color) 55%, var(--text-0));
 	font-family: inherit;
 	cursor: pointer;
 	transition: background-color var(--motion-state) var(--ease-out), color var(--motion-state) var(--ease-out);
@@ -107,7 +108,7 @@
 	min-width: 28px;
 	height: 28px;
 	padding: 0 8px;
-	color: color-mix(in srgb, var(--group-color) 55%, var(--text-2));
+	color: color-mix(in srgb, var(--group-color) 40%, var(--text-1));
 	font-family: var(--font-mono);
 	font-size: calc(11px * var(--ui-scale));
 	font-weight: 500;
@@ -118,7 +119,7 @@
 }
 
 .tab-group-toggle:hover {
-	color: var(--group-color);
+	color: var(--text-0);
 }
 
 .tab-group-section.collapsed > .tab-group-toggle:hover {
@@ -247,18 +248,24 @@ body.group-dragging .tab-group-toggle {
 }
 
 .tab:hover {
+	/* A filled tab steps its faint text (the ⌘N digit) up one rung (§9 ruling 109). */
+	--text-2: var(--text-1);
 	background: var(--fill-subtle);
 	color: var(--text-1);
 }
 
 .tab.active {
+	--text-2: var(--text-1);
 	background: var(--fill-raised);
 	color: var(--text-0);
 }
 
+/* In a group's band the tab text and its ⌘N digit sit one rung up (§9 ruling 113). */
 .tab-group-section .tab {
+	--text-2: var(--text-1);
 	border-radius: 0;
 	background: transparent;
+	color: var(--text-1);
 }
 
 .tab-group-section > .tab-group-toggle:first-child {
@@ -274,11 +281,13 @@ body.group-dragging .tab-group-toggle {
 }
 
 .tab-group-section .tab:hover {
+	--text-2: var(--text-0);
 	background: color-mix(in srgb, var(--group-color) 22%, transparent);
-	color: var(--text-1);
+	color: var(--text-0);
 }
 
 .tab-group-section .tab.active {
+	--text-2: var(--text-0);
 	background: color-mix(in srgb, var(--group-color) 30%, transparent);
 	color: var(--text-0);
 }
@@ -457,7 +466,7 @@ body.group-dragging .tab-group-toggle {
 }
 
 .tab-rename::placeholder {
-	color: var(--text-2);
+	color: var(--text-1);
 }
 
 .tab-close {

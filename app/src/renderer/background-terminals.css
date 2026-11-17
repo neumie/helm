@@ -204,6 +204,8 @@
 
 .bg-row:hover,
 .bg-row.active {
+	/* A filled row steps its faint text up one rung (§9 ruling 109). */
+	--text-2: var(--text-1);
 	background: var(--fill-subtle);
 }
 

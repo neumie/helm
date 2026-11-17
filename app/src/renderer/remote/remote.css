@@ -205,10 +205,13 @@ body.remote-page {
 }
 @media (hover: hover) {
 	.remote-session-entry:hover {
+		/* A filled row steps its faint text up one rung (§9 ruling 109). */
+		--text-2: var(--text-1);
 		background: var(--fill-subtle);
 	}
 }
 .remote-session-entry:has(.remote-session-row[aria-current="page"]) {
+	--text-2: var(--text-1);
 	background: var(--fill-raised);
 }
 .remote-session-entry .remote-session-row {

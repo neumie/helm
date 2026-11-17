@@ -34,9 +34,9 @@ export const WIDGET_STYLES = `
 		--vg-on-accent: #ffffff;
 		--vg-green: #4ec98a;
 		--vg-amber: #e0b341;
-		--vg-red: #f2585b;
+		--vg-red: #f46e70;
 		--vg-blue: #4c9aff;
-		--vg-gray: #8a8f98;
+		--vg-gray: #969ba3;
 		--vg-accent-soft: color-mix(in srgb, var(--vg-accent) 15%, transparent);
 		--vg-green-soft: color-mix(in srgb, var(--vg-green) 15%, transparent);
 		--vg-amber-soft: color-mix(in srgb, var(--vg-amber) 15%, transparent);

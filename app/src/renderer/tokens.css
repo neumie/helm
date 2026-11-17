@@ -21,8 +21,8 @@
 	--on-accent: #ffffff;
 	--success: #4ec98a;
 	--warn: #e0b341;
-	--danger: #f2585b;
-	--neutral: #8a8f98;
+	--danger: #f46e70;
+	--neutral: #969ba3;
 	--group-blue: #4c9aff;
 	--group-purple: #c08ae0;
 	--group-pink: #e477b5;
@@ -50,7 +50,7 @@
 	--ansi-magenta: #c08ae0;
 	--ansi-cyan: #54c6d6;
 	--ansi-white: #c9ccd1;
-	--ansi-bright-black: #5b6068;
+	--ansi-bright-black: #767c86;
 	--ansi-bright-red: #ff7477;
 	--ansi-bright-green: #6fe0a8;
 	--ansi-bright-yellow: #f2cd6d;

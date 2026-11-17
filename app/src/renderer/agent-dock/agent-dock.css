@@ -224,6 +224,9 @@
 .agent-dock-entry:hover,
 .agent-dock-more:hover,
 .agent-dock-agents-entry:hover {
+	/* A filled entry steps its dim text up one rung (§9 ruling 109). */
+	--text-2: var(--text-1);
+	--dock-dim: var(--text-1);
 	background: var(--fill-subtle);
 }
 
@@ -231,6 +234,8 @@
 .agent-dock-entry[data-open="true"],
 .agent-dock-more[data-open="true"],
 .agent-dock-agents-entry[data-open="true"] {
+	--text-2: var(--text-1);
+	--dock-dim: var(--text-1);
 	background: var(--fill-raised);
 }
 
@@ -239,6 +244,8 @@
 .agent-dock-entry:focus,
 .agent-dock-more:focus,
 .agent-dock-agents-entry:focus {
+	--text-2: var(--text-1);
+	--dock-dim: var(--text-1);
 	outline: none;
 	background: var(--fill-raised);
 }

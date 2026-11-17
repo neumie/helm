@@ -178,7 +178,8 @@
 }
 .viewer-code .cm-editor .cm-panel .cm-textfield::placeholder,
 .viewer-search-field::placeholder {
-	color: var(--text-2);
+	/* On the field's fill --text-2 is under 4.5:1 (§9 ruling 109). */
+	color: var(--text-1);
 }
 .viewer-code .cm-editor .cm-panel .cm-textfield:hover,
 .viewer-search-field:hover {

@@ -2,7 +2,8 @@
 // token value is written; `npm run tokens:write` copies it into every surface. This test holds:
 // - every generated copy is byte-fresh (change values in the source, then run the generator);
 // - the values every surface resolves equal the snapshot taken before S2 (tests/fixtures/design-tokens-before-s2.json),
-//   so the move changed no pixel; S2 only added tokens, listed below with the literals they replaced;
+//   so the move changed no pixel; S2 only added tokens, listed below with the literals they replaced; the values a
+//   ruling changed since are listed below too (RULED_SINCE_S2);
 // - every var(--x) a production source uses is defined somewhere;
 // - a theme file can set only the theme token names.
 // App modules load as CommonJS under tsx (default-import pattern); packages/helm-ui is an ES module (named imports).
@@ -42,7 +43,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8')
 
 type Pairs = [string, string][]
-const BEFORE = JSON.parse(read('tests/fixtures/design-tokens-before-s2.json')) as {
+const SNAPSHOT = JSON.parse(read('tests/fixtures/design-tokens-before-s2.json')) as {
 	root: Pairs
 	presets: Record<string, { name: string; tokens: Record<string, string> }>
 	presetEarlierValues: Record<string, Record<string, string[]>>
@@ -54,6 +55,48 @@ const BEFORE = JSON.parse(read('tests/fixtures/design-tokens-before-s2.json')) a
 	selectChevronStroke: string
 	reviewLight: Pairs
 }
+
+/**
+ * Preset values a ruling changed after S2 (the D15 picks: ruling 110 the High contrast thumb, 111 the Helm bright
+ * black, 112 the Helm danger and neutral tones). The snapshot plus these changes is what every copy must hold; each
+ * replaced value is also a preset's earlier value, and the extension copies follow under their own names.
+ */
+const RULED_SINCE_S2: Record<string, Record<string, string>> = {
+	helm: { '--danger': '#f46e70', '--neutral': '#969ba3', '--ansi-bright-black': '#767c86' },
+	'high-contrast': { '--thumb': 'rgba(255, 255, 255, 0.36)', '--thumb-hover': 'rgba(255, 255, 255, 0.5)' },
+}
+const WIDGET_NAMES: Record<string, string> = { '--vg-red': '--danger', '--vg-gray': '--neutral' }
+
+function ruled(snapshot: typeof SNAPSHOT): typeof SNAPSHOT {
+	const helm = RULED_SINCE_S2.helm ?? {}
+	const patch = (pairs: Pairs, names: Record<string, string> = {}): Pairs =>
+		pairs.map(([name, value]) => [name, helm[names[name] ?? name] ?? value])
+	const presets = Object.fromEntries(
+		Object.entries(snapshot.presets).map(([id, preset]) => [
+			id,
+			{ ...preset, tokens: { ...preset.tokens, ...(RULED_SINCE_S2[id] ?? {}) } },
+		]),
+	)
+	const presetEarlierValues = Object.fromEntries(
+		Object.entries(snapshot.presetEarlierValues).map(([id, earlier]) => {
+			const next = { ...earlier }
+			for (const name of Object.keys(RULED_SINCE_S2[id] ?? {})) {
+				const before = snapshot.presets[id]?.tokens[name]
+				if (before !== undefined) next[name] = [...(next[name] ?? []), before]
+			}
+			return [id, next]
+		}),
+	)
+	return {
+		...snapshot,
+		root: patch(snapshot.root),
+		presets,
+		presetEarlierValues,
+		extensionHost: patch(snapshot.extensionHost, WIDGET_NAMES),
+		popupRoot: patch(snapshot.popupRoot),
+	}
+}
+const BEFORE = ruled(SNAPSHOT)
 
 /** Font stacks were written with single quotes in places before S2; the generator writes double quotes. */
 const same = (value: string) => value.replace(/'/g, '"')

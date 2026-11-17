@@ -378,10 +378,15 @@
 }
 
 .signals-tr:hover {
+	/* A filled row steps its dim text up one rung (§9 ruling 109). */
+	--text-2: var(--text-1);
+	--dock-dim: var(--text-1);
 	background: var(--fill-subtle);
 }
 
 .signals-tr[data-selected="true"] {
+	--text-2: var(--text-1);
+	--dock-dim: var(--text-1);
 	background: var(--fill-raised);
 }
 
