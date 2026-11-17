@@ -2075,7 +2075,7 @@ export function defaultReason(f: FindingKey): string {
 		case 'inline-svg':
 			return '§9 ruling 95 icon set (draw it in the icon module, or list a real exception in ICONS_OUTSIDE_MODULE)'
 		case 'primitive-outside-owner':
-			if (isRemote(f.file) || isReview(f.file)) return 'D7 surface reach (the surface restyles the shared primitive)'
+			if (isRemote(f.file) || isReview(f.file)) return 'D22 surface restyles of shared primitives'
 			return 'S7 primitive CSS outside its owner file (move it there when the surface is next touched)'
 		case 'button-border':
 			return '§9 ruling 4 (no border on any button): needs a pick or a fix'

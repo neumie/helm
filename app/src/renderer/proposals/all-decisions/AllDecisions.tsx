@@ -229,6 +229,11 @@ export function AllDecisions() {
 						Nepovedlo se načíst seznam stories (index.json). Obnov stránku.
 					</p>
 				) : null}
+				{DECISIONS.length === 0 ? (
+					<p className="decide-how">
+						Teď tu není nic k rozhodnutí. Otevřené otázky bez návrhu jsou v docs/plans/design-system/spec.md.
+					</p>
+				) : null}
 
 				{DECISIONS.map(group => (
 					<section key={group.decision} className="decide-group" id={anchorId(group.decision)}>
