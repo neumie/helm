@@ -46,6 +46,7 @@ import {
 } from './passage-threads'
 import { validateDocumentPassage } from './passage-validation'
 import { type LastSend, type SendActivity, deriveSendActivity } from './send-activity'
+import { useDocumentUiScale } from './ui-scale'
 import '../reading-width.css'
 import './document-review.css'
 
@@ -553,14 +554,16 @@ export function DocumentReview({ api }: { api: ArchiveReviewApi }) {
 			),
 		[api],
 	)
-	// Zoom reflows the reading area without resizing any observed box: anchored bubbles and margin markers listen
-	// for window resize, so tell them once per zoom change (after the new scale is laid out).
-	const zoomed = useRef(zoom)
+	// Zoom and the cockpit's UI scale (§9 ruling 108) reflow the reading area without resizing any observed box:
+	// anchored bubbles, margin markers and the code editor listen for window resize, so tell them once per change
+	// (after the new scale is laid out).
+	const uiScale = useDocumentUiScale()
+	const zoomed = useRef(zoom * uiScale)
 	useLayoutEffect(() => {
-		if (zoomed.current === zoom) return
-		zoomed.current = zoom
+		if (zoomed.current === zoom * uiScale) return
+		zoomed.current = zoom * uiScale
 		window.dispatchEvent(new Event('resize'))
-	}, [zoom])
+	}, [zoom, uiScale])
 
 	const changeDraft = useCallback(
 		(update: (value: ReviewDraft) => ReviewDraft) => {

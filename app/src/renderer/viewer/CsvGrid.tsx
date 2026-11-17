@@ -17,6 +17,7 @@ import {
 	useState,
 } from 'react'
 import { Btn } from '../button'
+import { useDocumentUiScale } from '../document-review/ui-scale'
 import type { CsvClient } from './csv-client'
 import { type CellRange, MATCH_LIMIT, alignRight, columnName, rangeRef } from './csv-model'
 
@@ -125,7 +126,8 @@ export function CsvGrid({
 	const statusRef = useRef(onStatus)
 	statusRef.current = onStatus
 
-	const scale = gridScale(zoom, rows)
+	// Cells are sized here, not in CSS, so the grid applies the cockpit's UI scale itself (§9 ruling 108).
+	const scale = gridScale(zoom * useDocumentUiScale(), rows)
 	const rowH = Math.round(ROW_H * scale)
 	const headH = rowH
 	const fontSize = Math.round(12 * scale * 100) / 100

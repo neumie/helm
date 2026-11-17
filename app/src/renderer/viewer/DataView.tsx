@@ -13,6 +13,7 @@ import {
 } from 'react'
 import type { DataLanguage } from '../../../../src/document-review/formats'
 import { Btn } from '../button'
+import { useDocumentUiScale } from '../document-review/ui-scale'
 import { DataClient } from './data-client'
 import { CHILD_LIMIT, type DataRow, MATCH_LIMIT, ROW_LIMIT, ancestors } from './data-model'
 
@@ -122,16 +123,18 @@ export function DataTree({
 	const matchSet = useMemo(() => new Set(found.matches), [found.matches])
 	const current = found.matches[found.index] ?? null
 
+	// A row is 22px at the reading zoom times the cockpit's UI scale (§9 ruling 108).
+	const rowEstimate = Math.round(22 * zoom * useDocumentUiScale())
 	const virtual = useVirtualizer({
 		count: rows.length,
 		getScrollElement: () => scroller.current,
-		estimateSize: () => Math.round(22 * zoom),
+		estimateSize: () => rowEstimate,
 		overscan: 24,
 	})
-	// biome-ignore lint/correctness/useExhaustiveDependencies: zoom changes every row's height.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the scale changes every row's height.
 	useEffect(() => {
 		virtual.measure()
-	}, [zoom])
+	}, [rowEstimate])
 
 	useEffect(() => {
 		const row = rows[focusIndex]
@@ -301,7 +304,7 @@ export function DataTree({
 	const onTreeKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
 		const row = rows[focusIndex]
 		if (!row) return
-		const page = Math.max(1, Math.floor((scroller.current?.clientHeight ?? 400) / Math.round(22 * zoom)) - 1)
+		const page = Math.max(1, Math.floor((scroller.current?.clientHeight ?? 400) / rowEstimate) - 1)
 		const meta = event.metaKey || event.ctrlKey
 		if (meta && event.key.toLowerCase() === 'c' && !event.shiftKey && !event.altKey) {
 			const selection = window.getSelection()
