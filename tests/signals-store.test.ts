@@ -1535,7 +1535,7 @@ test('migration 41 keeps every thread, id and event, and ids continue after the 
 				.prepare('SELECT MAX(version) AS v FROM schema_version')
 				.get() as { v: number }
 			// 41 rebuilt the table, 42 added closed_by, 43 the mail sender, 44 widened source for slack.
-			assert.equal(versions.v, 44)
+			assert.equal(versions.v, 45)
 			assert.equal(db.signals.get(15)?.closedBy, null)
 			assert.equal(db.signals.threadSender(15), null)
 			const ask = db.signals.upsertAsk({ title: 'After the migration' }, at(4)).thread
@@ -1641,5 +1641,37 @@ test('one key is one agent thread: changing its kind renews it; the open cap cou
 			db.signals.upsertAsk({ kind: i % 2 === 0 ? 'answer' : 'ask', title: `Row ${i}` }, at(5))
 		assert.throws(() => db.signals.upsertAsk({ kind: 'answer', title: 'One more' }, at(6)), SignalLimitError)
 		assert.throws(() => db.signals.upsertAsk({ title: 'One more ask' }, at(6)), /asks and answers/)
+	})
+})
+
+test('an ask keeps its quick answers: cleaned, bounded, refreshed in place; an answer takes none', () => {
+	withDb(db => {
+		const created = db.signals.upsertAsk(
+			{ key: 'shorten', title: 'Zkrácení?', choices: [' Ano ', 'Ne', 'Ano', '‮Jo\u0007', 'x'.repeat(200)] },
+			T0,
+		)
+		const ask = created.thread
+		assert.deepEqual(ask.choices?.slice(0, 3), ['Ano', 'Ne', 'Jo'])
+		assert.equal(ask.choices?.length, 4, 'duplicates dropped')
+		assert.ok((ask.choices?.[3] ?? '').length <= 80)
+		assert.deepEqual(db.signals.get(ask.id)?.choices, ask.choices)
+
+		db.signals.markSeen(ask.id, at(1))
+		const updated = db.signals.upsertAsk({ key: 'shorten', title: 'Zkrácení?', choices: ['Ano', 'Ne'] }, at(2))
+		assert.equal(updated.outcome, 'updated', 'new choices refresh it in place')
+		assert.equal(updated.thread.state, 'seen')
+		assert.deepEqual(updated.thread.choices, ['Ano', 'Ne'])
+		assert.equal(
+			db.signals.upsertAsk({ key: 'shorten', title: 'Zkrácení?', choices: ['Ano', 'Ne'] }, at(3)).outcome,
+			'unchanged',
+		)
+
+		const many = db.signals.upsertAsk({ title: 'Many', choices: ['1', '2', '3', '4', '5', '6', '7', '8'] }, T0).thread
+		assert.equal(many.choices?.length, 6)
+		assert.deepEqual(db.signals.upsertAsk({ title: 'None' }, T0).thread.choices, [])
+		assert.throws(
+			() => db.signals.upsertAsk({ kind: 'answer', title: 'A', choices: ['Ok'] }, T0),
+			/An answer takes no reply, so no choices/,
+		)
 	})
 })

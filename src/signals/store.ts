@@ -167,6 +167,7 @@ interface ThreadRow {
 	routed_at: string | null
 	body: string | null
 	links: string
+	choices: string | null
 	ask_terminal: string | null
 	reply: string | null
 	reply_at: string | null
@@ -267,6 +268,30 @@ function cleanMultiline(value: unknown, max: number, maxLines: number): string |
 	return text === '' ? null : text
 }
 
+/** Stored quick answers JSON → one-line bounded strings; bad JSON reads as none. */
+function parseChoices(raw: string | null): string[] {
+	if (raw === null) return []
+	try {
+		const parsed: unknown = JSON.parse(raw)
+		if (!Array.isArray(parsed)) return []
+		return cleanChoices(parsed)
+	} catch {
+		return []
+	}
+}
+
+/** Quick answers as stored: each one clean line, deduplicated, at most `askChoices`. */
+function cleanChoices(values: readonly unknown[]): string[] {
+	const choices: string[] = []
+	for (const value of values) {
+		if (typeof value !== 'string') continue
+		const choice = clean(value, SIGNAL_LIMITS.askChoice)
+		if (choice !== '' && !choices.includes(choice)) choices.push(choice)
+		if (choices.length === SIGNAL_LIMITS.askChoices) break
+	}
+	return choices
+}
+
 /** Stored links JSON → the links that still pass the one link rule; bad JSON reads as none. */
 function parseLinks(raw: string | null): string[] {
 	if (raw === null) return []
@@ -290,6 +315,7 @@ interface CleanAsk {
 	title: string
 	body: string | null
 	links: string[]
+	choices: string[]
 	from: string
 	terminal: string | null
 }
@@ -313,6 +339,8 @@ function cleanAsk(input: SignalAsk): CleanAsk {
 		typeof input.terminal === 'string' && SIGNAL_TERMINAL_ID.test(input.terminal) ? input.terminal.toLowerCase() : null
 	// An answer expects nothing back, so it has no delivery target (and never closes from a terminal).
 	if (answer && terminal !== null) throw new SignalInvalidError('An answer takes no reply, so no terminal')
+	const choices = cleanChoices(Array.isArray(input.choices) ? input.choices : [])
+	if (answer && choices.length > 0) throw new SignalInvalidError('An answer takes no reply, so no choices')
 	return {
 		threadKey: `agent:${input.key ?? randomUUID()}`,
 		kind,
@@ -321,6 +349,7 @@ function cleanAsk(input: SignalAsk): CleanAsk {
 			? cleanMultiline(input.body, SIGNAL_LIMITS.answerBody, SIGNAL_LIMITS.answerBodyLines)
 			: cleanMultiline(input.body, SIGNAL_LIMITS.askBody, SIGNAL_LIMITS.askBodyLines),
 		links,
+		choices,
 		from: cleanOptional(input.from, SIGNAL_LIMITS.actor) ?? 'agent',
 		terminal,
 	}
@@ -444,6 +473,7 @@ export function toSignalThread(row: ThreadRow): SignalThread {
 		routedAt: row.routed_at,
 		body: row.body ?? null,
 		links: parseLinks(row.links ?? null),
+		choices: parseChoices(row.choices ?? null),
 		askTerminal: row.ask_terminal ?? null,
 		reply: row.reply ?? null,
 		replyAt: row.reply_at ?? null,
@@ -1057,6 +1087,7 @@ export class SignalStore {
 		const ask = cleanAsk(input)
 		const labels = askLabels(ask)
 		const links = JSON.stringify(ask.links)
+		const choices = JSON.stringify(ask.choices)
 		return this.transaction(() => {
 			const row = this.db.prepare('SELECT * FROM signal_threads WHERE thread_key = ?').get(ask.threadKey) as
 				| ThreadRow
@@ -1086,9 +1117,9 @@ export class SignalStore {
 						`INSERT INTO signal_threads (
 						   thread_key, source, kind, reasons, ref, full_ref, title, head, actor, url, repo, number, branch,
 						   state, owner, activity_key, last_activity_at, active, missed_polls,
-						   body, links, ask_terminal, created_at, updated_at
+						   body, links, choices, ask_terminal, created_at, updated_at
 						 ) VALUES (?, 'agent', ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL,
-						   'new', 'jakub', ?, ?, 1, 0, ?, ?, ?, ?, ?)`,
+						   'new', 'jakub', ?, ?, 1, 0, ?, ?, ?, ?, ?, ?)`,
 					)
 					.run(
 						ask.threadKey,
@@ -1103,6 +1134,7 @@ export class SignalStore {
 						at,
 						ask.body,
 						links,
+						choices,
 						ask.terminal,
 						at,
 						at,
@@ -1114,7 +1146,7 @@ export class SignalStore {
 				id = row.id
 				this.db
 					.prepare(
-						`UPDATE signal_threads SET kind = ?, reasons = ?, title = ?, head = ?, body = ?, links = ?, ref = ?,
+						`UPDATE signal_threads SET kind = ?, reasons = ?, title = ?, head = ?, body = ?, links = ?, choices = ?, ref = ?,
 						   full_ref = ?, actor = ?, ask_terminal = ?, activity_key = ?, last_activity_at = ?, state = 'new',
 						   snoozed_until = NULL, closed_reason = NULL, closed_by = NULL, reply = NULL, reply_at = NULL,
 						   routed_agent = NULL, routed_how = NULL, routed_at = NULL, updated_at = ?
@@ -1127,6 +1159,7 @@ export class SignalStore {
 						ask.title,
 						ask.body,
 						links,
+						choices,
 						labels.ref,
 						labels.full_ref,
 						labels.actor,
@@ -1140,6 +1173,7 @@ export class SignalStore {
 				outcome = 'renewed'
 			} else if (
 				row.links !== links ||
+				(row.choices ?? '[]') !== choices ||
 				row.ref !== labels.ref ||
 				row.full_ref !== labels.full_ref ||
 				row.actor !== labels.actor
@@ -1148,10 +1182,18 @@ export class SignalStore {
 				// No state change and no event; like a poll refresh, a done ask keeps its done time.
 				this.db
 					.prepare(
-						`UPDATE signal_threads SET links = ?, ref = ?, full_ref = ?, actor = ?, updated_at = ?
+						`UPDATE signal_threads SET links = ?, choices = ?, ref = ?, full_ref = ?, actor = ?, updated_at = ?
 						 WHERE id = ?`,
 					)
-					.run(links, labels.ref, labels.full_ref, labels.actor, row.state === 'done' ? row.updated_at : at, id)
+					.run(
+						links,
+						choices,
+						labels.ref,
+						labels.full_ref,
+						labels.actor,
+						row.state === 'done' ? row.updated_at : at,
+						id,
+					)
 				outcome = 'updated'
 			} else {
 				return { outcome: 'unchanged', thread: toSignalThread(row) }

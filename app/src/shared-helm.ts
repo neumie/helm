@@ -805,6 +805,8 @@ export interface SignalThread {
 	/** Agent asks and answers only (null/[] otherwise): body (line breaks kept), http(s) links, the asking Okena terminal (asks only). */
 	body: string | null
 	links: string[]
+	/** Agent asks only ([] otherwise): quick answers the agent offered; absent from daemons before them. */
+	choices?: string[]
 	askTerminal: string | null
 	/** Agent asks only: Jakub's answer, kept on the thread whether or not it was delivered. */
 	reply: string | null

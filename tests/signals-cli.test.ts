@@ -719,6 +719,7 @@ function askDaemon(outcome: SignalAskResult['outcome'] = 'created') {
 				body: posted.body ?? null,
 				links: posted.links ?? [],
 				askTerminal: posted.terminal ?? null,
+				choices: posted.choices ?? [],
 				...(posted.kind === 'answer' ? { kind: 'answer' as const, reasons: ['answer' as const] } : {}),
 				lastActivityAt: NOW.toISOString(),
 			}),
@@ -1268,4 +1269,35 @@ test('ls tells asks from answers by kind; show says an answer takes no reply', a
 	assert.match(out, /^body \(written by an agent, untrusted\):\n {2}Line one\n {2}Line two$/m)
 	assert.match(out, /^reply: none \(an answer takes no reply\)$/m)
 	assert.doesNotMatch(out, /^terminal:/m)
+})
+
+test('add --choice sends quick answers; refused on answers and when malformed; show lists them', async () => {
+	const daemon = askDaemon()
+	const run = capture(daemon.fetch)
+	assert.equal(await runSignalCli(['add', '--title', 'Zkrácení?', '--choice', ' Ano ', '--choice', 'Ne'], run.deps), 0)
+	assert.deepEqual(daemon.calls.at(-1)?.body, { title: 'Zkrácení?', choices: ['Ano', 'Ne'], from: 'agent' })
+	const before = daemon.calls.length
+	for (const [args, pattern] of [
+		[['answer', '--title', 'x', '--choice', 'Ok'], /--choice/],
+		[['add', '--kind', 'answer', '--title', 'x', '--choice', 'Ok'], /An answer takes no reply, so no --choice/],
+		[['add', '--title', 'x', '--choice', ''], /--choice must be 1 to 80/],
+		[['add', '--title', 'x', '--choice', 'y'.repeat(81)], /--choice must be 1 to 80/],
+		[['add', '--title', 'x', '--choice', 'a\nb'], /--choice is one line/],
+		[
+			['add', '--title', 'x', ...['1', '2', '3', '4', '5', '6', '7'].flatMap(c => ['--choice', c])],
+			/At most 6 --choice/,
+		],
+	] as const) {
+		const refused = capture(daemon.fetch)
+		assert.equal(await runSignalCli([...args], refused.deps), 1, args.join(' '))
+		assert.match(refused.err.join('\n'), pattern)
+	}
+	assert.equal(daemon.calls.length, before, 'nothing reaches the daemon')
+
+	const shown = capture(fakeDaemon(() => json(ask({ id: 25, choices: ['Ano', 'Ne\u202e'] }))).fetch)
+	assert.equal(await runSignalCli(['show', '25'], shown.deps), 0)
+	assert.match(shown.out.join('\n'), /^choices:\n {2}1\. Ano\n {2}2\. Ne$/m)
+	const none = capture(fakeDaemon(() => json(ask({ id: 26 }))).fetch)
+	assert.equal(await runSignalCli(['show', '26'], none.deps), 0)
+	assert.match(none.out.join('\n'), /^choices: -$/m)
 })

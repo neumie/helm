@@ -87,6 +87,9 @@ export const SIGNAL_LIMITS = {
 	askBodyLines: 12,
 	askLinks: 8,
 	askKey: 200,
+	/** An ask's quick answers (`--choice`): one-line each, sent as Jakub's reply when picked. */
+	askChoices: 6,
+	askChoice: 80,
 	/** An agent answer is read, not acted on: its body may be longer than an ask's (line breaks kept). */
 	answerBody: 4000,
 	answerBodyLines: 60,
@@ -215,6 +218,12 @@ export interface SignalThread {
 	body: string | null
 	/** Agent asks only ([] otherwise): http(s) links (Storybook stories, PRs), see `signalAskLinkUrl`. */
 	links: string[]
+	/**
+	 * Agent asks only ([] otherwise): quick answers the agent offered (`--choice`), one line each,
+	 * at most `askChoices`; picking one sends its text as Jakub's reply. Agent-written, untrusted.
+	 * Absent from a daemon older than this field.
+	 */
+	choices?: string[]
 	/** Agent asks only: the asking agent's Okena terminal id, where Jakub's reply is delivered. */
 	askTerminal: string | null
 	/** Agent asks only: Jakub's answer (kept on the thread whether or not it was delivered) and when. */
@@ -407,6 +416,18 @@ export const signalAskSchema = z
 			)
 			.max(SIGNAL_LIMITS.askLinks)
 			.optional(),
+		/** Quick answers (asks only): each one line, at most `askChoice` units, at most `askChoices`. */
+		choices: z
+			.array(
+				z
+					.string()
+					.trim()
+					.min(1)
+					.max(SIGNAL_LIMITS.askChoice)
+					.refine(choice => !/[\r\n\u2028\u2029]/.test(choice), 'A choice is one line'),
+			)
+			.max(SIGNAL_LIMITS.askChoices)
+			.optional(),
 		/** Who asks, shown as the row's label (default `agent`). */
 		from: z.string().trim().min(1).max(SIGNAL_LIMITS.actor).optional(),
 		/** The asking agent's `$OKENA_TERMINAL_ID` (asks only: an answer takes no reply). */
@@ -417,13 +438,15 @@ export const signalAskSchema = z
 		const answer = ask.kind === 'answer'
 		if (answer && ask.terminal !== undefined)
 			ctx.addIssue({ code: 'custom', path: ['terminal'], message: 'An answer takes no reply, so no terminal' })
+		if (answer && ask.choices !== undefined && ask.choices.length > 0)
+			ctx.addIssue({ code: 'custom', path: ['choices'], message: 'An answer takes no reply, so no choices' })
 		const max = answer ? SIGNAL_LIMITS.answerBody : SIGNAL_LIMITS.askBody
 		if (ask.body !== undefined && ask.body.length > max)
 			ctx.addIssue({ code: 'custom', path: ['body'], message: `The body must be at most ${max} characters` })
 	})
 export type SignalAsk = z.infer<typeof signalAskSchema>
 
-/** What an upsert did: a new thread, new again (title/body changed), refreshed in place, nothing. */
+/** What an upsert did: a new thread, new again (title/body changed), refreshed in place (links, choices, from), nothing. */
 export const SIGNAL_ASK_OUTCOMES = ['created', 'renewed', 'updated', 'unchanged'] as const
 export type SignalAskOutcome = (typeof SIGNAL_ASK_OUTCOMES)[number]
 

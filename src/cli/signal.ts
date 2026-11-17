@@ -71,7 +71,8 @@ Commands:
                      its body and links, an ask Jakub's reply
   add                Ask Jakub for something (a design pick, a yes/no, an
                      approval): --title, --body/--body-file, --link, --from,
-                     --key, --terminal; --kind answer files an answer instead
+                     --key, --terminal, --choice; --kind answer files an answer
+                     instead
   answer             Answer something Jakub asked you (= add --kind answer):
                      --title, --body/--body-file, --link, --from, --key
   done ID            Close a thread once handled (--note "outcome")
@@ -107,6 +108,9 @@ Asks and answers (add, answer):
                      (at most 64 KiB read; the same body limits apply)
   --link URL         An http(s) link Jakub opens from the row (Storybook story,
                      PR); repeat for several, at most 8
+  --choice TEXT      Asks only: a quick answer Jakub can pick ("Ano", "Ne",
+                     "Variant 2"); picking it sends its text as his reply.
+                     One line, at most 80 characters; repeat, at most 6
   --from NAME        Who asks, shown on the row. Default: this Okena terminal's
                      name when $OKENA_TERMINAL_ID is set, else "agent"
   --key KEY          Idempotency key: adding again with the same key updates
@@ -224,7 +228,7 @@ const VALUE_OPTIONS = new Set([
 	'--kind',
 ])
 /** Value options that may repeat; every other value option given twice is refused. */
-const MULTI_OPTIONS = new Set(['--link'])
+const MULTI_OPTIONS = new Set(['--link', '--choice'])
 const FLAG_OPTIONS = new Set(['--json', '--all', '--filtered', '--no-agent', '--help', '-h'])
 
 /** Options each command accepts (besides --url/--help). */
@@ -233,7 +237,18 @@ const COMMAND_OPTIONS: Record<string, ReadonlySet<string>> = {
 	show: new Set(['--json']),
 	set: new Set(['--json', '--state', '--owner', '--until', '--agent', '--no-agent']),
 	note: new Set(['--json']),
-	add: new Set(['--json', '--title', '--body', '--body-file', '--link', '--from', '--key', '--terminal', '--kind']),
+	add: new Set([
+		'--json',
+		'--title',
+		'--body',
+		'--body-file',
+		'--link',
+		'--from',
+		'--key',
+		'--terminal',
+		'--kind',
+		'--choice',
+	]),
 	answer: new Set(['--json', '--title', '--body', '--body-file', '--link', '--from', '--key']),
 	done: new Set(['--json', '--key', '--note']),
 	watch: new Set(['--after', '--owner']),
@@ -719,6 +734,10 @@ function showLines(thread: SignalThread, now: Date): string[] {
 		if (thread.kind === 'answer') {
 			lines.push('reply: none (an answer takes no reply)')
 		} else {
+			const choices = Array.isArray(thread.choices) ? thread.choices : []
+			if (choices.length > 0)
+				lines.push('choices:', ...choices.map((choice, i) => `  ${i + 1}. ${safe(choice, SIGNAL_LIMITS.askChoice)}`))
+			else lines.push('choices: -')
 			lines.push(`terminal: ${text(thread.askTerminal ?? null)}`)
 			if (thread.reply) {
 				lines.push("reply (Jakub's answer):", ...safeLines(thread.reply, '  '), `reply at: ${time(thread.replyAt)}`)
@@ -990,6 +1009,15 @@ export async function buildAskBody(parsed: ParsedArgs, deps: SignalCliDeps): Pro
 		if (signalAskLinkUrl(link) === null)
 			throw new UsageError(`--link must be an absolute http(s) URL without credentials: ${safe(link, 120)}`)
 	const key = keyOption(values)
+	const choices = (parsed.multi.get('--choice') ?? []).map(choice => choice.trim())
+	if (answer && choices.length > 0) throw new UsageError('An answer takes no reply, so no --choice (that is for asks)')
+	if (choices.length > SIGNAL_LIMITS.askChoices)
+		throw new UsageError(`At most ${SIGNAL_LIMITS.askChoices} --choice (got ${choices.length})`)
+	for (const choice of choices) {
+		if (/[\r\n\u2028\u2029]/.test(choice)) throw new UsageError('--choice is one line')
+		if (choice === '' || choice.length > SIGNAL_LIMITS.askChoice)
+			throw new UsageError(`--choice must be 1 to ${SIGNAL_LIMITS.askChoice} characters (got ${choice.length})`)
+	}
 	const terminalArg = values.get('--terminal')?.trim()
 	if (answer && terminalArg !== undefined)
 		throw new UsageError('An answer takes no reply, so no --terminal (that is for asks)')
@@ -1049,6 +1077,7 @@ export async function buildAskBody(parsed: ParsedArgs, deps: SignalCliDeps): Pro
 		title: title.trim(),
 		...(body ? { body } : {}),
 		...(links.length > 0 ? { links } : {}),
+		...(choices.length > 0 ? { choices } : {}),
 		from: from ?? 'agent',
 		...(terminal !== undefined ? { terminal } : {}),
 	})

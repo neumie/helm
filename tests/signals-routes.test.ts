@@ -766,6 +766,11 @@ test('agent ask routes validate their bodies and map errors', async () => {
 		await bad('/signals/asks', { title: 'T', body: 'x'.repeat(50_000) }, 413)
 		await bad('/signals/asks', { title: 'T', body: 'x'.repeat(4001), kind: 'answer' })
 		await bad('/signals/asks', { title: 'T', kind: 'reply' })
+		await bad('/signals/asks', { title: 'T', choices: ['two\nlines'] })
+		await bad('/signals/asks', { title: 'T', choices: ['x'.repeat(81)] })
+		await bad('/signals/asks', { title: 'T', choices: ['1', '2', '3', '4', '5', '6', '7'] })
+		await bad('/signals/asks', { title: 'T', choices: [' '] })
+		await bad('/signals/asks', { title: 'T', kind: 'answer', choices: ['Ok'] })
 		await bad('/signals/asks', { title: 'T', kind: 'answer', terminal: '01234567-89ab-4def-8123-456789abcdef' })
 		assert.equal(db.signals.list({ source: 'agent' }, NOW).length, 0, 'nothing was stored')
 
@@ -853,11 +858,13 @@ test('agent answers: filed through /asks with kind answer, a long body, closed o
 		assert.equal(created.thread.kind, 'answer')
 		assert.equal(created.thread.body, body)
 		assert.equal(created.thread.askTerminal, null)
-		const listed = await data<SignalsSnapshot>(await request('/signals?source=agent'))
-		assert.deepEqual(
-			listed.threads.map(thread => thread.kind),
-			['answer'],
+		assert.deepEqual(created.thread.choices, [])
+		const asked = await data<SignalAskResult>(
+			await post('/signals/asks', { title: 'Zkrácení?', choices: ['Ano', 'Ne'] }),
 		)
+		assert.deepEqual(asked.thread.choices, ['Ano', 'Ne'])
+		const listed = await data<SignalsSnapshot>(await request('/signals?source=agent'))
+		assert.deepEqual(listed.threads.map(thread => thread.kind).sort(), ['answer', 'ask'])
 		const read = await data<SignalThread>(
 			await post(`/signals/${created.thread.id}`, { state: 'done' }, { jakub: true }),
 		)

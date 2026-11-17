@@ -1291,4 +1291,13 @@ CREATE INDEX idx_signal_filtered_received ON signal_filtered(received_at);
 CREATE INDEX idx_signal_filtered_identity ON signal_filtered(sender_identity);
 `,
 	},
+	{
+		// An agent ask's quick answers (`helm signal add --choice …`): a JSON array of one-line strings,
+		// picked in the Signals detail panel and sent as Jakub's reply. '[]' for every other thread.
+		// Additive: ids and events untouched. Takes the next free number after 44 (Slack).
+		version: 45,
+		sql: `
+ALTER TABLE signal_threads ADD COLUMN choices TEXT NOT NULL DEFAULT '[]';
+`,
+	},
 ]
