@@ -131,10 +131,6 @@ in ModelSelect | jsx | <svg viewBox="0 0 24 24"> | §9 ruling 95: outline Check 
 .chip-gray | chip | .chip-gray | §9 ruling 104: the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
 .chip-green | chip | .chip-green | §9 ruling 104: the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
 .chip-red | chip | .chip-red | §9 ruling 104: the SolidJS extension widget keeps its own chip tones (not the app chip primitive)
-
-## button-border
-### app/src/renderer/sidebar/sidebar.css
-.shortcut-alias button + button | border-left | 1px solid var(--hairline) | D18 Shortcut alias divider: the Terminal settings shortcut chips draw a border between alias buttons, against §9 ruling 4 (a separator element, an exception or no divider)
 `
 
 export const DESIGN_LINT_ALLOWLIST: readonly AllowlistEntry[] = parseBaseline(DESIGN_LINT_BASELINE)

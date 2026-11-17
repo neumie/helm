@@ -1836,8 +1836,14 @@ button.banner {
 	font-size: calc(11px * var(--ui-scale));
 	cursor: pointer;
 }
-.shortcut-alias button + button {
-	border-left: 1px solid var(--hairline);
+/* The line between the change and remove targets is its own element, not a button border (§9 ruling 4, ruling 122). */
+.shortcut-alias-divider {
+	flex: none;
+	align-self: stretch;
+	width: 1px;
+	background: var(--hairline);
+}
+.shortcut-alias-divider + button {
 	color: var(--text-1);
 }
 .shortcut-recording {

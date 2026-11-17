@@ -341,6 +341,7 @@ export function TerminalSettingsPage({ onBack }: { onBack: () => void }) {
 																>
 																	{shortcutDisplay(binding, window.helm.platform)}
 																</button>
+																<span className="shortcut-alias-divider" aria-hidden="true" />
 																<button
 																	type="button"
 																	aria-label={`Remove ${shortcutDisplay(binding, window.helm.platform)} from ${definition.label}`}

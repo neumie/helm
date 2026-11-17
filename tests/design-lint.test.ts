@@ -95,7 +95,8 @@ const BASELINE_CAPS: Record<(typeof lint.RULES)[number], number> = {
 	'font-weight': 0,
 	'inline-svg': 4,
 	'primitive-outside-owner': 5,
-	'button-border': 1,
+	// 0: §9 ruling 122 (D18 pick) draws the shortcut alias divider as its own element, not a button border (2026-11-17).
+	'button-border': 0,
 }
 
 test('baseline counts per rule never grow and every cap matches its count (lower the cap when a value is fixed)', () => {
@@ -798,4 +799,28 @@ test("Remote's Send, floating shadows and scrims are the app tokens (§9 rulings
 		'.remote-navigation-dismiss | background': 'var(--scrim)',
 	}
 	for (const [key, value] of Object.entries(expected)) assert.equal(declared.get(key), value, key)
+})
+
+test('the Settings → Terminal shortcut alias divider is its own element, not a button border (§9 ruling 122)', () => {
+	const declared = new Map<string, string>()
+	for (const d of lint.parseCss(read('app/src/renderer/sidebar/sidebar.css')))
+		declared.set(`${d.selector} | ${d.property}`, d.value)
+	const expected: Record<string, string> = {
+		'.shortcut-alias-divider | flex': 'none',
+		'.shortcut-alias-divider | align-self': 'stretch',
+		'.shortcut-alias-divider | width': '1px',
+		'.shortcut-alias-divider | background': 'var(--hairline)',
+		'.shortcut-alias-divider + button | color': 'var(--text-1)',
+	}
+	for (const [key, value] of Object.entries(expected)) assert.equal(declared.get(key), value, key)
+	const page = read('app/src/renderer/sidebar/TerminalSettingsPage.tsx')
+	assert.match(
+		page,
+		/<\/button>\s*<span className="shortcut-alias-divider" aria-hidden="true" \/>\s*<button/,
+		'the divider sits between the change and remove buttons, hidden from assistive technology',
+	)
+	assert.ok(
+		!DESIGN_LINT_ALLOWLIST.some(e => e.rule === 'button-border'),
+		'no button border is allowlisted: ruling 4 has no exception',
+	)
 })
