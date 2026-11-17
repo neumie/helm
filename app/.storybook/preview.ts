@@ -20,7 +20,15 @@ const preview: Preview = {
 					'Proposals',
 					// All decisions (the one page to decide everything) first, then numeric D order (the sidebar sorts by text,
 					// which put D10 before D4); tests/design-proposals-order.test.ts holds it.
-					['All decisions', 'D7 Surface reach'],
+					[
+						'All decisions',
+						'D7 Surface reach',
+						'D15 Contrast',
+						'D16 Remote values',
+						'D17 Off-scale values',
+						'D18 Shortcut alias divider',
+						'D19 Z-index and motion',
+					],
 					'Views',
 					['Sidebar', 'Terminal workspace', 'Run context editor'],
 					'Compositions',
