@@ -50,6 +50,9 @@ const {
 	answerInline,
 	actionKeyHint,
 	isAnswer,
+	askChoices,
+	detailDigits,
+	detailFacts,
 	restingWords,
 	slug,
 	snoozeLabel,
@@ -339,22 +342,29 @@ test('x mutes the sender of mail from a person or a list: Needs you and snoozed,
 
 test('agent asks: r reply instead of p/n/m, o opens one link or lists several, none without links', () => {
 	const keys = (entry: SignalThread) => threadActions(entry, NOW).map(action => `${action.key} ${action.label}`)
-	assert.deepEqual(keys(ask({ id: 1 })), ['r reply', 'o links', 's snooze', 'd dismiss'])
+	assert.deepEqual(keys(ask({ id: 1 })), ['r reply', 'o links', 's snooze', 'd dismiss', 'Enter details'])
 	assert.deepEqual(keys(ask({ id: 1, links: ['https://github.com/acme/widgets/pull/7'] })), [
 		'r reply',
 		'o open',
 		's snooze',
 		'd dismiss',
+		'Enter details',
 	])
-	assert.deepEqual(keys(ask({ id: 1, links: [] })), ['r reply', 's snooze', 'd dismiss'])
+	assert.deepEqual(keys(ask({ id: 1, links: [] })), ['r reply', 's snooze', 'd dismiss', 'Enter details'])
 	assert.deepEqual(keys(ask({ id: 1, state: 'snoozed', snoozedUntil: iso(-600) })), [
 		'r reply',
 		't wake',
 		'd dismiss',
 		'o links',
+		'Enter details',
 	])
-	assert.deepEqual(keys(ask({ id: 1, state: 'done', updatedAt: iso(5) })), ['t reopen', 'o links'])
-	assert.deepEqual(keys(ask({ id: 1, owner: 'managed', state: 'seen' })), ['t take back', 's snooze', 'o links'])
+	assert.deepEqual(keys(ask({ id: 1, state: 'done', updatedAt: iso(5) })), ['t reopen', 'o links', 'Enter details'])
+	assert.deepEqual(keys(ask({ id: 1, owner: 'managed', state: 'seen' })), [
+		't take back',
+		's snooze',
+		'o links',
+		'Enter details',
+	])
 	// p, n and m never apply to an ask.
 	for (const state of ['new', 'seen', 'snoozed'] as const)
 		for (const action of threadActions(ask({ id: 1, state, snoozedUntil: iso(-600) }), NOW))
@@ -1181,4 +1191,33 @@ test('agent answers: the inline layout shows six lines, then says there is more'
 	assert.deepEqual(answerInline(long), { text: '1\n2\n3\n4\n5\n6', more: true })
 	assert.deepEqual(answerInline(answer({ id: 2, body: 'one\ntwo\n' })), { text: 'one\ntwo', more: false })
 	assert.equal(answerInline(answer({ id: 3, body: null })), null)
+})
+
+test('detail panel: quick answers, who the digits serve, and the facts about the ask and its agent', () => {
+	const choice = ask({ id: 1, choices: ['  Ano ', 'Ne', '', 'Možná\nzítra'], links: ['https://a.example/1'] })
+	assert.deepEqual(askChoices(choice), ['Ano', 'Ne', 'Možná zítra'])
+	assert.deepEqual(askChoices(ask({ id: 2, choices: ['1', '2', '3', '4', '5', '6', '7'] })).length, 6)
+	// Older daemons send no choices; answers and other sources never have any.
+	assert.deepEqual(askChoices(ask({ id: 3, choices: undefined })), [])
+	assert.deepEqual(askChoices(answer({ id: 4, choices: ['Ano'] })), [])
+	assert.deepEqual(askChoices(thread({ id: 5, choices: ['Ano'] })), [])
+	// 1–9 answer when there are quick answers, else open links.
+	assert.equal(detailDigits(choice), 'choices')
+	assert.equal(detailDigits(ask({ id: 6, links: ['https://a.example/1'] })), 'links')
+	assert.equal(detailDigits(ask({ id: 7, links: [] })), null)
+
+	const idle = session({ terminalId: TERMINAL, name: 'Signals asks', branch: 'feat/signals-asks', status: 'idle' })
+	const facts = detailFacts(ask({ id: 8, fullRef: 'dispatcher · Okena terminal' }), dock([idle]), NOW)
+	assert.equal(facts[0], 'Asked by dispatcher · Okena terminal')
+	assert.match(facts[1] ?? '', /^signals-asks · idle · .*feat\/signals-asks · Okena terminal [0-9a-f-]{8}$/)
+	assert.equal(facts[2], '10m ago · new')
+	assert.deepEqual(detailFacts(ask({ id: 9 }), dock([]), NOW)[1]?.endsWith('not in the dock'), true)
+	assert.deepEqual(detailFacts(answer({ id: 10, state: 'done', closedBy: 'jakub' }), null, NOW), [
+		'Answered by dispatcher',
+		'10m ago · done · read',
+	])
+	assert.equal(
+		detailFacts(ask({ id: 11, state: 'seen', reply: 'Ano', replyAt: iso(1) }), dock([]), NOW)[2],
+		'10m ago · seen · answer saved 1m ago',
+	)
 })

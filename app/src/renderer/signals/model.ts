@@ -30,6 +30,15 @@ export type SignalSection = 'needs' | 'answers' | 'managed' | 'snoozed' | 'done'
 export type AnswerLayout = 'section' | 'needs' | 'inline' | 'read-closes'
 export const ANSWER_LAYOUTS: readonly AnswerLayout[] = ['section', 'needs', 'inline', 'read-closes']
 
+/**
+ * Where an agent row's detail panel opens (review only; Jakub picks one and the others go):
+ * `slide-over` a panel out of the column over the terminals (the column keeps its width, nothing
+ * refits); `split` the lower part of the column, under the list; `in-place` in place of the list,
+ * like the flows.
+ */
+export type DetailLayout = 'slide-over' | 'split' | 'in-place'
+export const DETAIL_LAYOUTS: readonly DetailLayout[] = ['slide-over', 'split', 'in-place']
+
 /** An agent answer (`helm signal add --kind answer`): an informational reply, nothing to act on. */
 export function isAnswer(thread: Pick<SignalThread, 'source' | 'kind'>): boolean {
 	return thread.source === 'agent' && thread.kind === 'answer'
@@ -287,15 +296,80 @@ function askActions(thread: SignalThread, section: SignalSection): SignalAction[
 	const count = thread.links.length
 	const open: SignalAction | null = count === 0 ? null : { key: 'o', label: count === 1 ? 'open' : 'links' }
 	const reply: SignalAction = { key: 'r', label: 'reply' }
+	const details: SignalAction = { key: 'Enter', label: 'details' }
 	const list: Array<SignalAction | null> =
 		section === 'needs'
-			? [reply, open, { key: 's', label: 'snooze' }, { key: 'd', label: 'dismiss' }]
+			? [reply, open, { key: 's', label: 'snooze' }, { key: 'd', label: 'dismiss' }, details]
 			: section === 'managed'
-				? [{ key: 't', label: 'take back' }, { key: 's', label: 'snooze' }, open]
+				? [{ key: 't', label: 'take back' }, { key: 's', label: 'snooze' }, open, details]
 				: section === 'snoozed'
-					? [reply, { key: 't', label: 'wake' }, { key: 'd', label: 'dismiss' }, open]
-					: [{ key: 't', label: 'reopen' }, open]
+					? [reply, { key: 't', label: 'wake' }, { key: 'd', label: 'dismiss' }, open, details]
+					: [{ key: 't', label: 'reopen' }, open, details]
 	return list.filter((action): action is SignalAction => action !== null)
+}
+
+/** Quick answers an ask carries (`helm signal add --choice`), at most six one-line ones; [] otherwise. */
+export const CHOICES_MAX = 6
+export function askChoices(thread: Pick<SignalThread, 'source' | 'kind' | 'choices'>): string[] {
+	if (thread.source !== 'agent' || thread.kind === 'answer') return []
+	return (thread.choices ?? [])
+		.map(choice => choice.replace(/\s+/g, ' ').trim())
+		.filter(choice => choice.length > 0)
+		.slice(0, CHOICES_MAX)
+}
+
+/**
+ * Who the 1–9 keys serve in the detail panel: an ask's quick answers when it has any, else its links.
+ * (Links stay clickable either way; `o` still opens them.)
+ */
+export function detailDigits(
+	thread: Pick<SignalThread, 'source' | 'kind' | 'choices' | 'links'>,
+): 'choices' | 'links' | null {
+	if (askChoices(thread).length > 0) return 'choices'
+	return thread.links.length > 0 ? 'links' : null
+}
+
+/**
+ * The detail panel's dim facts about an agent ask or answer, one line each: who filed it, the agent
+ * in the terminal it came from (its dock name, state, project and branch; or that the dock does not
+ * list that terminal), and when and where it stands.
+ */
+export function detailFacts(thread: SignalThread, snapshot: AgentDockSnapshot | null, now: number): string[] {
+	const lines: string[] = []
+	const ask = !isAnswer(thread)
+	lines.push(`${ask ? 'Asked' : 'Answered'} by ${thread.fullRef}`)
+	const terminal = thread.askTerminal
+	if (terminal) {
+		const target = askDeliveryTarget(thread, snapshot)
+		const short = `terminal ${terminal.slice(0, 8)}`
+		if (target) {
+			const session = target.session
+			const where = [session.project, session.branch && session.branch !== session.project ? session.branch : null]
+				.filter(Boolean)
+				.join(' · ')
+			lines.push([`${target.name} · ${target.status}`, where, `Okena ${short}`].filter(Boolean).join(' · '))
+		} else lines.push(`Okena ${short} · not in the dock`)
+	}
+	const age = formatAgo(now - time(thread.lastActivityAt))
+	const state =
+		thread.state === 'snoozed'
+			? `snoozed ${snoozeLabel(thread.snoozedUntil, now)}`
+			: thread.state === 'done'
+				? `done · ${doneReason(thread)?.word ?? 'closed'}`
+				: thread.owner === 'managed'
+					? 'managed'
+					: thread.state
+	const receipt = ask ? askReceipt(thread, now) : null
+	lines.push(
+		[
+			`${age} ago`,
+			state,
+			receipt ? `${receipt.how === 'replied' ? 'replied' : 'answer saved'} ${receipt.ago} ago` : null,
+		]
+			.filter(Boolean)
+			.join(' · '),
+	)
+	return lines
 }
 
 /**

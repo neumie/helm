@@ -425,6 +425,87 @@ export function signalAskFixtures(now = Date.now()): SignalThread[] {
 }
 
 /**
+ * The dispatcher's asks as it writes them from now on (`helm signal add --choice`): a one-line summary,
+ * then the project, the context, the options and its recommendation; quick answers when a word is
+ * enough. 505 asks from the idle Signals terminal (the answer is typed in), 506 is long and from a
+ * terminal the dock does not list.
+ */
+export function signalAskChoiceFixtures(now = Date.now()): SignalThread[] {
+	const ask = (seed: Omit<ThreadSeed, 'source' | 'kind' | 'head' | 'fullRef' | 'ref'> & { from?: string }) => {
+		const { from = 'dispatcher', ...rest } = seed
+		return thread(
+			{
+				source: 'agent',
+				kind: 'ask',
+				reasons: ['ask'],
+				head: seed.title,
+				actor: from,
+				fullRef: seed.askTerminal ? `${from} · Okena terminal` : from,
+				ref: from,
+				...rest,
+			},
+			now,
+		)
+	}
+	return [
+		ask({
+			id: 505,
+			threadKey: 'agent:dispatcher/zkraceni',
+			title: 'Zkrácení: mám zkrátit názvy terminálů na 24 znaků?',
+			body: [
+				'Zkrácení názvů terminálů v Okeně na 24 znaků, aby se vešly do záložek.',
+				'',
+				'Projekt: helm (Signals, Okena board)',
+				'Kontext: názvy jako "Inventura úpravy skladových karet" se v záložce uříznou uprostřed slova a nejde poznat, co terminál dělá.',
+				'',
+				'Možnosti:',
+				'Ano — zkrátím na 24 znaků po celých slovech, plný název zůstane v tooltipu.',
+				'Ne — nechám názvy, jak jsou.',
+				'',
+				'Doporučuju Ano.',
+			].join('\n'),
+			choices: ['Ano', 'Ne'],
+			links: ['https://github.com/neumie/helm/pull/431', `${STORY}views-signals-detail--slide-over`],
+			askTerminal: ASK_TERMINAL_IDLE,
+			ago: 4,
+		}),
+		ask({
+			id: 506,
+			threadKey: 'agent:dispatcher/remote-host',
+			title: 'Remote: přesunout host na Mac mini, nebo nechat na notebooku?',
+			body: [
+				'Přesun Helm Remote hostu z notebooku na Mac mini v kanceláři.',
+				'',
+				'Projekt: helm (Remote)',
+				'Kontext: Remote teď běží na notebooku; když ho zavřeš, telefon se nepřipojí.',
+				'Mac mini běží pořád, Tailscale na něm je, ale není tam Okena ani tvoje Pi session.',
+				'Remote umí jen existující Pi session na stejném stroji, takže by na mini viděl jen to, co tam poběží.',
+				'',
+				'Možnosti:',
+				'1. Nechat na notebooku. Nic se nemění; mimo kancelář jen s otevřeným víkem.',
+				'2. Přesunout na mini a pouštět tam agenty přes Okenu na mini.',
+				'   Telefon vidí vše, co běží na mini; notebook je pak jen terminál.',
+				'3. Dva hosty, každý se svým párováním.',
+				'   Funguje hned, ale na telefonu dva odkazy a dvě sady zařízení.',
+				'',
+				'Rizika:',
+				'- Na mini chybí tvoje SSH klíče a gh přihlášení; agent by se nedostal k privátním repům.',
+				'- Pi config se nesdílí; nastavení modelu by se muselo udržovat dvakrát.',
+				'- Párování se nepřenáší, musel bys spárovat telefon znovu.',
+				'',
+				'Co bych udělal:',
+				'Teď nechat na notebooku (1).',
+				'Až budeš chtít agenty přes noc, připravím mini jako druhý host (3) a sepíšu, co tam chybí.',
+				'',
+				'Nespěchá to; stačí odpověď do pátku.',
+			].join('\n'),
+			askTerminal: '0f4e9a12-77c1-4d5e-8a3b-9c2d1e6f5a40',
+			ago: 5,
+		}),
+	]
+}
+
+/**
  * Agent answers (`helm signal add --kind answer`): informational replies to something Jakub asked an
  * agent in its chat — a longer one from the dispatcher (more than six lines, so the inline layout
  * folds it), one with a link, one already opened (seen). None takes a reply or a terminal.

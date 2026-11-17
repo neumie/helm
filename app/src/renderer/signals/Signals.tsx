@@ -27,6 +27,7 @@ import { SignalsList } from './SignalsList'
 import {
 	type AgentMatch,
 	type AnswerLayout,
+	type DetailLayout,
 	PICK_MAX,
 	REPLY_MAX,
 	type SignalActionKey,
@@ -36,9 +37,12 @@ import {
 	actionPatch,
 	agentBlockedNote,
 	answerInline,
+	askChoices,
 	askDeliveryTarget,
 	askReceipt,
 	defaultAgentPick,
+	detailDigits,
+	detailFacts,
 	filteredLine,
 	filteredRowView,
 	filteredSummary,
@@ -84,16 +88,24 @@ export interface SignalsColumnProps {
 	 * `AnswerLayout`). Production passes nothing (`section`).
 	 */
 	answerLayout?: AnswerLayout
+	/**
+	 * Review only, until Jakub picks: where an agent row's detail panel opens (see `DetailLayout`).
+	 * Production passes nothing (`slide-over`).
+	 */
+	detailLayout?: DetailLayout
+	/** Review fixtures only: the agent row whose detail is open on first render. */
+	initialDetail?: number
 }
 
 /**
  * `send` (p), `new-agent` (n), `reply` (r on an agent ask), `links` (o on an ask with several links),
- * `read` (↵ on an agent answer), `filtered` (f: the filtered mail list), `done` (D: the threads done today).
+ * `filtered` (f: the filtered mail list), `done` (D: the threads done today). An agent row's detail
+ * (click or ↵) is not a flow: see `DetailState`.
  */
 export type SignalsFlow =
 	| { type: 'send' | 'new-agent' | 'reply' | 'slack-reply'; id: number }
 	/** `back: 'done'`: opened from the done list, so Esc goes back there. */
-	| { type: 'links' | 'read'; id: number; back?: 'done' }
+	| { type: 'links'; id: number; back?: 'done' }
 	| { type: 'filtered' | 'done' }
 	| null
 
@@ -131,6 +143,17 @@ export interface RouteJob {
 /** The column's route runner: resolves with a failure note for a still-mounted flow, else null. */
 export type RouteRunner = (job: RouteJob) => Promise<string | null>
 
+/**
+ * The open detail panel: from the list it follows the list's selection (j/k move it); from the done
+ * list it shows that thread in place of the list, and Esc goes back to it.
+ */
+type DetailState = { from: 'list' } | { from: 'done'; id: number } | null
+
+/** The detail panel's keys, asked first while it is on screen (it may not hold the focus itself). */
+interface DetailApi {
+	key(event: KeyboardEvent<HTMLElement>): boolean
+}
+
 /** Daemon threads, with the threads an action just returned laid over them until a newer push. */
 function mergeThreads(threads: readonly SignalThread[], overrides: ReadonlyMap<number, SignalThread>): SignalThread[] {
 	if (overrides.size === 0) return [...threads]
@@ -155,12 +178,15 @@ function SignalRow({
 	selected,
 	onSelect,
 	inline = false,
+	open = false,
 }: {
 	thread: SignalThread
 	snapshot: AgentDockSnapshot | null
 	now: number
 	selected: boolean
 	onSelect(): void
+	/** Its detail panel is open. */
+	open?: boolean
 	/** The `inline` answer layout: an open answer shows its body in place of the dim body line. */
 	inline?: boolean
 }) {
@@ -174,6 +200,7 @@ function SignalRow({
 			data-done-reason={view.doneReason?.kind}
 			data-signal-id={thread.id}
 			data-selected={selected ? 'true' : undefined}
+			data-open={open ? 'true' : undefined}
 			aria-current={selected ? 'true' : undefined}
 			title={view.title}
 			onMouseDown={event => {
@@ -297,14 +324,19 @@ export function SignalsColumn({
 	initialSelected,
 	initialFlow = null,
 	answerLayout = 'section',
+	detailLayout = 'slide-over',
+	initialDetail,
 }: SignalsColumnProps) {
 	const bridge = useSyncExternalStore(service.subscribe, service.getState)
 	const snapshot = useSyncExternalStore(dock.subscribe, dock.snapshot)
 	const [now, setNow] = useState(clock)
 	const [selected, setSelected] = useState<number | null>(
-		initialSelected ?? (initialFlow && 'id' in initialFlow ? initialFlow.id : null),
+		initialSelected ?? initialDetail ?? (initialFlow && 'id' in initialFlow ? initialFlow.id : null),
 	)
 	const [flow, setFlow] = useState<SignalsFlow>(initialFlow)
+	const [detail, setDetail] = useState<DetailState>(initialDetail !== undefined ? { from: 'list' } : null)
+	const detailApi = useRef<DetailApi | null>(null)
+	const seenAsked = useRef(new Set<number>())
 	// The done list's selection, kept while a links list opened from it is on screen.
 	const [doneSelected, setDoneSelected] = useState<number | null>(null)
 	const [note, setNote] = useState<string | null>(null)
@@ -347,9 +379,20 @@ export function SignalsColumn({
 
 	// A flow whose thread left the snapshot closes; the list (or the done list it came from) keeps the keys.
 	useEffect(() => {
-		if (flow && 'id' in flow && !flowThread)
-			setFlow((flow.type === 'links' || flow.type === 'read') && flow.back ? { type: flow.back } : null)
+		if (flow && 'id' in flow && !flowThread) setFlow(flow.type === 'links' && flow.back ? { type: flow.back } : null)
 	}, [flow, flowThread])
+
+	// The thread the detail panel shows: the list's selection, or the done list's thread.
+	const detailThread =
+		detail === null
+			? undefined
+			: detail.from === 'done'
+				? threads.find(thread => thread.id === detail.id)
+				: rows.find(thread => thread.id === current)
+	// A done-list detail whose thread left the snapshot goes back to the done list.
+	useEffect(() => {
+		if (detail?.from === 'done' && !detailThread) setDetail(null)
+	}, [detail, detailThread])
 
 	const applyThread = useCallback((thread: SignalThread) => {
 		setOverrides(previous => new Map(previous).set(thread.id, thread))
@@ -363,7 +406,7 @@ export function SignalsColumn({
 		(message?: string | null) => {
 			// Links opened from the done list go back to it, which takes the keys itself when it mounts.
 			const open = flowRef.current
-			const back = (open?.type === 'links' || open?.type === 'read') && open.back ? open.back : null
+			const back = open?.type === 'links' && open.back ? open.back : null
 			setFlow(back ? { type: back } : null)
 			if (message !== undefined) setNote(message)
 			if (!back) refocus()
@@ -447,13 +490,13 @@ export function SignalsColumn({
 			return
 		}
 		if (key === 'Enter') {
-			// Read an answer in full; opening it marks it seen (as opening a thread's source does).
+			// An agent ask or answer in full (the detail panel); showing it marks it seen.
 			setNote(null)
-			setFlow({ type: 'read', id: thread.id, ...(flowRef.current?.type === 'done' ? { back: 'done' as const } : {}) })
-			if (thread.state === 'new')
-				void service.update(thread.id, { state: 'seen' }).then(seen => {
-					if (alive.current && seen.data) applyThread(seen.data)
-				})
+			if (flowRef.current?.type === 'done') setDetail({ from: 'done', id: thread.id })
+			else {
+				select(thread.id)
+				setDetail({ from: 'list' })
+			}
 			return
 		}
 		if (key === 'o' && thread.source === 'agent') {
@@ -554,6 +597,31 @@ export function SignalsColumn({
 		}
 	}
 
+	// What the detail panel shows is seen: a new ask or answer is marked seen once, as opening its source does.
+	useEffect(() => {
+		if (!detailThread || detailThread.source !== 'agent' || detailThread.state !== 'new') return
+		if (seenAsked.current.has(detailThread.id)) return
+		seenAsked.current.add(detailThread.id)
+		void service.update(detailThread.id, { state: 'seen' }).then(seen => {
+			if (alive.current && seen.data) applyThread(seen.data)
+		})
+	}, [detailThread, service, applyThread])
+
+	const closeDetail = (): void => {
+		const from = detail?.from
+		setDetail(null)
+		// The done list takes the keys itself when it mounts again.
+		if (from === 'list') refocus()
+	}
+
+	/** Leaving the detail panel (Esc, ↵ again, a second click): in the `read-closes` layout that closes an open answer. */
+	const leaveDetail = (thread: SignalThread | undefined): void => {
+		const from = detail?.from
+		closeDetail()
+		if (thread && answerLayout === 'read-closes' && isAnswer(thread) && thread.state !== 'done')
+			act('d', thread, from === 'done' ? setDoneSelected : setSelected)
+	}
+
 	/** `D` / the done count: the threads done today, in place of the list. */
 	const openDone = (): void => {
 		setNote(null)
@@ -566,7 +634,17 @@ export function SignalsColumn({
 		setFlow({ type: 'filtered' })
 	}
 
+	// The panel is on screen: over or beside the list, or (in place, or from the done list) instead of it.
+	const detailShown =
+		detail !== null && (detail.from === 'done' ? flow?.type === 'done' && detailThread !== undefined : !flow)
+
 	const onKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
+		// The detail panel answers first (Esc, ↵, 1–9, ⌘↵, r); j/k and the action keys fall through to the list.
+		if (detailShown && !event.defaultPrevented && detailApi.current?.key(event)) {
+			event.preventDefault()
+			event.stopPropagation()
+			return
+		}
 		// An open flow handles its own keys (Esc back, digits, ⌘↵); typing never reaches the list.
 		if (flow || event.defaultPrevented) return
 		if (event.metaKey || event.ctrlKey || event.altKey) return
@@ -590,6 +668,34 @@ export function SignalsColumn({
 		else return
 		event.preventDefault()
 	}
+
+	const detailPanel = (layout: DetailLayout, thread: SignalThread | undefined) =>
+		thread && thread.source === 'agent' ? (
+			<SignalDetail
+				key={thread.id}
+				thread={thread}
+				layout={layout}
+				snapshot={snapshot}
+				service={service}
+				dock={dock}
+				mod={mod}
+				now={now}
+				routing={routing}
+				onRoute={route}
+				note={note}
+				apiRef={detailApi}
+				closesOnLeave={answerLayout === 'read-closes'}
+				onOpen={index => openAskLink(thread, index)}
+				onLeave={() => leaveDetail(thread)}
+				onDone={() => {
+					const from = detail?.from
+					closeDetail()
+					act('d', thread, from === 'done' ? setDoneSelected : setSelected)
+				}}
+			/>
+		) : (
+			<DetailEmpty layout={layout} apiRef={detailApi} onLeave={closeDetail} />
+		)
 
 	const selectedThread = rows.find(thread => thread.id === current)
 	const health = healthLines(sources)
@@ -630,6 +736,8 @@ export function SignalsColumn({
 		>
 			{flow?.type === 'filtered' ? (
 				<FilteredMail service={service} count={filteredCount} now={now} onClose={closeFlow} />
+			) : flow?.type === 'done' && detail?.from === 'done' && detailThread ? (
+				detailPanel('in-place', detailThread)
 			) : flow?.type === 'done' ? (
 				<DoneToday
 					sections={allSections}
@@ -669,18 +777,6 @@ export function SignalsColumn({
 					<SlackReplyFlow thread={flowThread} service={service} mod={mod} onClose={closeFlow} onThread={applyThread} />
 				) : flow.type === 'links' ? (
 					<LinksFlow thread={flowThread} onOpen={index => openAskLink(flowThread, index)} onClose={closeFlow} />
-				) : flow.type === 'read' ? (
-					<ReadFlow
-						thread={flowThread}
-						now={now}
-						closesOnLeave={answerLayout === 'read-closes'}
-						onOpen={index => openAskLink(flowThread, index)}
-						onDone={() => {
-							closeFlow()
-							act('d', flowThread)
-						}}
-						onClose={closeFlow}
-					/>
 				) : (
 					<NewAgentFlow
 						thread={flowThread}
@@ -691,6 +787,8 @@ export function SignalsColumn({
 						onClose={closeFlow}
 					/>
 				)
+			) : detail?.from === 'list' && detailLayout === 'in-place' ? (
+				detailPanel('in-place', detailThread)
 			) : (
 				<>
 					<header className="signals-title">
@@ -715,9 +813,16 @@ export function SignalsColumn({
 										now={now}
 										selected={current === thread.id}
 										inline={answerLayout === 'inline'}
+										open={detail?.from === 'list' && current === thread.id}
 										onSelect={() => {
-											setSelected(thread.id)
 											setNote(null)
+											// An agent row opens its detail; a second click on it closes the detail.
+											if (thread.source === 'agent' && detail?.from === 'list' && current === thread.id) {
+												leaveDetail(thread)
+												return
+											}
+											setSelected(thread.id)
+											if (thread.source === 'agent') setDetail({ from: 'list' })
 										}}
 									/>
 								)}
@@ -728,24 +833,29 @@ export function SignalsColumn({
 							<p className="signals-placeholder">{bridge.error ?? 'Reading signals…'}</p>
 						)}
 					</div>
-					<footer className="signals-foot">
-						<span className="signals-foot-hints" aria-hidden="true">
-							{selectedThread
-								? threadActions(selectedThread, now).map(action => (
-										<Hint key={action.key} keys={actionKeyHint(action.key)}>
-											{action.label}
-										</Hint>
-									))
-								: null}
-						</span>
-						<output className="signals-note">{note ?? (routing ? `${routing.label} (still running)` : null)}</output>
-						{bridge.snapshot && bridge.error ? <span className="signals-health">{bridge.error}</span> : null}
-						{health.map(line => (
-							<span key={line} className="signals-health">
-								{line}
+					{detail?.from === 'list' && detailLayout === 'split' ? (
+						detailPanel('split', detailThread)
+					) : (
+						<footer className="signals-foot">
+							<span className="signals-foot-hints" aria-hidden="true">
+								{selectedThread
+									? threadActions(selectedThread, now).map(action => (
+											<Hint key={action.key} keys={actionKeyHint(action.key)}>
+												{action.label}
+											</Hint>
+										))
+									: null}
 							</span>
-						))}
-					</footer>
+							<output className="signals-note">{note ?? (routing ? `${routing.label} (still running)` : null)}</output>
+							{bridge.snapshot && bridge.error ? <span className="signals-health">{bridge.error}</span> : null}
+							{health.map(line => (
+								<span key={line} className="signals-health">
+									{line}
+								</span>
+							))}
+						</footer>
+					)}
+					{detail?.from === 'list' && detailLayout === 'slide-over' ? detailPanel('slide-over', detailThread) : null}
 				</>
 			)}
 		</section>
@@ -1445,50 +1555,37 @@ function AskLinks({ links, numbered = false }: { links: readonly string[]; numbe
 	)
 }
 
-/** The reply flow exists to be typed into: opening it puts the keys in the answer field. */
-const takeAnswerKeys = (node: HTMLDivElement | null) =>
-	(node?.querySelector<HTMLElement>('.signals-answer-input') ?? node)?.focus({ preventScroll: true })
-
 /**
- * `r` on an agent ask: Jakub types a short answer. It is always saved on the thread first (the
- * agent can read it with `helm signal show`); when the ask came from an Okena terminal whose agent
- * is idle (or working: queued until its turn ends), it is also typed into that agent as its next
- * prompt through the dock's CAS-guarded prompt path, fenced like any other prompt. Never auto-sent:
- * only ⌘↵ or Send.
+ * Jakub's answer to an agent ask, one path for the reply flow, the detail panel's field and its quick
+ * answers: always saved on the thread first (the agent reads it with `helm signal show`); when the ask
+ * came from an Okena terminal the dock can type into (idle, or working: queued until its turn ends),
+ * it is also typed into that agent as its next prompt through the dock's CAS-guarded prompt path,
+ * fenced like any other prompt. One at a time through the column's route runner. `reply` resolves with
+ * a note for the caller while it is mounted (a refusal or failure), else null.
  */
-function ReplyFlow({
+function useAskReply({
 	thread,
 	snapshot,
 	service,
 	dock,
-	mod,
-	now,
 	routing,
 	onRoute,
-	onClose,
 }: {
 	thread: SignalThread
 	snapshot: AgentDockSnapshot | null
 	service: SignalsService
 	dock: DockService
-	mod: 'cmd' | 'ctrl'
-	now: number
-	/** The column's routing effect in flight (this flow's or an earlier one's). */
 	routing: RouteJob | null
 	onRoute: RouteRunner
-	onClose(message?: string | null): void
-}) {
+}): { target: ReturnType<typeof askDeliveryTarget>; where: string; reply(text: string): Promise<string | null> } {
 	const target = useMemo(() => askDeliveryTarget(thread, snapshot), [thread, snapshot])
-	// An answer saved but never delivered comes back prefilled, so sending it again is one key.
-	const [text, setText] = useState(() => (askReceipt(thread, now)?.how === 'saved' ? (thread.reply ?? '') : ''))
-	const [note, setNote] = useState<string | null>(null)
 	const alive = useRef(true)
-	useEffect(
-		() => () => {
+	useEffect(() => {
+		alive.current = true
+		return () => {
 			alive.current = false
-		},
-		[],
-	)
+		}
+	}, [])
 	const where = target
 		? target.sendable
 			? target.queued
@@ -1498,17 +1595,10 @@ function ReplyFlow({
 				? `${target.name} has an open question in the dock; the answer is saved on the thread`
 				: `${target.name} is ${target.status}: the answer is saved on the thread`
 		: `Saved on the thread; ${thread.ref} reads it with helm signal show`
-	const send = async (): Promise<void> => {
-		if (routing) {
-			setNote(`${routing.label} (still running)`)
-			return
-		}
+	const reply = async (text: string): Promise<string | null> => {
+		if (routing) return `${routing.label} (still running)`
 		const answer = text.trim()
-		if (!answer) {
-			setNote('The answer is empty')
-			return
-		}
-		setNote(null)
+		if (!answer) return 'The answer is empty'
 		// Decided at submit: the agent (or its open turn) as Jakub saw it; main checks it again before typing.
 		const delivery = target?.delivery ?? null
 		const deliver = target && delivery ? target : null
@@ -1558,7 +1648,52 @@ function ReplyFlow({
 				}
 			},
 		})
-		if (failed !== null && alive.current) setNote(failed)
+		return failed !== null && alive.current ? failed : null
+	}
+	return { target, where, reply }
+}
+
+/** The reply flow exists to be typed into: opening it puts the keys in the answer field. */
+const takeAnswerKeys = (node: HTMLDivElement | null) =>
+	(node?.querySelector<HTMLElement>('.signals-answer-input') ?? node)?.focus({ preventScroll: true })
+
+/**
+ * `r` on an agent ask: Jakub types a short answer. It is always saved on the thread first (the
+ * agent can read it with `helm signal show`); when the ask came from an Okena terminal whose agent
+ * is idle (or working: queued until its turn ends), it is also typed into that agent as its next
+ * prompt through the dock's CAS-guarded prompt path, fenced like any other prompt. Never auto-sent:
+ * only ⌘↵ or Send.
+ */
+function ReplyFlow({
+	thread,
+	snapshot,
+	service,
+	dock,
+	mod,
+	now,
+	routing,
+	onRoute,
+	onClose,
+}: {
+	thread: SignalThread
+	snapshot: AgentDockSnapshot | null
+	service: SignalsService
+	dock: DockService
+	mod: 'cmd' | 'ctrl'
+	now: number
+	/** The column's routing effect in flight (this flow's or an earlier one's). */
+	routing: RouteJob | null
+	onRoute: RouteRunner
+	onClose(message?: string | null): void
+}) {
+	const { where, reply } = useAskReply({ thread, snapshot, service, dock, routing, onRoute })
+	// An answer saved but never delivered comes back prefilled, so sending it again is one key.
+	const [text, setText] = useState(() => (askReceipt(thread, now)?.how === 'saved' ? (thread.reply ?? '') : ''))
+	const [note, setNote] = useState<string | null>(null)
+	const send = async (): Promise<void> => {
+		setNote(null)
+		const failed = await reply(text)
+		if (failed !== null) setNote(failed)
 	}
 	return (
 		<div
@@ -1698,41 +1833,92 @@ function SlackReplyFlow({
 	)
 }
 
+/** Publishes a detail panel's key handler to the column while it is mounted (always its latest render's). */
+function useDetailApi(apiRef: { current: DetailApi | null }, key: DetailApi['key']): void {
+	const latest = useRef(key)
+	latest.current = key
+	useEffect(() => {
+		const api: DetailApi = { key: event => latest.current(event) }
+		apiRef.current = api
+		return () => {
+			if (apiRef.current === api) apiRef.current = null
+		}
+	}, [apiRef])
+}
+
 /**
- * `↵` on an agent answer: the whole answer, read (13/20, line breaks kept, plain untrusted text), its
- * links as numbered plain-text lines (1–9 opens one). Nothing to send back: `d` (or Done) closes it
- * once read; with `closesOnLeave` (the `read-closes` review layout) going back closes it too.
+ * An agent ask or answer in full (a click on its row, or ↵): the title and the whole body read (13/20,
+ * line breaks kept, plain untrusted text), who filed it and the agent in the terminal it came from,
+ * its links (a click or 1–9 opens one through main, which checks it again; never an anchor), and for
+ * an ask Jakub can answer, its quick answers and an answer field, both sent through `useAskReply`.
+ * 1–9 serve the quick answers when the ask has any, else the links. Esc, ↵ or a second click on the
+ * row leaves it; `closesOnLeave` (the `read-closes` review layout) closes an open answer on leaving.
+ * It does not take the focus beside the list (j/k keep moving the list, the panel follows); in place
+ * it does.
  */
-function ReadFlow({
+function SignalDetail({
 	thread,
+	layout,
+	snapshot,
+	service,
+	dock,
+	mod,
 	now,
+	routing,
+	onRoute,
+	note: columnNote,
+	apiRef,
 	closesOnLeave,
 	onOpen,
+	onLeave,
 	onDone,
-	onClose,
 }: {
 	thread: SignalThread
+	layout: DetailLayout
+	snapshot: AgentDockSnapshot | null
+	service: SignalsService
+	dock: DockService
+	mod: 'cmd' | 'ctrl'
 	now: number
+	routing: RouteJob | null
+	onRoute: RouteRunner
+	/** The column's own note (a reply's receipt lands there). */
+	note: string | null
+	apiRef: { current: DetailApi | null }
 	closesOnLeave: boolean
 	/** Resolves with the failure note, or null once opened. */
 	onOpen(index: number): Promise<string | null>
-	/** Closes the answer (done), then back. */
+	onLeave(): void
+	/** Closes the thread (an answer read: done), then leaves. */
 	onDone(): void
-	onClose(message?: string | null): void
 }) {
+	const answer = isAnswer(thread)
+	const open = thread.state !== 'done'
+	const replyable = !answer && threadActions(thread, now).some(action => action.key === 'r')
+	const choices = replyable ? askChoices(thread) : []
+	const digits = replyable ? detailDigits(thread) : thread.links.length > 0 ? 'links' : null
+	const { where, reply } = useAskReply({ thread, snapshot, service, dock, routing, onRoute })
+	const [text, setText] = useState(() => (askReceipt(thread, now)?.how === 'saved' ? (thread.reply ?? '') : ''))
 	const [note, setNote] = useState<string | null>(null)
+	const field = useRef<HTMLTextAreaElement>(null)
 	const opening = useRef(false)
 	const alive = useRef(true)
-	useEffect(
-		() => () => {
+	useEffect(() => {
+		alive.current = true
+		return () => {
 			alive.current = false
-		},
-		[],
-	)
-	const open = thread.state !== 'done'
-	const leave = (): void => {
-		if (closesOnLeave && open) onDone()
-		else onClose()
+		}
+	}, [])
+	const facts = detailFacts(thread, snapshot, now)
+
+	const send = async (value: string, fromField: boolean): Promise<void> => {
+		setNote(null)
+		const failed = await reply(value)
+		if (!alive.current) return
+		if (failed !== null) {
+			setNote(failed)
+			if (fromField) field.current?.focus({ preventScroll: true })
+		} else if (fromField) setText('')
 	}
 	const openLink = async (index: number): Promise<void> => {
 		if (opening.current || index < 0 || index >= thread.links.length) return
@@ -1744,54 +1930,165 @@ function ReadFlow({
 			opening.current = false
 		}
 	}
-	const keys = flowKeys({
-		count: thread.links.length,
-		onPick: index => void openLink(index),
-		onSubmit: () => undefined,
-		onClose: leave,
-	})
+	const leave = (): void => (closesOnLeave && answer && open ? onDone() : onLeave())
+
+	const key = (event: KeyboardEvent<HTMLElement>): boolean => {
+		const target = event.target as HTMLElement
+		if (event.key === 'Escape') {
+			leave()
+			return true
+		}
+		if (event.key === 'Enter' && (mod === 'cmd' ? event.metaKey : event.ctrlKey)) {
+			if (!replyable) return false
+			void send(text, true)
+			return true
+		}
+		if (event.metaKey || event.ctrlKey || event.altKey) return false
+		if (target.closest('textarea, input')) return false
+		const digit = Number(event.key)
+		if (event.key.length === 1 && Number.isInteger(digit) && digit >= 1 && digit <= PICK_MAX) {
+			if (digits === 'choices' && digit <= choices.length) void send(choices[digit - 1] ?? '', false)
+			else if (digits === 'links' && digit <= thread.links.length) void openLink(digit - 1)
+			else return false
+			return true
+		}
+		if (event.key === 'Enter') {
+			// Enter on one of the panel's buttons is that button's own.
+			if (target.closest('button')) return false
+			leave()
+			return true
+		}
+		if (event.key === 'r' && replyable) {
+			field.current?.focus({ preventScroll: true })
+			return true
+		}
+		if (event.key === 'd' && answer && open) {
+			onDone()
+			return true
+		}
+		return false
+	}
+	useDetailApi(apiRef, key)
+
 	const age = formatAgo(now - Date.parse(thread.lastActivityAt))
+	const status =
+		note ??
+		(routing ? routing.label : null) ??
+		columnNote ??
+		(replyable
+			? where
+			: answer
+				? open
+					? closesOnLeave
+						? 'Going back closes it as read'
+						: 'Close it once read'
+					: 'Read and closed'
+				: null)
 	return (
-		<div
-			ref={takeKeys}
+		<section
+			ref={layout === 'in-place' ? takeKeys : undefined}
 			tabIndex={-1}
-			className="signals-flow-keys"
-			data-flow="read"
-			onKeyDown={event => {
-				keys(event)
-				if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
-				if (event.key === 'd' && open) {
-					event.preventDefault()
-					event.stopPropagation()
-					onDone()
-				}
-			}}
+			className="signals-detail"
+			data-layout={layout}
+			data-kind={thread.kind}
+			data-signal-id={thread.id}
+			aria-label={`${answer ? 'Answer' : 'Ask'} from ${thread.ref}`}
 		>
-			<FlowHeader glyph="↳" kind={`Answer from ${thread.ref}`} context={age} onClose={leave} />
-			<div className="signals-scroll signals-flow">
+			<FlowHeader
+				glyph={answer ? '↳' : '?'}
+				kind={`${answer ? 'Answer' : 'Ask'} from ${thread.ref}`}
+				context={age}
+				onClose={leave}
+			/>
+			<div className="signals-scroll signals-flow signals-detail-body">
 				<p className="signals-ask-title">{thread.title}</p>
 				{thread.body ? <p className="signals-ask-body">{thread.body}</p> : null}
-				{thread.links.length > 0 ? <AskLinks links={thread.links} numbered /> : null}
+				<ul className="signals-detail-facts" aria-label="About">
+					{facts.map(line => (
+						<li key={line}>{line}</li>
+					))}
+				</ul>
+				{thread.links.length > 0 ? (
+					<ul className="signals-ask-links" aria-label="Links">
+						{thread.links.map((link, index) => (
+							// biome-ignore lint/suspicious/noArrayIndexKey: links are positional (openLink takes the index and the link shown)
+							<li key={index} className="signals-ask-link">
+								<button
+									type="button"
+									className="signals-detail-link"
+									title={`Open ${link}`}
+									onClick={() => void openLink(index)}
+								>
+									{digits === 'links' && index < PICK_MAX ? (
+										<span className="signals-ask-link-n">{index + 1} </span>
+									) : null}
+									{link}
+								</button>
+							</li>
+						))}
+					</ul>
+				) : null}
+				{choices.length > 0 ? (
+					<fieldset className="signals-detail-choices" aria-label="Quick answers">
+						{choices.map((choice, index) => (
+							<Btn
+								// biome-ignore lint/suspicious/noArrayIndexKey: quick answers are positional (1–6)
+								key={index}
+								sm
+								className="signals-key signals-detail-choice"
+								busy={routing !== null}
+								ariaKeyShortcuts={String(index + 1)}
+								onClick={() => void send(choice, false)}
+							>
+								<span className="signals-key-hint">{index + 1}</span> {choice}
+							</Btn>
+						))}
+					</fieldset>
+				) : null}
+				{replyable ? (
+					<label className="signals-prompt">
+						<span className="signals-field-label">Answer</span>
+						<textarea
+							ref={field}
+							className="signals-prompt-input signals-answer-input"
+							value={text}
+							maxLength={REPLY_MAX}
+							spellCheck
+							onChange={event => setText(event.target.value)}
+						/>
+					</label>
+				) : null}
 			</div>
 			<footer className="signals-foot">
 				<span className="signals-foot-hints" aria-hidden="true">
-					{thread.links.length > 0 ? (
+					{digits === 'choices' ? (
+						<Hint keys={pickRange(choices.length)} pick>
+							answer
+						</Hint>
+					) : digits === 'links' ? (
 						<Hint keys={pickRange(thread.links.length)} pick>
 							open
 						</Hint>
 					) : null}
-					{open ? <Hint keys="d">done</Hint> : null}
-					<Hint keys="esc">{closesOnLeave && open ? 'done and back' : 'back'}</Hint>
+					{replyable ? <Hint keys={submitKeys(mod)}>send</Hint> : null}
+					{answer && open ? <Hint keys="d">done</Hint> : null}
+					<Hint keys="esc">{closesOnLeave && answer && open ? 'done and close' : 'close'}</Hint>
 				</span>
-				<output className="signals-note">
-					{note ??
-						(open
-							? closesOnLeave
-								? 'Going back closes it as read'
-								: 'Close it once read; it stays in Answers until then'
-							: 'Read and closed')}
-				</output>
-				{open ? (
+				<output className="signals-note">{status}</output>
+				{replyable ? (
+					<span className="signals-foot-actions">
+						<Btn
+							tone="primary"
+							sm
+							className="signals-key"
+							busy={routing !== null}
+							ariaKeyShortcuts={mod === 'cmd' ? 'Meta+Enter' : 'Control+Enter'}
+							onClick={() => void send(text, true)}
+						>
+							Send
+						</Btn>
+					</span>
+				) : answer && open ? (
 					<span className="signals-foot-actions">
 						<Btn sm ariaKeyShortcuts="d" onClick={onDone}>
 							Done
@@ -1799,7 +2096,40 @@ function ReadFlow({
 					</span>
 				) : null}
 			</footer>
-		</div>
+		</section>
+	)
+}
+
+/** The panel while the list's selection is not an agent row (j/k moved off one): nothing to show. */
+function DetailEmpty({
+	layout,
+	apiRef,
+	onLeave,
+}: {
+	layout: DetailLayout
+	apiRef: { current: DetailApi | null }
+	onLeave(): void
+}) {
+	const key = (event: KeyboardEvent<HTMLElement>): boolean => {
+		if (event.key !== 'Escape' && !(event.key === 'Enter' && !(event.target as HTMLElement).closest('button')))
+			return false
+		onLeave()
+		return true
+	}
+	useDetailApi(apiRef, key)
+	return (
+		<section
+			ref={layout === 'in-place' ? takeKeys : undefined}
+			tabIndex={-1}
+			className="signals-detail"
+			data-layout={layout}
+			aria-label="Details"
+		>
+			<FlowHeader glyph="·" kind="Details" context="" quiet onClose={onLeave} />
+			<div className="signals-scroll signals-flow signals-detail-body">
+				<p className="signals-detail-empty">Agent asks and answers open here. Move to one with j/k.</p>
+			</div>
+		</section>
 	)
 }
 
@@ -2087,9 +2417,11 @@ export function mountSignals(host: HTMLElement, props: SignalsColumnProps): Moun
 	root.render(<SignalsColumn {...props} />)
 	return {
 		focus() {
+			// A flow's answer field, the flow, a detail in place of the list; beside the list the list keeps the keys.
 			;(
-				host.querySelector<HTMLElement>('.signals-answer-input') ??
+				host.querySelector<HTMLElement>('.signals-flow-keys .signals-answer-input') ??
 				host.querySelector<HTMLElement>('.signals-flow-keys') ??
+				host.querySelector<HTMLElement>('.signals-detail[data-layout="in-place"]') ??
 				host.querySelector<HTMLElement>('section.signals')
 			)?.focus({ preventScroll: true })
 		},

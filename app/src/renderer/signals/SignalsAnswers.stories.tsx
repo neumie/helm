@@ -12,7 +12,7 @@ import { SignalsWorkspace } from './SignalsWorkspace'
  * - **B In Needs you**: listed among Needs you, set apart only by ↳ (and not counted there); `d` closes.
  * - **C Read in the list**: an Answers band whose rows show the body in place (six lines, then
  *   `… ↵ read all`); `d` closes.
- * - **D Reading closes it**: an Answers band; leaving the Read flow (`↵`, then esc) closes it as read.
+ * - **D Reading closes it**: an Answers band; leaving the detail panel (`↵`, then esc) closes it as read.
  */
 const meta: Meta<typeof SignalsWorkspace> = {
 	title: 'Views/Signals/Answers',
@@ -36,11 +36,11 @@ export const ReadInTheList: Story = { name: 'C Read in the list', args: { answer
 /** D: an Answers band; reading it (`↵`) and going back (esc) closes it as read, no `d` needed. */
 export const ReadingClosesIt: Story = { name: 'D Reading closes it', args: { answerLayout: 'read-closes' } }
 
-/** `↵` on the dispatcher's answer: the whole answer, read; `d` or Done closes it. */
-export const Read: Story = { name: 'Read an answer', args: { answerLayout: 'section', flow: 'read' } }
+/** `↵` (or a click) on the dispatcher's answer: its detail, the whole answer; `d` or Done closes it. */
+export const Read: Story = { name: 'Read an answer', args: { answerLayout: 'section', detail: 601 } }
 
-/** D's Read flow: the status line says going back closes it. */
-export const ReadClosing: Story = { name: 'Read an answer (D)', args: { answerLayout: 'read-closes', flow: 'read' } }
+/** D's detail: the status line says going back closes it. */
+export const ReadClosing: Story = { name: 'Read an answer (D)', args: { answerLayout: 'read-closes', detail: 601 } }
 
 /** Done today: an answer Jakub closed says `read`. */
 export const DoneToday: Story = { name: 'Done today: read', args: { answerLayout: 'section', flow: 'done' } }

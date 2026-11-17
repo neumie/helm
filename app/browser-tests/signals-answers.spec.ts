@@ -9,7 +9,7 @@ declare global {
 
 // Agent answers in the Signals column (design §3.25), on the production column with the in-memory
 // fixture services: an answer reads differently from an ask (↳, no `r`, never counted in Needs you),
-// `↵` reads it in full and marks it seen, `d` closes it (Done today: `read`). The four placement
+// `↵` (or a click) opens its detail and marks it seen, `d` closes it (Done today: `read`). The four placement
 // variants are review-only (`answerLayout`) until Jakub picks one.
 
 const story = (id: string) => `/iframe.html?id=${id}&viewMode=story`
@@ -49,7 +49,8 @@ test('A: answers sit on their own band under Needs you, read as ↳ with no repl
 	// Needs you does not list (or count) answers.
 	await expect(view.section('Needs you').locator('.signals-tr[data-signal-id="601"]')).toHaveCount(0)
 	await answer.click()
-	const hints = view.signals.locator('.signals-foot-hints')
+	// The click opens its detail; the column's own footer still says what the row offers.
+	const hints = view.signals.locator(':scope > .signals-foot .signals-foot-hints')
 	await expect(hints).toContainText('↵ read')
 	await expect(hints).toContainText('d done')
 	await expect(hints).not.toContainText('reply')
@@ -63,8 +64,12 @@ test('A: answers sit on their own band under Needs you, read as ↳ with no repl
 test('↵ reads the whole answer, marks it seen; d closes it and Done today says read', async ({ page }) => {
 	const view = await open(page, 'views-signals-answers--answers-band')
 	await view.row(601).click()
+	const flow = page.locator('.signals-detail')
+	// The click already opened it; ↵ closes it and ↵ again opens it.
+	await expect(flow).toBeVisible()
 	await page.keyboard.press('Enter')
-	const flow = page.locator('.signals-flow-keys[data-flow="read"]')
+	await expect(flow).toHaveCount(0)
+	await page.keyboard.press('Enter')
 	await expect(flow).toBeVisible()
 	await expect(flow.locator('.signals-title-kind')).toHaveText('↳Answer from dispatcher')
 	await expect(flow.locator('.signals-ask-body')).toContainText('Nic dalšího po tobě nechci')
@@ -113,11 +118,10 @@ test('C: an answer reads in the list, six lines, then says there is more', async
 	await page.screenshot({ path: test.info().outputPath('signals-answers-c-inline.png') })
 })
 
-test('D: leaving the Read flow closes the answer as read', async ({ page }) => {
+test('D: leaving the detail closes the answer as read', async ({ page }) => {
 	const view = await open(page, 'views-signals-answers--reading-closes-it')
 	await view.row(601).click()
-	await page.keyboard.press('Enter')
-	const flow = page.locator('.signals-flow-keys[data-flow="read"]')
+	const flow = page.locator('.signals-detail')
 	await expect(flow.locator('.signals-note')).toHaveText('Going back closes it as read')
 	await page.keyboard.press('Escape')
 	await expect(flow).toHaveCount(0)
