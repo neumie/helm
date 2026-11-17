@@ -6,6 +6,8 @@ export const MOTION_TOKENS = {
 	'--motion-exit': '120ms',
 	'--motion-state': '140ms',
 	'--motion-enter': '150ms',
+	// A large surface entering over the whole screen: Remote's navigation drawer and choice sheet (§2.5, §9 ruling 123).
+	'--motion-enter-large': '180ms',
 	// Live-status ambients, each specified where it lives (§2.5 sanctioned exceptions).
 	'--motion-pulse': '1.6s', // the running-dot pulse (§2.5)
 	'--motion-arrival': '1.4s', // the dock's arrival pulse and the terminal reveal pulse (§3.24, §9 ruling 70)
@@ -13,10 +15,13 @@ export const MOTION_TOKENS = {
 	'--motion-activity': '1s', // the activity indicator's rotation (§3.21)
 	'--motion-activity-waiting': '0.9s', // its waiting bounce
 	'--motion-activity-breathe': '1.8s', // its label breath and attention colour
-	// Easings: ease-out for everything, linear only for countdown and progress bars, ease-in-out for ambients.
+	// Easings: ease-out for everything, linear only for countdown and progress bars, ease-in-out for ambients,
+	// the large-surface curve only with --motion-enter-large.
 	'--ease-out': 'ease-out',
 	'--ease-linear': 'linear',
 	'--ease-ambient': 'ease-in-out',
+	// The large-surface entrance: leaves at once and settles softly (paired with --motion-enter-large).
+	'--ease-enter-large': 'cubic-bezier(0.22, 1, 0.36, 1)',
 } as const satisfies Record<string, string>
 
 /**

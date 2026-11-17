@@ -203,7 +203,7 @@ export const WIDGET_STYLES = `
 	.vg-run-menu label { white-space: nowrap; }
 	.vg-run-menu input { min-width: 0; width: 100%; box-sizing: border-box; background: var(--vg-chrome); color: var(--vg-text-0); border: 1px solid var(--vg-hairline-strong); border-radius: 6px; padding: 6px; }
 	.vg-more { position: relative; }
-	.vg-more [role="menu"] { position: absolute; right: 0; bottom: 100%; min-width: 140px; padding: 4px; z-index: 5; background: var(--vg-chrome); box-shadow: var(--vg-shadow-1); border-radius: 8px; }
+	.vg-more [role="menu"] { position: absolute; right: 0; bottom: 100%; min-width: 140px; padding: 4px; z-index: var(--vg-z-menu); background: var(--vg-chrome); box-shadow: var(--vg-shadow-1); border-radius: 8px; }
 	.vg-more [role="menuitem"] { display: block; width: 100%; border: 0; padding: 8px; background: transparent; color: var(--vg-text-0); text-align: left; cursor: pointer; }
 	.vg-more [role="menuitem"]:hover { background: var(--vg-fill-subtle); }
 	.vg-run-context { margin: 12px 0; padding-top: 10px; border-top: 1px solid var(--vg-hairline); }
@@ -328,7 +328,7 @@ export const WIDGET_STYLES = `
 		flex-shrink: 0;
 		display: inline-flex;
 		color: var(--vg-text-2);
-		transition: transform var(--vg-motion-exit) var(--vg-ease-out);
+		transition: transform var(--vg-motion-state) var(--vg-ease-out);
 	}
 	.vg-model__trigger.is-open .vg-model__chevron { transform: rotate(180deg); }
 	.vg-model__menu {

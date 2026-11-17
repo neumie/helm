@@ -122,7 +122,8 @@ function region(file: string): Pairs {
 
 /**
  * The tokens S2 added, each with the literal it replaced (`--motion-state` was used with a 140ms fallback; the z and
- * motion values are the literals of sections 2.5 and 2.7; `--paper` is the PDF paper white). Nothing else may be new.
+ * motion values are the literals of sections 2.5 and 2.7; `--paper` is the PDF paper white), plus the tokens a later
+ * ruling added at the literals it replaced. Nothing else may be new.
  */
 const ADDED_IN_S2: Record<string, string> = {
 	'--motion-exit': '120ms',
@@ -149,6 +150,9 @@ const ADDED_IN_S2: Record<string, string> = {
 	'--z-toast': '100',
 	'--z-widget-host': '2147483647',
 	'--paper': '#fff',
+	// §9 ruling 123 (D19 Remote entrances B): the large-surface entrance, at the values Remote's drawer and sheet had.
+	'--motion-enter-large': '180ms',
+	'--ease-enter-large': 'cubic-bezier(0.22, 1, 0.36, 1)',
 }
 const ADDED_TO_WIDGET: Record<string, string> = {
 	'--vg-motion-exit': '120ms',

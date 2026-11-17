@@ -62,6 +62,7 @@
 	content: "";
 	position: absolute;
 	inset: 0;
+	/* Above xterm's layers and the frame freeze (8): a §3.14 metric (§9 ruling 125). */
 	z-index: 9;
 	pointer-events: none;
 }
@@ -118,6 +119,7 @@
 	position: absolute;
 	top: 0;
 	left: 0;
+	/* Above xterm's own layers 5–8 in this context: a §3.14 metric, not a §2.7 layer (§9 ruling 125). */
 	z-index: 8;
 	background: var(--term-bg);
 	pointer-events: none;

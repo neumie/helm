@@ -730,7 +730,7 @@
 	cursor: pointer;
 	opacity: 0;
 	pointer-events: none;
-	transition: opacity var(--motion-exit) var(--ease-out);
+	transition: opacity var(--motion-state) var(--ease-out);
 }
 .review-screenshot-remove svg {
 	width: 12px;

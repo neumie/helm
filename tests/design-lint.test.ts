@@ -76,10 +76,12 @@ const BASELINE_CAPS: Record<(typeof lint.RULES)[number], number> = {
 	// 25: S2 generates the Remote offline page's :root, a token source now.
 	// 23: §9 ruling 108 rules the reading zoom's --ui-scale re-binding in Document Review and the viewer (2026-11-17).
 	'token-definition': 23,
-	// 5 / 7 / 7: S2 put every z-index and motion literal a token holds on that token; the rest is D19.
-	'raw-z-index': 5,
-	'raw-duration': 7,
-	'raw-easing': 7,
+	// 5 / 7 / 7: S2 put every z-index and motion literal a token holds on that token.
+	// 2 / 0 / 0: §9 rulings 123 and 125 (D19 picks) put Remote's entrances and the other z-indexes on the tokens of
+	// their role; the terminal's frame freeze and reveal pulse stay §3.14 metrics (2026-11-17).
+	'raw-z-index': 2,
+	'raw-duration': 0,
+	'raw-easing': 0,
 	// 8 / 58 / 20: §9 rulings 15, 98, 100 and 101 (D8 picks) fixed or ruled the rest (2026-11-13).
 	// 7 / 55 / 19: §9 ruling 103 put the extension popup on the scale (2026-11-13).
 	// 54 / 17: §9 ruling 117 put the Remote offline page on Remote's type steps and the spacing scale (2026-11-17).
@@ -822,5 +824,51 @@ test('the Settings → Terminal shortcut alias divider is its own element, not a
 	assert.ok(
 		!DESIGN_LINT_ALLOWLIST.some(e => e.rule === 'button-border'),
 		'no button border is allowlisted: ruling 4 has no exception',
+	)
+})
+
+test("Remote's entrances, the 120ms state changes and the z-indexes read the tokens of their role (§9 rulings 123-125)", () => {
+	const declared = (file: string) => {
+		const map = new Map<string, string>()
+		for (const d of lint.parseCss(read(file))) map.set(`${d.selector} | ${d.property}`, d.value)
+		return map
+	}
+	const remote = declared('app/src/renderer/remote/remote.css')
+	const large = 'var(--motion-enter-large) var(--ease-enter-large) both'
+	const enter = 'var(--motion-enter) var(--ease-out) both'
+	const expected: Record<string, string> = {
+		'.remote-navigation-menu | animation': `remote-navigation-in ${large}`,
+		'.remote-sheet | animation': `remote-sheet-in ${large}`,
+		'.remote-navigation-dismiss | animation': `remote-scrim-in ${enter}`,
+		'.remote-sheet-dismiss | animation': `remote-scrim-in ${enter}`,
+		'.remote-information-view | animation': `remote-reading-view-in ${enter}`,
+		'.remote-usage | animation': `remote-reading-view-in ${enter}`,
+		'@media (min-width: 1200px) .remote-information-rail | animation': `remote-rail-in ${enter}`,
+		'.remote-composer-actions .menu-panel | animation': `remote-popover-in ${enter}`,
+		'.remote-row-menu | animation': `remote-popover-in ${enter}`,
+		'.remote-navigation-scrim | z-index': 'var(--z-sheet)',
+		'.remote-information-view | z-index': 'var(--z-local-3)',
+	}
+	for (const [key, value] of Object.entries(expected)) assert.equal(remote.get(key), value, key)
+	assert.equal(declared('app/src/renderer/sidebar/sidebar.css').get('.swipe-scrim | z-index'), 'var(--z-sheet)')
+	assert.equal(
+		declared('app/src/renderer/panes.css').get('#divider | transition'),
+		'background-color var(--motion-state) var(--ease-out)',
+	)
+	assert.equal(
+		declared('app/src/renderer/document-review/document-review.css').get('.review-screenshot-remove | transition'),
+		'opacity var(--motion-state) var(--ease-out)',
+	)
+	const widget = read('extension/src/widget.styles.ts')
+	assert.match(widget, /\.vg-more \[role="menu"\] \{[^}]*z-index: var\(--vg-z-menu\);/, 'the widget More menu')
+	assert.match(
+		widget,
+		/\.vg-model__chevron \{[^}]*transition: transform var\(--vg-motion-state\) var\(--vg-ease-out\);/,
+		'the widget model chevron',
+	)
+	assert.deepEqual(
+		DESIGN_LINT_ALLOWLIST.filter(e => e.rule === 'raw-z-index').map(e => `${e.selector} ${e.value}`),
+		['.term-holder[data-reveal]::after 9', '.term-mount .term-frame-freeze 8'],
+		'only the terminal metrics keep a z-index of their own',
 	)
 })

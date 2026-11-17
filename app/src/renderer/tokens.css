@@ -81,6 +81,7 @@
 	--motion-exit: 120ms;
 	--motion-state: 140ms;
 	--motion-enter: 150ms;
+	--motion-enter-large: 180ms;
 	--motion-pulse: 1.6s;
 	--motion-arrival: 1.4s;
 	--motion-resting: 4.8s;
@@ -90,6 +91,7 @@
 	--ease-out: ease-out;
 	--ease-linear: linear;
 	--ease-ambient: ease-in-out;
+	--ease-enter-large: cubic-bezier(0.22, 1, 0.36, 1);
 	/* Z-layers (§2.7) */
 	--z-under: -1;
 	--z-content: 0;

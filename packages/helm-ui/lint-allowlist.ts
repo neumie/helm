@@ -37,35 +37,9 @@ export const DESIGN_LINT_BASELINE = String.raw`
 .document-review[data-review-theme="light"] | --well | #ebeae6 | §2.8 Review light scope (§9 ruling 10)
 
 ## raw-z-index
-### app/src/renderer/remote/remote.css
-.remote-navigation-scrim | z-index | 70 | D19 no z-index or motion token holds this value (S2 put the others on tokens)
-### app/src/renderer/sidebar/sidebar.css
-.swipe-scrim | z-index | 30 | D19 no z-index or motion token holds this value (S2 put the others on tokens)
 ### app/src/renderer/terminal-well.css
-.term-holder[data-reveal]::after | z-index | 9 | D19 no z-index or motion token holds this value (S2 put the others on tokens)
-.term-mount .term-frame-freeze | z-index | 8 | D19 no z-index or motion token holds this value (S2 put the others on tokens)
-### extension/src/widget.styles.ts
-.vg-more [role="menu"] | z-index | 5 | D19 no z-index or motion token holds this value (S2 put the others on tokens)
-
-## raw-duration
-### app/src/renderer/remote/remote.css
-.remote-information-view | animation | remote-reading-view-in 160ms ease-out both | D19 no z-index or motion token holds this value (S2 put the others on tokens)
-.remote-navigation-dismiss | animation | remote-scrim-in 160ms ease-out both | D19 no z-index or motion token holds this value (S2 put the others on tokens)
-.remote-navigation-menu | animation | remote-navigation-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both | D19 no z-index or motion token holds this value (S2 put the others on tokens)
-.remote-sheet | animation | remote-sheet-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both | D19 no z-index or motion token holds this value (S2 put the others on tokens)
-.remote-sheet-dismiss | animation | remote-scrim-in 160ms ease-out both | D19 no z-index or motion token holds this value (S2 put the others on tokens)
-.remote-usage | animation | remote-reading-view-in 160ms ease-out both | D19 no z-index or motion token holds this value (S2 put the others on tokens)
-@media (min-width: 1200px) .remote-information-rail | animation | remote-rail-in 160ms ease-out both | D19 no z-index or motion token holds this value (S2 put the others on tokens)
-
-## raw-easing
-### app/src/renderer/remote/remote.css
-.remote-information-view | animation | remote-reading-view-in 160ms ease-out both | D19 no z-index or motion token holds this value (S2 put the others on tokens)
-.remote-navigation-dismiss | animation | remote-scrim-in 160ms ease-out both | D19 no z-index or motion token holds this value (S2 put the others on tokens)
-.remote-navigation-menu | animation | remote-navigation-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both | D19 no z-index or motion token holds this value (S2 put the others on tokens)
-.remote-sheet | animation | remote-sheet-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both | D19 no z-index or motion token holds this value (S2 put the others on tokens)
-.remote-sheet-dismiss | animation | remote-scrim-in 160ms ease-out both | D19 no z-index or motion token holds this value (S2 put the others on tokens)
-.remote-usage | animation | remote-reading-view-in 160ms ease-out both | D19 no z-index or motion token holds this value (S2 put the others on tokens)
-@media (min-width: 1200px) .remote-information-rail | animation | remote-rail-in 160ms ease-out both | D19 no z-index or motion token holds this value (S2 put the others on tokens)
+.term-holder[data-reveal]::after | z-index | 9 | §9 ruling 125 terminal metric (§3.14 Metrics: reveal pulse 9, above xterm's layers and the frame freeze)
+.term-mount .term-frame-freeze | z-index | 8 | §9 ruling 125 terminal metric (§3.14 Metrics: frame freeze 8, above xterm's own layers 5–8)
 
 ## spacing-off-scale
 ### app/src/renderer/agent-dock/agent-dock.css

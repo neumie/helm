@@ -2000,7 +2000,7 @@ button.banner {
 	opacity: 1;
 	will-change: opacity;
 	pointer-events: none;
-	z-index: 30;
+	z-index: var(--z-sheet);
 }
 
 /* ---------- appearance page (§2.8 theming) ---------- */
