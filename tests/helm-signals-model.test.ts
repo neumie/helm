@@ -45,6 +45,11 @@ const {
 	signalRowView,
 	signalSections,
 	needsYouCount,
+	needsYouNew,
+	answersNew,
+	answerInline,
+	actionKeyHint,
+	isAnswer,
 	restingWords,
 	slug,
 	snoozeLabel,
@@ -116,6 +121,24 @@ function ask(patch: Partial<SignalThread> & { id: number }): SignalThread {
 		body: 'Two variants.\nA: title only.\nB: with the body.',
 		links: ['http://127.0.0.1:6006/?path=/story/a', 'http://127.0.0.1:6006/?path=/story/b'],
 		askTerminal: TERMINAL,
+		...patch,
+	})
+}
+
+/** An agent answer (`helm signal add --kind answer`): no terminal, no reply. */
+function answer(patch: Partial<SignalThread> & { id: number }): SignalThread {
+	return ask({
+		threadKey: `agent:answer-${patch.id}`,
+		kind: 'answer',
+		reasons: ['answer'],
+		ref: 'dispatcher',
+		fullRef: 'dispatcher',
+		title: 'Proxy blokuje Remote',
+		head: 'Proxy blokuje Remote',
+		actor: 'dispatcher',
+		body: 'Firemní proxy blokuje WebSocket.\nZ LTE to jde.',
+		links: [],
+		askTerminal: null,
 		...patch,
 	})
 }
@@ -1063,4 +1086,99 @@ test('filtered mail: the count after Done today, the header summary, rows by dec
 	// Only the daemon knows whether a mute alone keeps the sender out (an exclude glob Jakub wrote does not).
 	assert.deepEqual(includeAction({ unmute: true }), { label: 'unmute sender', button: 'Unmute sender' })
 	assert.deepEqual(includeAction({}), { label: 'always show sender', button: 'Always show sender' })
+})
+
+test('agent answers: their own section by default, in Needs you for the needs layout, never counted', () => {
+	const threads = [
+		thread({ id: 1 }),
+		answer({ id: 2, lastActivityAt: iso(2) }),
+		answer({ id: 3, state: 'seen', lastActivityAt: iso(3) }),
+		answer({ id: 4, state: 'snoozed', snoozedUntil: iso(-60) }),
+		ask({ id: 5 }),
+	]
+	assert.equal(isAnswer(threads[1] as SignalThread), true)
+	assert.equal(isAnswer(threads[4] as SignalThread), false)
+	const sections = signalSections(threads, NOW)
+	assert.deepEqual(
+		sections.answers.map(entry => entry.id),
+		[2, 3],
+	)
+	assert.deepEqual(sections.needs.map(entry => entry.id).sort(), [1, 5])
+	assert.deepEqual(
+		sections.snoozed.map(entry => entry.id),
+		[4],
+	)
+	// j/k walk Needs you, then Answers, then the rest.
+	assert.deepEqual(
+		orderedRows(sections).map(entry => entry.id),
+		[...sections.needs.map(entry => entry.id), 2, 3, 4],
+	)
+	assert.equal(following(sections, 2), 3)
+	assert.equal(answersNew(sections.answers), true)
+	assert.equal(answersNew([answer({ id: 9, state: 'seen' })]), false)
+
+	const inNeeds = signalSections(threads, NOW, 'needs')
+	assert.equal(inNeeds.answers.length, 0)
+	assert.deepEqual(inNeeds.needs.map(entry => entry.id).sort(), [1, 2, 3, 5])
+	// An answer waits on nothing: Needs you counts only the review and the ask, and a new answer
+	// alone never lights the band's warn tone.
+	assert.equal(needsYouCount(inNeeds, NOW), 2)
+	const onlyAnswers = signalSections([answer({ id: 2 })], NOW, 'needs')
+	assert.equal(needsYouCount(onlyAnswers, NOW), 0)
+	assert.equal(needsYouNew(onlyAnswers, NOW), false)
+	assert.equal(needsYouNew(inNeeds, NOW), true)
+})
+
+test('agent answers: read instead of r/p/n/m/x, o for links, d closes', () => {
+	const keys = (entry: SignalThread) => threadActions(entry, NOW).map(action => action.key)
+	assert.deepEqual(keys(answer({ id: 1 })), ['Enter', 's', 'd'])
+	assert.deepEqual(keys(answer({ id: 1, links: ['https://github.com/acme/widgets/pull/1'] })), ['Enter', 'o', 's', 'd'])
+	assert.deepEqual(
+		threadActions(answer({ id: 1, links: ['https://a.example/1', 'https://a.example/2'] }), NOW).find(
+			action => action.key === 'o',
+		)?.label,
+		'links',
+	)
+	assert.deepEqual(keys(answer({ id: 1, state: 'snoozed', snoozedUntil: iso(-60) })), ['Enter', 't', 'd'])
+	assert.deepEqual(keys(answer({ id: 1, state: 'done', updatedAt: iso(5) })), ['Enter', 't'])
+	assert.equal(threadActions(answer({ id: 1 }), NOW)[0]?.label, 'read')
+	assert.equal(actionKeyHint('Enter'), '↵')
+	assert.equal(actionKeyHint('d'), 'd')
+	assert.deepEqual(actionPatch('d', answer({ id: 1 }), NOW), { state: 'done' })
+	assert.equal(actionNote('d', answer({ id: 1 }), NOW), 'Closed the answer from dispatcher')
+})
+
+test('agent answers: the row reads like an ask without receipts, and Done today says read', () => {
+	const view = signalRowView(answer({ id: 1 }), null, NOW)
+	assert.equal(view.glyph, '↳')
+	assert.equal(view.toned, true)
+	assert.equal(view.ref, 'dispatcher')
+	assert.equal(view.what, 'Proxy blokuje Remote')
+	assert.equal(view.detail, 'Firemní proxy blokuje WebSocket.')
+	assert.equal(view.receipt, null)
+	assert.equal(view.age, '10m')
+	assert.equal(view.title, 'Agent answer · dispatcher')
+	assert.equal(signalRowView(answer({ id: 1, state: 'seen' }), null, NOW).toned, false)
+	assert.equal(
+		signalRowView(answer({ id: 1, links: ['https://a.example/1'] }), null, NOW).detail,
+		'Firemní proxy blokuje WebSocket. · 1 link',
+	)
+
+	const read = doneReason(answer({ id: 1, state: 'done', closedBy: 'jakub' }))
+	assert.equal(read?.kind, 'read')
+	assert.equal(read?.word, 'read')
+	const byAgent = doneReason(
+		answer({ id: 1, state: 'done', closedBy: 'agent', closedReason: SIGNAL_ASK_CLOSED_REASON }),
+	)
+	assert.equal(byAgent?.kind, 'agent')
+	assert.equal(byAgent?.word, 'closed by agent')
+	// An ask Jakub dismisses still says dismissed.
+	assert.equal(doneReason(ask({ id: 2, state: 'done', closedBy: 'jakub' }))?.word, 'dismissed')
+})
+
+test('agent answers: the inline layout shows six lines, then says there is more', () => {
+	const long = answer({ id: 1, body: ['1', '2', '3', '4', '5', '6', '7'].join('\n') })
+	assert.deepEqual(answerInline(long), { text: '1\n2\n3\n4\n5\n6', more: true })
+	assert.deepEqual(answerInline(answer({ id: 2, body: 'one\ntwo\n' })), { text: 'one\ntwo', more: false })
+	assert.equal(answerInline(answer({ id: 3, body: null })), null)
 })

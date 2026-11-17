@@ -26,13 +26,16 @@ import { GLYPH } from '../sidebar/ui'
 import { SignalsList } from './SignalsList'
 import {
 	type AgentMatch,
+	type AnswerLayout,
 	PICK_MAX,
 	REPLY_MAX,
 	type SignalActionKey,
 	type SignalSections,
+	actionKeyHint,
 	actionNote,
 	actionPatch,
 	agentBlockedNote,
+	answerInline,
 	askDeliveryTarget,
 	askReceipt,
 	defaultAgentPick,
@@ -40,9 +43,11 @@ import {
 	filteredRowView,
 	filteredSummary,
 	following,
+	formatAgo,
 	healthLines,
 	includeAction,
 	includeNote,
+	isAnswer,
 	keepSelection,
 	matchAgents,
 	muteNote,
@@ -74,16 +79,21 @@ export interface SignalsColumnProps {
 	/** Review fixtures only: the row selected and the flow open on first render. */
 	initialSelected?: number
 	initialFlow?: SignalsFlow
+	/**
+	 * Review only, until Jakub picks: where agent answers live and what closes them (see
+	 * `AnswerLayout`). Production passes nothing (`section`).
+	 */
+	answerLayout?: AnswerLayout
 }
 
 /**
  * `send` (p), `new-agent` (n), `reply` (r on an agent ask), `links` (o on an ask with several links),
- * `filtered` (f: the filtered mail list), `done` (D: the threads done today).
+ * `read` (↵ on an agent answer), `filtered` (f: the filtered mail list), `done` (D: the threads done today).
  */
 export type SignalsFlow =
 	| { type: 'send' | 'new-agent' | 'reply' | 'slack-reply'; id: number }
 	/** `back: 'done'`: opened from the done list, so Esc goes back there. */
-	| { type: 'links'; id: number; back?: 'done' }
+	| { type: 'links' | 'read'; id: number; back?: 'done' }
 	| { type: 'filtered' | 'done' }
 	| null
 
@@ -144,15 +154,19 @@ function SignalRow({
 	now,
 	selected,
 	onSelect,
+	inline = false,
 }: {
 	thread: SignalThread
 	snapshot: AgentDockSnapshot | null
 	now: number
 	selected: boolean
 	onSelect(): void
+	/** The `inline` answer layout: an open answer shows its body in place of the dim body line. */
+	inline?: boolean
 }) {
 	const view = signalRowView(thread, snapshot, now)
 	const section = signalSection(thread, now) ?? 'done'
+	const body = inline && isAnswer(thread) && section !== 'done' ? answerInline(thread) : null
 	return (
 		<li
 			className="signals-tr"
@@ -211,7 +225,21 @@ function SignalRow({
 				) : null}
 				{view.agent}
 			</span>
-			{view.detail ? (
+			{body ? (
+				<span className="signals-td-answer">
+					{body.text}
+					{body.more || thread.links.length > 0 ? (
+						<span className="signals-td-answer-more">
+							{[
+								body.more ? '… ↵ read all' : '',
+								thread.links.length > 0 ? (thread.links.length === 1 ? '1 link' : `${thread.links.length} links`) : '',
+							]
+								.filter(Boolean)
+								.join(' · ')}
+						</span>
+					) : null}
+				</span>
+			) : view.detail ? (
 				<span className="signals-td-detail" title={view.detail}>
 					{view.detail}
 				</span>
@@ -268,6 +296,7 @@ export function SignalsColumn({
 	now: clock = Date.now,
 	initialSelected,
 	initialFlow = null,
+	answerLayout = 'section',
 }: SignalsColumnProps) {
 	const bridge = useSyncExternalStore(service.subscribe, service.getState)
 	const snapshot = useSyncExternalStore(dock.subscribe, dock.snapshot)
@@ -299,7 +328,7 @@ export function SignalsColumn({
 	}, [clock])
 
 	const threads = useMemo(() => mergeThreads(bridge.snapshot?.threads ?? [], overrides), [bridge.snapshot, overrides])
-	const allSections = useMemo(() => signalSections(threads, now), [threads, now])
+	const allSections = useMemo(() => signalSections(threads, now, answerLayout), [threads, now, answerLayout])
 	// Done rows are listed only in their own view (D); the list's subhead counts them.
 	const sections = useMemo(() => ({ ...allSections, done: [] }), [allSections])
 	const rows = useMemo(() => orderedRows(sections), [sections])
@@ -318,7 +347,8 @@ export function SignalsColumn({
 
 	// A flow whose thread left the snapshot closes; the list (or the done list it came from) keeps the keys.
 	useEffect(() => {
-		if (flow && 'id' in flow && !flowThread) setFlow(flow.type === 'links' && flow.back ? { type: flow.back } : null)
+		if (flow && 'id' in flow && !flowThread)
+			setFlow((flow.type === 'links' || flow.type === 'read') && flow.back ? { type: flow.back } : null)
 	}, [flow, flowThread])
 
 	const applyThread = useCallback((thread: SignalThread) => {
@@ -333,7 +363,7 @@ export function SignalsColumn({
 		(message?: string | null) => {
 			// Links opened from the done list go back to it, which takes the keys itself when it mounts.
 			const open = flowRef.current
-			const back = open?.type === 'links' && open.back ? open.back : null
+			const back = (open?.type === 'links' || open?.type === 'read') && open.back ? open.back : null
 			setFlow(back ? { type: back } : null)
 			if (message !== undefined) setNote(message)
 			if (!back) refocus()
@@ -414,6 +444,16 @@ export function SignalsColumn({
 			const type =
 				key === 'p' ? 'send' : key === 'n' ? 'new-agent' : thread.source === 'slack' ? 'slack-reply' : 'reply'
 			setFlow({ type, id: thread.id })
+			return
+		}
+		if (key === 'Enter') {
+			// Read an answer in full; opening it marks it seen (as opening a thread's source does).
+			setNote(null)
+			setFlow({ type: 'read', id: thread.id, ...(flowRef.current?.type === 'done' ? { back: 'done' as const } : {}) })
+			if (thread.state === 'new')
+				void service.update(thread.id, { state: 'seen' }).then(seen => {
+					if (alive.current && seen.data) applyThread(seen.data)
+				})
 			return
 		}
 		if (key === 'o' && thread.source === 'agent') {
@@ -531,6 +571,8 @@ export function SignalsColumn({
 		if (flow || event.defaultPrevented) return
 		if (event.metaKey || event.ctrlKey || event.altKey) return
 		if ((event.target as HTMLElement).closest('textarea, input')) return
+		// Enter on a button (Done today, filtered, Settings) is that button's own.
+		if (event.key === 'Enter' && (event.target as HTMLElement).closest('button')) return
 		if (event.key === 'Escape') {
 			if (!onLeave) return
 			event.preventDefault()
@@ -542,7 +584,7 @@ export function SignalsColumn({
 		}
 		if (event.key === 'j' || event.key === 'ArrowDown') move(1)
 		else if (event.key === 'k' || event.key === 'ArrowUp') move(-1)
-		else if (/^[pnmtsdorx]$/.test(event.key)) act(event.key as SignalActionKey)
+		else if (/^[pnmtsdorx]$/.test(event.key) || event.key === 'Enter') act(event.key as SignalActionKey)
 		else if (event.key === 'f' && filteredLine(filteredCount)) openFiltered()
 		else if (event.key === 'D' && allSections.doneToday > 0) openDone()
 		else return
@@ -627,6 +669,18 @@ export function SignalsColumn({
 					<SlackReplyFlow thread={flowThread} service={service} mod={mod} onClose={closeFlow} onThread={applyThread} />
 				) : flow.type === 'links' ? (
 					<LinksFlow thread={flowThread} onOpen={index => openAskLink(flowThread, index)} onClose={closeFlow} />
+				) : flow.type === 'read' ? (
+					<ReadFlow
+						thread={flowThread}
+						now={now}
+						closesOnLeave={answerLayout === 'read-closes'}
+						onOpen={index => openAskLink(flowThread, index)}
+						onDone={() => {
+							closeFlow()
+							act('d', flowThread)
+						}}
+						onClose={closeFlow}
+					/>
 				) : (
 					<NewAgentFlow
 						thread={flowThread}
@@ -660,6 +714,7 @@ export function SignalsColumn({
 										snapshot={snapshot}
 										now={now}
 										selected={current === thread.id}
+										inline={answerLayout === 'inline'}
 										onSelect={() => {
 											setSelected(thread.id)
 											setNote(null)
@@ -677,7 +732,7 @@ export function SignalsColumn({
 						<span className="signals-foot-hints" aria-hidden="true">
 							{selectedThread
 								? threadActions(selectedThread, now).map(action => (
-										<Hint key={action.key} keys={action.key}>
+										<Hint key={action.key} keys={actionKeyHint(action.key)}>
 											{action.label}
 										</Hint>
 									))
@@ -956,13 +1011,13 @@ function DoneToday({
 				onNote(null)
 			}}
 			onKey={key => {
-				if (!/^[pnmtsdor]$/.test(key)) return false
+				if (!/^[pnmtsdor]$/.test(key) && key !== 'Enter') return false
 				if (thread) onAct(key as SignalActionKey, thread)
 				return true
 			}}
 			onClose={onClose}
 			hints={actions.map(action => (
-				<Hint key={action.key} keys={action.key}>
+				<Hint key={action.key} keys={actionKeyHint(action.key)}>
 					{action.label}
 				</Hint>
 			))}
@@ -1376,12 +1431,13 @@ function SendFlow({
 }
 
 /** An ask's links as plain text lines (never `<a href>`): what opens is exactly what is shown. */
-function AskLinks({ links }: { links: readonly string[] }) {
+function AskLinks({ links, numbered = false }: { links: readonly string[]; numbered?: boolean }) {
 	return (
 		<ul className="signals-ask-links" aria-label="Links">
 			{links.map((link, index) => (
 				// biome-ignore lint/suspicious/noArrayIndexKey: links are positional (openLink takes the index and the link shown)
 				<li key={index} className="signals-ask-link">
+					{numbered && index < PICK_MAX ? <span className="signals-ask-link-n">{index + 1} </span> : null}
 					{link}
 				</li>
 			))}
@@ -1637,6 +1693,111 @@ function SlackReplyFlow({
 						Send
 					</Btn>
 				</span>
+			</footer>
+		</div>
+	)
+}
+
+/**
+ * `↵` on an agent answer: the whole answer, read (13/20, line breaks kept, plain untrusted text), its
+ * links as numbered plain-text lines (1–9 opens one). Nothing to send back: `d` (or Done) closes it
+ * once read; with `closesOnLeave` (the `read-closes` review layout) going back closes it too.
+ */
+function ReadFlow({
+	thread,
+	now,
+	closesOnLeave,
+	onOpen,
+	onDone,
+	onClose,
+}: {
+	thread: SignalThread
+	now: number
+	closesOnLeave: boolean
+	/** Resolves with the failure note, or null once opened. */
+	onOpen(index: number): Promise<string | null>
+	/** Closes the answer (done), then back. */
+	onDone(): void
+	onClose(message?: string | null): void
+}) {
+	const [note, setNote] = useState<string | null>(null)
+	const opening = useRef(false)
+	const alive = useRef(true)
+	useEffect(
+		() => () => {
+			alive.current = false
+		},
+		[],
+	)
+	const open = thread.state !== 'done'
+	const leave = (): void => {
+		if (closesOnLeave && open) onDone()
+		else onClose()
+	}
+	const openLink = async (index: number): Promise<void> => {
+		if (opening.current || index < 0 || index >= thread.links.length) return
+		opening.current = true
+		try {
+			const failed = await onOpen(index)
+			if (alive.current) setNote(failed ?? `Opened link ${index + 1}`)
+		} finally {
+			opening.current = false
+		}
+	}
+	const keys = flowKeys({
+		count: thread.links.length,
+		onPick: index => void openLink(index),
+		onSubmit: () => undefined,
+		onClose: leave,
+	})
+	const age = formatAgo(now - Date.parse(thread.lastActivityAt))
+	return (
+		<div
+			ref={takeKeys}
+			tabIndex={-1}
+			className="signals-flow-keys"
+			data-flow="read"
+			onKeyDown={event => {
+				keys(event)
+				if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
+				if (event.key === 'd' && open) {
+					event.preventDefault()
+					event.stopPropagation()
+					onDone()
+				}
+			}}
+		>
+			<FlowHeader glyph="↳" kind={`Answer from ${thread.ref}`} context={age} onClose={leave} />
+			<div className="signals-scroll signals-flow">
+				<p className="signals-ask-title">{thread.title}</p>
+				{thread.body ? <p className="signals-ask-body">{thread.body}</p> : null}
+				{thread.links.length > 0 ? <AskLinks links={thread.links} numbered /> : null}
+			</div>
+			<footer className="signals-foot">
+				<span className="signals-foot-hints" aria-hidden="true">
+					{thread.links.length > 0 ? (
+						<Hint keys={pickRange(thread.links.length)} pick>
+							open
+						</Hint>
+					) : null}
+					{open ? <Hint keys="d">done</Hint> : null}
+					<Hint keys="esc">{closesOnLeave && open ? 'done and back' : 'back'}</Hint>
+				</span>
+				<output className="signals-note">
+					{note ??
+						(open
+							? closesOnLeave
+								? 'Going back closes it as read'
+								: 'Close it once read; it stays in Answers until then'
+							: 'Read and closed')}
+				</output>
+				{open ? (
+					<span className="signals-foot-actions">
+						<Btn sm ariaKeyShortcuts="d" onClick={onDone}>
+							Done
+						</Btn>
+					</span>
+				) : null}
 			</footer>
 		</div>
 	)

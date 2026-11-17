@@ -5,7 +5,7 @@
 
 import type { ReactNode } from 'react'
 import type { SignalSourceHealth, SignalThread } from '../../shared-helm'
-import { type SignalSections, handled, needsYouCount, restingWords } from './model'
+import { type SignalSections, answersNew, needsYouCount, needsYouNew, restingWords } from './model'
 
 export interface SignalsListProps {
 	/** Needs you, Managed and Snoozed (done rows are listed only in their own view). */
@@ -46,7 +46,7 @@ function BrailleField({ unknown }: { unknown: boolean }) {
 const CLOCKWISE = [0, 1, 3, 5, 4, 2]
 
 /** A 2×3 Braille cell counting a section (one lit dot per thread, clockwise, six and more = full). */
-function BrailleCount({ count, tone }: { count: number; tone?: 'new' }) {
+function BrailleCount({ count, tone }: { count: number; tone?: 'new' | 'info' }) {
 	const lit = new Set(CLOCKWISE.slice(0, Math.min(count, 6)))
 	return (
 		<span className="signals-braille signals-braille-mark" data-tone={tone} aria-hidden="true">
@@ -68,7 +68,7 @@ function Section({
 }: {
 	label: string
 	count: number
-	tone?: 'new'
+	tone?: 'new' | 'info'
 	threads: readonly SignalThread[]
 	row: SignalsListProps['row']
 }) {
@@ -87,7 +87,7 @@ function Section({
 }
 
 export function SignalsList({ sections, sources, now, row, done, filtered }: SignalsListProps) {
-	const open = sections.needs.length + sections.managed.length + sections.snoozed.length > 0
+	const open = sections.needs.length + sections.answers.length + sections.managed.length + sections.snoozed.length > 0
 	const resting = restingWords(sources)
 	return (
 		<div className="signals-list">
@@ -97,8 +97,17 @@ export function SignalsList({ sections, sources, now, row, done, filtered }: Sig
 						<Section
 							label="Needs you"
 							count={needsYouCount(sections, now)}
-							tone={sections.needs.some(thread => thread.state === 'new' && !handled(thread, now)) ? 'new' : undefined}
+							tone={needsYouNew(sections, now) ? 'new' : undefined}
 							threads={sections.needs}
+							row={row}
+						/>
+					) : null}
+					{sections.answers.length > 0 ? (
+						<Section
+							label="Answers"
+							count={sections.answers.length}
+							tone={answersNew(sections.answers) ? 'info' : undefined}
+							threads={sections.answers}
 							row={row}
 						/>
 					) : null}

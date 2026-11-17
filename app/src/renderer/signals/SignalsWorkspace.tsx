@@ -8,10 +8,13 @@ import { useEffect, useMemo, useRef } from 'react'
 import { focusActiveTerminal, memoryLeftColumnMode, mountLeftColumn, mountSignalsShortcut } from '../left-column'
 import { type TerminalWorkspaceFixtureOptions, TerminalWorkspaceFixtureView } from '../terminal-workspace-fixtures'
 import { type SignalsFlow, mountSignals } from './Signals'
+import type { AnswerLayout } from './model'
 import {
 	ASK_TERMINAL_IDLE,
 	type SignalsFixture,
 	createSignalsFixture,
+	signalAnswerDoneFixture,
+	signalAnswerFixtures,
 	signalAskFixtures,
 	signalDoneFixtures,
 	signalSlackFilteredFixture,
@@ -26,7 +29,16 @@ import {
  * `empty`: every thread done (nothing needs you, nothing managed, nothing snoozed); `empty-down`: the
  * same while Mail needs permission (no all-clear).
  */
-export type SignalsScenario = 'column' | 'quiet' | 'source-down' | 'asks' | 'done' | 'slack' | 'empty' | 'empty-down'
+export type SignalsScenario =
+	| 'column'
+	| 'quiet'
+	| 'source-down'
+	| 'asks'
+	| 'answers'
+	| 'done'
+	| 'slack'
+	| 'empty'
+	| 'empty-down'
 
 export interface SignalsWorkspaceProps {
 	/**
@@ -39,7 +51,9 @@ export interface SignalsWorkspaceProps {
 	 * Open a flow on its fixture thread (send: crane-rental#970, new agent: the Sentry alert, reply
 	 * and links: the `Signals asks` row-layout ask), or the filtered mail or done today list.
 	 */
-	flow?: 'send' | 'new-agent' | 'reply' | 'slack-reply' | 'links' | 'filtered' | 'done'
+	flow?: 'send' | 'new-agent' | 'reply' | 'slack-reply' | 'links' | 'read' | 'filtered' | 'done'
+	/** Review only: where agent answers live and what closes them (the `answers` scenario). */
+	answerLayout?: AnswerLayout
 	/**
 	 * Story only: 1 s after load, Jakub types this prompt into the idle ask agent's Okena terminal
 	 * (`ASK_TERMINAL_IDLE`); main's real ask resolver closes the open asks bound to it.
@@ -93,6 +107,15 @@ export function fixtureFor(scenario: SignalsWorkspaceProps['scenario']): Signals
 			dock: { ...dock, sessions: [...dock.sessions, ...signalsAskSessions(now)] },
 		})
 	}
+	if (scenario === 'answers') {
+		const dock = signalsDockFixture(now)
+		// Answers beside an ask and the column's threads; one read today shows in Done today.
+		const asks = signalAskFixtures(now).filter(thread => thread.id === 502)
+		return createSignalsFixture({
+			threads: [...signalAnswerFixtures(now), signalAnswerDoneFixture(now), ...asks, ...threads],
+			dock: { ...dock, sessions: [...dock.sessions, ...signalsAskSessions(now)] },
+		})
+	}
 	if (scenario === 'asks') {
 		const dock = signalsDockFixture(now)
 		return createSignalsFixture({
@@ -126,9 +149,16 @@ const FLOW_THREAD: Record<Exclude<NonNullable<SignalsWorkspaceProps['flow']>, 'f
 	reply: 501,
 	'slack-reply': 701,
 	links: 501,
+	read: 601,
 }
 
-export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, width }: SignalsWorkspaceProps) {
+export function SignalsWorkspace({
+	scenario = 'column',
+	flow,
+	terminalPrompt,
+	width,
+	answerLayout,
+}: SignalsWorkspaceProps) {
 	const fixture = useMemo(() => fixtureFor(flow === 'slack-reply' ? 'slack' : scenario), [scenario, flow])
 	const options = useMemo<TerminalWorkspaceFixtureOptions>(
 		() => ({ agentDock: { scenario: 'real-case', position: 'bottom', output: 'claude-code' } }),
@@ -175,6 +205,7 @@ export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, wi
 					onLeave: () => focusActiveTerminal(root),
 					mod: 'cmd',
 					initialFlow,
+					...(answerLayout ? { answerLayout } : {}),
 				}),
 		})
 		const disposeShortcut = mountSignalsShortcut({
@@ -196,7 +227,7 @@ export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, wi
 			content?.style.removeProperty('--left-width')
 			if (window.__signalsFixture === fixture) window.__signalsFixture = undefined
 		}
-	}, [options, fixture, flow, terminalPrompt, width])
+	}, [options, fixture, flow, terminalPrompt, width, answerLayout])
 
 	return (
 		<div ref={wrapRef} style={{ display: 'contents' }}>
