@@ -1016,6 +1016,8 @@ test('an ask with a key upserts: created, unchanged, updated in place, renewed',
 		assert.equal(renewed.thread.state, 'new')
 		assert.equal(renewed.thread.snoozedUntil, null)
 		assert.equal(renewed.thread.reply, null)
+		assert.equal(renewed.thread.routedHow, null, 'the earlier reply route says nothing about the answer')
+		assert.equal(renewed.thread.routedAgent, null)
 		assert.equal(renewed.thread.replyAt, null)
 		assert.equal(renewed.thread.body, 'Two variants, now with a third.')
 		assert.deepEqual(renewed.thread.links, ask.links, 'links follow the latest add')
@@ -1612,6 +1614,7 @@ test('one key is one agent thread: changing its kind renews it; the open cap cou
 	withDb(db => {
 		const ask = db.signals.upsertAsk({ key: 'proxy', title: 'Proxy blocks Remote' }, T0).thread
 		db.signals.reply(ask.id, 'Why?', at(1))
+		db.signals.setRouted(ask.id, { agent: 'dispatcher', how: 'replied' }, at(1))
 		const unchanged = db.signals.upsertAsk({ key: 'proxy', title: 'Proxy blocks Remote', kind: 'ask' }, at(2))
 		assert.equal(unchanged.outcome, 'unchanged', 'an explicit ask is the default kind')
 

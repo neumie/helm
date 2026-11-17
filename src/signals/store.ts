@@ -1117,7 +1117,7 @@ export class SignalStore {
 						`UPDATE signal_threads SET kind = ?, reasons = ?, title = ?, head = ?, body = ?, links = ?, ref = ?,
 						   full_ref = ?, actor = ?, ask_terminal = ?, activity_key = ?, last_activity_at = ?, state = 'new',
 						   snoozed_until = NULL, closed_reason = NULL, closed_by = NULL, reply = NULL, reply_at = NULL,
-						   updated_at = ?
+						   routed_agent = NULL, routed_how = NULL, routed_at = NULL, updated_at = ?
 						 WHERE id = ?`,
 					)
 					.run(

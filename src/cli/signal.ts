@@ -140,7 +140,7 @@ Examples:
   printf 'Merge #314 now?\\nCI is green.\\n' | helm signal add --title "Merge #314?" --body-file -
   helm signal add --terminal 5d3f8a2e-1b4c-4e8a-9f21-6c0d7e9b3a14 \\
     --title "Approve the VOS slot plan?" --key vos-slots
-  helm signal answer --key remote-proxy --title "Proxy blocks Remote" \
+  helm signal answer --key remote-proxy --title "Proxy blocks Remote" \\
     --body-file answer.md --link "https://github.com/neumie/helm/pull/321"
   helm signal show 12
   helm signal done --key signals-row-layout --note "Jakub picked 2; built it"
