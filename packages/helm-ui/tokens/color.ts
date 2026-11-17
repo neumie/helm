@@ -157,7 +157,7 @@ export const PRESET_EARLIER_VALUES: Record<
 	keyof typeof THEME_PRESETS,
 	Partial<Record<ThemeToken, readonly string[]>>
 > = {
-	// Before D5 (§9 rulings 89, 90, 92; 0b4934b 2026-11-13) and before D15 (§9 rulings 110–112, 2026-11-17).
+	// Before D5 (§9 rulings 89, 90, 92; 0b4934b 2026-11-13) and before D15 (§9 rulings 110–112; edd33f9 2026-11-17).
 	helm: {
 		'--text-2': ['#62666e'],
 		'--accent-fill': ['#3b82f6'],
