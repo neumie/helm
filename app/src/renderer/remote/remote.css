@@ -1623,7 +1623,7 @@ body.remote-page {
 	display: flex;
 	flex-direction: column;
 	margin-bottom: 8px;
-	padding: 18px 0 max(12px, env(safe-area-inset-bottom, 0px));
+	padding: 20px 0 max(12px, env(safe-area-inset-bottom, 0px));
 	border: 1px solid var(--hairline-strong);
 	border-radius: var(--radius-float);
 	background: var(--chrome, var(--pane));

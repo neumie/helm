@@ -32,14 +32,14 @@
 .run-context-kicker {
 	margin-bottom: 2px;
 	color: var(--text-2);
-	font-size: calc(10px * var(--ui-scale));
+	font-size: calc(11px * var(--ui-scale));
 	font-weight: 600;
 }
 
 .run-context-heading h1 {
 	overflow: hidden;
 	color: var(--text-0);
-	font-size: calc(14px * var(--ui-scale));
+	font-size: calc(13px * var(--ui-scale));
 	font-weight: 600;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -127,7 +127,7 @@
 .run-context-editor {
 	overflow: auto;
 	scrollbar-gutter: stable;
-	padding: 28px max(36px, calc((100% - 760px) / 2));
+	padding: 32px max(36px, calc((100% - 760px) / 2));
 	background: var(--pane);
 }
 
@@ -158,7 +158,7 @@
 	min-height: calc(100vh - 160px);
 	padding: 0;
 	background: transparent;
-	font-size: calc(14px * var(--ui-scale));
+	font-size: calc(15px * var(--ui-scale));
 	line-height: 1.6;
 }
 
@@ -201,7 +201,7 @@
 
 .run-context-source dt {
 	color: var(--text-2);
-	font-size: calc(10px * var(--ui-scale));
+	font-size: calc(11px * var(--ui-scale));
 	font-weight: 500;
 }
 
@@ -220,7 +220,7 @@
 .run-context-dialog {
 	width: min(440px, calc(100% - 48px));
 	margin: auto;
-	padding: 22px 24px;
+	padding: 24px;
 	border: 1px solid var(--hairline-strong);
 	border-radius: 8px;
 	background: var(--chrome);
@@ -230,13 +230,13 @@
 .run-context-dialog h2,
 .run-context-start-state h1 {
 	color: var(--text-0);
-	font-size: calc(15px * var(--ui-scale));
+	font-size: calc(17px * var(--ui-scale));
 	font-weight: 600;
 }
 
 .run-context-dialog p,
 .run-context-start-state p {
-	margin: 8px 0 22px;
+	margin: 8px 0 24px;
 	color: var(--text-1);
 	font-size: calc(12px * var(--ui-scale));
 	line-height: 1.5;

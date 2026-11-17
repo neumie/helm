@@ -464,7 +464,7 @@
 .agent-dock-agents-seg {
 	flex: none;
 	width: 8px;
-	border-radius: 1.5px;
+	border-radius: 999px;
 	background: color-mix(in srgb, var(--text-2) 70%, transparent);
 }
 
@@ -1143,7 +1143,7 @@
 	height: 10px;
 	margin-left: 0;
 	border: 1px solid var(--dock-dim);
-	border-radius: 3px;
+	border-radius: 4px;
 }
 
 .agent-dock-choices[data-multi="true"] .agent-dock-choice-cursor[data-on="true"] {

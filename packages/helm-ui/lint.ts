@@ -258,16 +258,16 @@ export interface PrimitiveVocabulary {
 // Scales from docs/design-system.md.
 
 /**
- * §2.3: 4px base scale; 0 is no space and 1px a hairline compensation (a line, not a space). 6 and 10 are the
- * in-component steps (§9 ruling 15: inside a component only, never between sections or from an edge; that
- * placement is a review rule, the scanner cannot see it). Checked on margin, padding, scroll-margin/-padding
- * and gap, in px and rem (16px; em/% are relative to content). Positions are not spaces: physical
- * top/right/bottom/left and their `inset` shorthands are not checked.
+ * §2.3: 4px base scale; 0 is no space and 1px a hairline compensation (a line, not a space). 2, 6 and 10 are
+ * the in-component steps (§9 rulings 15 and 118: inside a component only, never between sections or from an
+ * edge; that placement is a review rule, the scanner cannot see it). Checked on margin, padding,
+ * scroll-margin/-padding and gap, in px and rem (16px; em/% are relative to content). Positions are not
+ * spaces: physical top/right/bottom/left and their `inset` shorthands are not checked. A component metric
+ * off this scale (the md button's 0 14, a traffic-light reserve) is written in its §3 spec and keeps a
+ * baseline entry citing that row (§9 ruling 120).
  */
-export const SPACING_PX = new Set([0, 1, 4, 6, 8, 10, 12, 16, 20, 24, 32])
-/** §2.3: "2px only as inner padding of segmented tracks"; padding on these selectors may be 2px. */
-export const SEGMENTED_SELECTOR = /segmented|-seg\b|__seg\b/
-/** §2.4: 4 / 6 / 8 and full (999); 50% is the circle form of full. */
+export const SPACING_PX = new Set([0, 1, 2, 4, 6, 8, 10, 12, 16, 20, 24, 32])
+/** §2.4: 4 / 6 / 8 and full (999); 50% is the circle form of full. A thin bar is a pill (§9 ruling 119). */
 export const RADIUS_PX = new Set([0, 4, 6, 8, 999])
 export const RADIUS_PERCENT = new Set([0, 50])
 /**
@@ -279,6 +279,11 @@ export const REMOTE_RADIUS_TOKENS = ['--radius-touch', '--radius-float', '--radi
 export const REMOTE_DIR = 'app/src/renderer/remote/'
 /** §2.2: the type ladder (17 hero, 13 body/emphasis, 12 secondary/section/label/button, 11 meta/chip/mono). */
 export const FONT_SIZE_PX = new Set([11, 12, 13, 17])
+/**
+ * §2.2, §9 ruling 121: the one relative step, 0.92em, for text that must follow the text around it (inline code
+ * in 13/15/16px text, the CSV grid's column letters and row numbers beside its cells).
+ */
+export const RELATIVE_FONT_SIZE_EM = new Set([0.92])
 /** §2.2, §9 ruling 99: the written weights are 400/500/600 only (no 650, no 700). */
 export const FONT_WEIGHTS = new Set([400, 500, 600])
 /**
@@ -303,6 +308,8 @@ export const SURFACE_FONT_SIZE_PX: readonly { dir: string; px: readonly number[]
 	{ dir: REMOTE_DIR, px: [16, 21] },
 	// The Remote PWA's offline page takes the same two steps: reading 16, heading 21 (§9 ruling 117).
 	{ dir: 'app/assets/remote/', px: [16, 21] },
+	// The Run Context editor's document text takes the Document Review reading step 15 (§9 ruling 121).
+	{ dir: 'app/src/renderer/run-context/', px: [15] },
 ]
 
 const TIMING_KEYWORDS = new Set(['ease', 'ease-in', 'ease-out', 'ease-in-out', 'linear', 'step-start', 'step-end'])
@@ -781,7 +788,6 @@ export function lintDeclaration(property: string, value: string, ctx: Declaratio
 		/^(margin|padding|scroll-margin|scroll-padding)(-[a-z-]+)?$/.test(prop) ||
 		/^(grid-)?(row-|column-)?gap$/.test(prop)
 	) {
-		const twoAllowed = prop.startsWith('padding') && SEGMENTED_SELECTOR.test(ctx.selector)
 		const off = literals((w, vctx) => {
 			const n = parseNumber(w)
 			if (!n || (n.unit !== 'px' && n.unit !== 'rem')) return false
@@ -796,7 +802,7 @@ export function lintDeclaration(property: string, value: string, ctx: Declaratio
 			)
 				return false
 			const px = Math.abs(n.unit === 'rem' ? n.n * REM_PX : n.n)
-			return !SPACING_PX.has(px) && !(twoAllowed && px === 2)
+			return !SPACING_PX.has(px)
 		})
 		if (off) rules.add('spacing-off-scale')
 	}
@@ -829,7 +835,10 @@ export function lintDeclaration(property: string, value: string, ctx: Declaratio
 				if (!scaled) unscaled = true
 			} else if (n.unit === '' && vctx.funcs.length) {
 				// a multiplier inside calc()
-			} else if (!((n.unit === '%' && n.n === 100) || (n.unit === 'em' && n.n === 1))) off = true
+			} else if (
+				!((n.unit === '%' && n.n === 100) || (n.unit === 'em' && (n.n === 1 || RELATIVE_FONT_SIZE_EM.has(n.n))))
+			)
+				off = true
 		}
 		if (off) rules.add('font-size-off-scale')
 		if (unscaled && ctx.scaledType) rules.add('font-size-unscaled')
@@ -2052,11 +2061,9 @@ export function defaultReason(f: FindingKey): string {
 		case 'raw-easing':
 			return 'S2 adds z/motion tokens'
 		case 'spacing-off-scale':
-			if (/(^|[\s.,])\.?(chip|vg-chip|menu-trigger-badge)\b/.test(f.selector) && /\b2px 8px\b/.test(f.value))
-				return '§9 ruling 26 chip padding 2×8'
-			return 'D17 off-scale values the scale picks did not settle (2px steps and component dimensions)'
+			return '§9 ruling 120 component metric (name its §3 row, or snap the value to the scale)'
 		case 'font-size-off-scale':
-			return 'D17 off-scale values the scale picks did not settle (type outside Remote and the count badges)'
+			return '§9 ruling 121 (glyph sizes are icon slots, written in their §3 row; text takes the scale): needs a fix'
 		case 'font-size-unscaled':
 			return '§9 ruling 13 (no fixed sidebar sizes: write calc(<px> * var(--ui-scale))): needs a fix'
 		case 'letter-spacing':
@@ -2064,7 +2071,7 @@ export function defaultReason(f: FindingKey): string {
 		case 'font-weight':
 			return '§9 ruling 99 (written weights 400/500/600 only): needs a fix'
 		case 'radius-off-scale':
-			return 'D17 off-scale values the scale picks did not settle (radii under 4px)'
+			return '§9 ruling 119 (a thin bar is a pill 999, small shapes take 4): needs a fix'
 		case 'inline-svg':
 			return '§9 ruling 95 icon set (draw it in the icon module, or list a real exception in ICONS_OUTSIDE_MODULE)'
 		case 'primitive-outside-owner':
@@ -2073,7 +2080,7 @@ export function defaultReason(f: FindingKey): string {
 		case 'button-border':
 			return '§9 ruling 4 (no border on any button): needs a pick or a fix'
 		default:
-			return 'D17 off-scale values the scale picks did not settle'
+			return '§9 ruling 2 (no uppercase text): needs a fix'
 	}
 }
 

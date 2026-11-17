@@ -83,9 +83,11 @@ const BASELINE_CAPS: Record<(typeof lint.RULES)[number], number> = {
 	// 8 / 58 / 20: §9 rulings 15, 98, 100 and 101 (D8 picks) fixed or ruled the rest (2026-11-13).
 	// 7 / 55 / 19: §9 ruling 103 put the extension popup on the scale (2026-11-13).
 	// 54 / 17: §9 ruling 117 put the Remote offline page on Remote's type steps and the spacing scale (2026-11-17).
-	'radius-off-scale': 7,
-	'spacing-off-scale': 54,
-	'font-size-off-scale': 17,
+	// 0 / 22 / 7: §9 rulings 118-121 (D17 picks) fixed the radii, accepted 2px and 0.92em, snapped spacing and
+	// type; what stays is component metrics and icon glyphs, each citing its §3 row (2026-11-17).
+	'radius-off-scale': 0,
+	'spacing-off-scale': 22,
+	'font-size-off-scale': 7,
 	'font-size-unscaled': 0,
 	uppercase: 0,
 	// 0 / 0: §9 rulings 99 and 102 (D8 picks, 2026-11-13).
@@ -297,7 +299,7 @@ test('indirection: !important, var() fallbacks behind non-tokens, local custom p
 	)
 })
 
-test('radius and spacing scales: on-scale, hairlines, segmented 2px, calc widths and var fallbacks', () => {
+test('radius and spacing scales: on-scale, hairlines, the 2px step, calc widths and var fallbacks', () => {
 	assert.deepEqual(
 		css(`
 			.a { border-radius: 6px; border-top-left-radius: 999px; border-radius: 50%; border-radius: var(--r, 10px) }
@@ -313,7 +315,6 @@ test('radius and spacing scales: on-scale, hairlines, segmented 2px, calc widths
 			'.d | padding: 5px | spacing-off-scale',
 			'.d | margin-top: calc(-44px - env(safe-area-inset-top, 0px)) | spacing-off-scale',
 			'.e | padding-top: calc(28px + var(--o, 76px)) | spacing-off-scale',
-			'.chip | padding: 2px 8px | spacing-off-scale',
 		],
 	)
 	// rem is checked at 16px; a px argument of max()/min()/clamp() is a value, not a measure; positions
@@ -362,17 +363,40 @@ test('D8 picks: in-component 6/10, Remote phone radii as tokens only, Remote 16/
 	)
 })
 
+test('D17 picks: the 2px step, thin bars as pills, Run Context reading step 15, the relative 0.92em', () => {
+	// §9 ruling 118: 2 is an in-component step like 6 and 10, on any property and selector.
+	assert.deepEqual(css('.a { gap: 2px; margin-top: 2px; padding: 2px 8px } .b { padding: 3px }'), [
+		'.b | padding: 3px | spacing-off-scale',
+	])
+	// §9 ruling 119: a thin bar is a pill (999) and small shapes take 4; 1, 1.5, 2 and 3 stay off.
+	assert.deepEqual(
+		css('.p { border-radius: 999px } .s { border-radius: 4px } .x { border-radius: 1.5px } .y { border-radius: 3px }'),
+		['.x | border-radius: 1.5px | radius-off-scale', '.y | border-radius: 3px | radius-off-scale'],
+	)
+	// §9 ruling 121: the Run Context editor's text takes the reading step 15, only in its folder.
+	const runContext = 'app/src/renderer/run-context/x.css'
+	assert.deepEqual(
+		css('.e { font-size: calc(15px * var(--ui-scale)) } .k { font-size: calc(10px * var(--ui-scale)) }', runContext),
+		['.k | font-size: calc(10px * var(--ui-scale)) | font-size-off-scale'],
+	)
+	assert.deepEqual(css('.e { font-size: 15px }'), ['.e | font-size: 15px | font-size-off-scale'])
+	// §9 ruling 121: 0.92em is the one relative step; any other em size is off.
+	assert.deepEqual(css('[data-reading-width] :not(pre) > code { font-size: 0.92em } .c { font-size: 0.85em }'), [
+		'.c | font-size: 0.85em | font-size-off-scale',
+	])
+})
+
 test('type: ladder, surface sizes, unscaled sidebar sizes, letter-spacing, weights, uppercase', () => {
 	assert.deepEqual(
 		css(`
 			.a { font-size: calc(12px * var(--ui-scale)); font-size: 13px; font-size: inherit; font-size: var(--dock-fs) }
-			.b { font-size: 14px } .c { font-size: 0.92em } .d { font: 600 12px/1.4 var(--font-ui) } .e { font: 700 15px var(--font-ui) }
+			.b { font-size: 14px } .c { font-size: 0.9em } .d { font: 600 12px/1.4 var(--font-ui) } .e { font: 700 15px var(--font-ui) }
 			.f { letter-spacing: -0.01em } .g { letter-spacing: normal } .h { letter-spacing: 0.04em }
 			.i { font-weight: 500 } .j { font-weight: bold } .k { font-weight: 650 } .l { text-transform: none }
 		`),
 		[
 			'.b | font-size: 14px | font-size-off-scale',
-			'.c | font-size: 0.92em | font-size-off-scale',
+			'.c | font-size: 0.9em | font-size-off-scale',
 			'.e | font: 700 15px var(--font-ui) | font-size-off-scale',
 			'.e | font: 700 15px var(--font-ui) | font-weight',
 			'.h | letter-spacing: 0.04em | letter-spacing',

@@ -170,10 +170,10 @@
 	flex-direction: column;
 }
 
-/* 28px above each band after the first: the space reads as a deliberate break (Jakub's pick
- * 2026-11-12 over none, 12 and 20px). */
+/* 32px above each band after the first: the space reads as a deliberate break (Jakub's pick
+ * 2026-11-12 over none, 12 and 20px; 28 snapped to the scale, §9 ruling 120). */
 .signals-section + .signals-section {
-	margin-top: 28px;
+	margin-top: 32px;
 }
 
 /* The section title on a full-width --chrome band (the topbar's material), sticky at the top of
@@ -207,7 +207,7 @@
 
 /* A row selected by keyboard scrolls clear of its band. */
 .signals-section .signals-tr {
-	scroll-margin-top: 28px;
+	scroll-margin-top: 32px;
 }
 
 /* `Done today 8 · 5 filtered` at the bottom of the list: two buttons on one line. It wraps between
@@ -258,7 +258,7 @@
 .signals-braille {
 	display: inline-flex;
 	gap: 12px;
-	margin-bottom: 14px;
+	margin-bottom: 16px;
 }
 
 .signals-braille-cell {
@@ -487,7 +487,7 @@
 	flex: 1 1 100%;
 	display: flex;
 	flex-wrap: wrap;
-	gap: 2px 14px;
+	gap: 2px 16px;
 	min-width: 0;
 }
 

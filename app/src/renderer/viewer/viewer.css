@@ -132,7 +132,7 @@
 }
 .viewer-code .cm-editor .cm-searchMatch {
 	background: color-mix(in srgb, var(--accent) 15%, transparent);
-	border-radius: 2px;
+	border-radius: 4px;
 }
 .viewer-code .cm-editor .cm-searchMatch.cm-searchMatch-selected {
 	background: color-mix(in srgb, var(--accent) 30%, transparent);
@@ -684,7 +684,7 @@
 	position: relative;
 	overflow: hidden;
 	background: var(--paper);
-	border-radius: 2px;
+	border-radius: 4px;
 	color-scheme: only light;
 }
 .viewer-pdf-canvas {
@@ -839,7 +839,7 @@
 }
 .viewer-pdf-password-title {
 	margin: 0;
-	font-size: calc(14px * var(--ui-scale));
+	font-size: calc(13px * var(--ui-scale));
 }
 .viewer-pdf-password-field {
 	display: flex;

@@ -392,7 +392,7 @@
 	right: 0;
 	bottom: 0;
 	height: 2px;
-	border-radius: 1px;
+	border-radius: 999px;
 	background: var(--accent);
 }
 .segmented-index .segment-count {
@@ -557,7 +557,7 @@
 }
 .item-project-group-head > span:last-child {
 	color: var(--text-2);
-	font-size: calc(10px * var(--ui-scale));
+	font-size: calc(11px * var(--ui-scale));
 	font-weight: 400;
 	font-variant-numeric: tabular-nums;
 }
@@ -1642,7 +1642,7 @@ button.banner {
 	bottom: 0;
 	left: -8px;
 	width: 2px;
-	border-radius: 1px;
+	border-radius: 999px;
 	background: transparent;
 	pointer-events: none;
 	transition: background-color var(--motion-state) var(--ease-out);
@@ -1774,7 +1774,7 @@ button.banner {
 	gap: 0;
 }
 .shortcut-scope {
-	margin: 14px 0 0;
+	margin: 16px 0 0;
 	padding: 0;
 	border: 0;
 }
@@ -1862,13 +1862,13 @@ button.banner {
 }
 /* Kill Chromium's default gray swatch bezel (§3.7: no browser-default
    control chrome). Chip sits inset on the well's --fill-subtle; inner
-   radius = outer 6px − 3px padding. */
+   radius = outer 6px − 2px padding (§9 ruling 119). */
 .color-input::-webkit-color-swatch-wrapper {
-	padding: 3px;
+	padding: 2px;
 }
 .color-input::-webkit-color-swatch {
 	border: none;
-	border-radius: 3px;
+	border-radius: 4px;
 }
 
 /* ---------- sheet (§3.9) ---------- */
