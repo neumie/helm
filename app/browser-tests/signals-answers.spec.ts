@@ -79,7 +79,13 @@ test('↵ reads the whole answer, marks it seen; d closes it and Done today says
 	await expect(flow).toBeVisible()
 	await expect(flow.locator('.signals-title-kind')).toHaveText('↳Answer from dispatcher')
 	await expect(flow.locator('.signals-ask-body')).toContainText('Nic dalšího po tobě nechci')
-	await expect(flow.locator('.signals-note')).toHaveText('Close it once read')
+	// Done is offered once, as its button: no `d` hint (the list's footer beside it has it), no note.
+	const foot = flow.locator('.signals-foot')
+	await expect(foot.getByRole('button', { name: 'Done' })).toHaveCount(1)
+	await expect(foot.getByRole('button', { name: 'Done' })).toHaveAttribute('aria-keyshortcuts', 'd')
+	await expect(foot.locator('.signals-foot-hints')).not.toContainText('done')
+	expect((await foot.textContent())?.match(/done/gi)).toHaveLength(1)
+	await expect(flow.locator('.signals-note')).toHaveText('')
 	await expect(flow.locator('a')).toHaveCount(0)
 	await expect.poll(async () => (await calls(page))?.updates).toEqual([{ id: 601, patch: { state: 'seen' } }])
 	await page.screenshot({ path: test.info().outputPath('signals-answers-read.png') })
@@ -95,6 +101,17 @@ test('↵ reads the whole answer, marks it seen; d closes it and Done today says
 	const done = page.locator('.signals-flow-keys')
 	await expect(done.locator('.signals-tr[data-signal-id="601"] .signals-done-reason')).toHaveText(' · read')
 	await expect(done.locator('.signals-tr[data-signal-id="604"] .signals-done-reason')).toHaveText(' · read')
+})
+
+test('the Done button closes the open answer and leaves the panel', async ({ page }) => {
+	const view = await open(page, 'views-signals-answers--in-needs-you')
+	await view.row(601).click()
+	const flow = page.locator('.signals-detail')
+	await expect(flow).toBeVisible()
+	await flow.locator('.signals-foot').getByRole('button', { name: 'Done' }).click()
+	await expect(flow).toHaveCount(0)
+	await expect(view.row(601)).toHaveCount(0)
+	await expect(view.note).toHaveText('Closed the answer from dispatcher')
 })
 
 test('Done today: ↵ on a read answer shows it in place of that list, Esc goes back there', async ({ page }) => {

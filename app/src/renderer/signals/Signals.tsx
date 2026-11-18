@@ -1923,7 +1923,7 @@ function SignalDetail({
 		note ??
 		(routing ? routing.label : null) ??
 		columnNote ??
-		(replyable ? where : answer ? (open ? 'Close it once read' : 'Read and closed') : null)
+		(replyable ? where : answer && !open ? 'Read and closed' : null)
 	return (
 		<section
 			ref={inPlace ? takeKeys : undefined}
@@ -2011,7 +2011,6 @@ function SignalDetail({
 						</Hint>
 					) : null}
 					{replyable ? <Hint keys={submitKeys(mod)}>send</Hint> : null}
-					{answer && open ? <Hint keys="d">done</Hint> : null}
 					<Hint keys="esc">close</Hint>
 				</span>
 				<output className="signals-note">{status}</output>
@@ -2029,6 +2028,7 @@ function SignalDetail({
 						</Btn>
 					</span>
 				) : answer && open ? (
+					// Done once: the button. Its `d` hint is the list's (its footer beside the panel says `d done`).
 					<span className="signals-foot-actions">
 						<Btn sm ariaKeyShortcuts="d" onClick={onDone}>
 							Done
