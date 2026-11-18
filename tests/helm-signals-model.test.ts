@@ -43,11 +43,10 @@ const {
 	routedReceipt,
 	sendPrompt,
 	signalRowView,
+	signalSection,
 	signalSections,
 	needsYouCount,
 	needsYouNew,
-	answersNew,
-	answerInline,
 	actionKeyHint,
 	isAnswer,
 	askChoices,
@@ -1098,7 +1097,7 @@ test('filtered mail: the count after Done today, the header summary, rows by dec
 	assert.deepEqual(includeAction({}), { label: 'always show sender', button: 'Always show sender' })
 })
 
-test('agent answers: their own section by default, in Needs you for the needs layout, never counted', () => {
+test('agent answers: listed in Needs you, set apart only by ↳, never counted', () => {
 	const threads = [
 		thread({ id: 1 }),
 		answer({ id: 2, lastActivityAt: iso(2) }),
@@ -1109,34 +1108,30 @@ test('agent answers: their own section by default, in Needs you for the needs la
 	assert.equal(isAnswer(threads[1] as SignalThread), true)
 	assert.equal(isAnswer(threads[4] as SignalThread), false)
 	const sections = signalSections(threads, NOW)
-	assert.deepEqual(
-		sections.answers.map(entry => entry.id),
-		[2, 3],
-	)
-	assert.deepEqual(sections.needs.map(entry => entry.id).sort(), [1, 5])
+	assert.deepEqual(sections.needs.map(entry => entry.id).sort(), [1, 2, 3, 5])
 	assert.deepEqual(
 		sections.snoozed.map(entry => entry.id),
 		[4],
 	)
-	// j/k walk Needs you, then Answers, then the rest.
+	assert.equal(signalSection(threads[1] as SignalThread, NOW), 'needs')
+	// j/k walk Needs you (answers among it), then the rest.
 	assert.deepEqual(
 		orderedRows(sections).map(entry => entry.id),
-		[...sections.needs.map(entry => entry.id), 2, 3, 4],
+		[...sections.needs.map(entry => entry.id), 4],
 	)
-	assert.equal(following(sections, 2), 3)
-	assert.equal(answersNew(sections.answers), true)
-	assert.equal(answersNew([answer({ id: 9, state: 'seen' })]), false)
-
-	const inNeeds = signalSections(threads, NOW, 'needs')
-	assert.equal(inNeeds.answers.length, 0)
-	assert.deepEqual(inNeeds.needs.map(entry => entry.id).sort(), [1, 2, 3, 5])
+	const two = sections.needs.findIndex(entry => entry.id === 2)
+	assert.equal(following(sections, 2), sections.needs[two + 1]?.id ?? sections.needs[two - 1]?.id)
 	// An answer waits on nothing: Needs you counts only the review and the ask, and a new answer
 	// alone never lights the band's warn tone.
-	assert.equal(needsYouCount(inNeeds, NOW), 2)
-	const onlyAnswers = signalSections([answer({ id: 2 })], NOW, 'needs')
+	assert.equal(needsYouCount(sections, NOW), 2)
+	const onlyAnswers = signalSections([answer({ id: 2 })], NOW)
+	assert.deepEqual(
+		onlyAnswers.needs.map(entry => entry.id),
+		[2],
+	)
 	assert.equal(needsYouCount(onlyAnswers, NOW), 0)
 	assert.equal(needsYouNew(onlyAnswers, NOW), false)
-	assert.equal(needsYouNew(inNeeds, NOW), true)
+	assert.equal(needsYouNew(sections, NOW), true)
 })
 
 test('agent answers: read instead of r/p/n/m/x, o for links, d closes', () => {
@@ -1184,13 +1179,6 @@ test('agent answers: the row reads like an ask without receipts, and Done today 
 	assert.equal(byAgent?.word, 'closed by agent')
 	// An ask Jakub dismisses still says dismissed.
 	assert.equal(doneReason(ask({ id: 2, state: 'done', closedBy: 'jakub' }))?.word, 'dismissed')
-})
-
-test('agent answers: the inline layout shows six lines, then says there is more', () => {
-	const long = answer({ id: 1, body: ['1', '2', '3', '4', '5', '6', '7'].join('\n') })
-	assert.deepEqual(answerInline(long), { text: '1\n2\n3\n4\n5\n6', more: true })
-	assert.deepEqual(answerInline(answer({ id: 2, body: 'one\ntwo\n' })), { text: 'one\ntwo', more: false })
-	assert.equal(answerInline(answer({ id: 3, body: null })), null)
 })
 
 test('detail panel: quick answers, who the digits serve, and the facts about the ask and its agent', () => {

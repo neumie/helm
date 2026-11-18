@@ -19,25 +19,7 @@ import type {
 } from '../../shared-helm'
 import { agentNames, statusGlyph } from '../agent-dock/presentation'
 
-export type SignalSection = 'needs' | 'answers' | 'managed' | 'snoozed' | 'done'
-
-/**
- * Where agent answers live and what closes them (review only; Jakub picks one and the others go):
- * `section` an own Answers band under Needs you; `needs` inside Needs you, set apart only by the ↳
- * glyph; `inline` an Answers band whose rows show the body in place; `read-closes` an Answers band
- * where leaving the Read flow closes the answer (`read`).
- */
-export type AnswerLayout = 'section' | 'needs' | 'inline' | 'read-closes'
-export const ANSWER_LAYOUTS: readonly AnswerLayout[] = ['section', 'needs', 'inline', 'read-closes']
-
-/**
- * Where an agent row's detail panel opens (review only; Jakub picks one and the others go):
- * `slide-over` a panel out of the column over the terminals (the column keeps its width, nothing
- * refits); `split` the lower part of the column, under the list; `in-place` in place of the list,
- * like the flows.
- */
-export type DetailLayout = 'slide-over' | 'split' | 'in-place'
-export const DETAIL_LAYOUTS: readonly DetailLayout[] = ['slide-over', 'split', 'in-place']
+export type SignalSection = 'needs' | 'managed' | 'snoozed' | 'done'
 
 /** An agent answer (`helm signal add --kind answer`): an informational reply, nothing to act on. */
 export function isAnswer(thread: Pick<SignalThread, 'source' | 'kind'>): boolean {
@@ -108,24 +90,18 @@ const MUTED_REASON = 'sender muted'
 
 /**
  * Which section a thread is listed in, or null: done more than a day ago, or closed by muting its
- * sender (Filtered mail lists that mail instead).
+ * sender (Filtered mail lists that mail instead). An agent answer Jakub has not closed is listed in
+ * Needs you, set apart only by its ↳ glyph (it never counts there: `needsYouCount`).
  */
-export function signalSection(
-	thread: SignalThread,
-	now: number,
-	layout: AnswerLayout = 'section',
-): SignalSection | null {
+export function signalSection(thread: SignalThread, now: number): SignalSection | null {
 	if (thread.state === 'snoozed') return 'snoozed'
 	if (thread.state === 'done')
 		return now - time(thread.updatedAt) <= DAY && thread.closedReason !== MUTED_REASON ? 'done' : null
-	if (thread.owner === 'managed') return 'managed'
-	return isAnswer(thread) && layout !== 'needs' ? 'answers' : 'needs'
+	return thread.owner === 'managed' ? 'managed' : 'needs'
 }
 
 export interface SignalSections {
 	needs: SignalThread[]
-	/** Agent answers Jakub has not closed (empty when they are listed in Needs you). */
-	answers: SignalThread[]
 	managed: SignalThread[]
 	snoozed: SignalThread[]
 	/** Done within 24h, newest activity first, at most DONE_LISTED_MAX. */
@@ -134,14 +110,10 @@ export interface SignalSections {
 	doneToday: number
 }
 
-export function signalSections(
-	threads: readonly SignalThread[],
-	now: number,
-	layout: AnswerLayout = 'section',
-): SignalSections {
-	const sections: SignalSections = { needs: [], answers: [], managed: [], snoozed: [], done: [], doneToday: 0 }
+export function signalSections(threads: readonly SignalThread[], now: number): SignalSections {
+	const sections: SignalSections = { needs: [], managed: [], snoozed: [], done: [], doneToday: 0 }
 	for (const thread of [...threads].sort(byActivity)) {
-		const section = signalSection(thread, now, layout)
+		const section = signalSection(thread, now)
 		if (section) sections[section].push(thread)
 	}
 	sections.doneToday = sections.done.length
@@ -151,7 +123,7 @@ export function signalSections(
 
 /** Rows top to bottom, as j/k walk them. */
 export function orderedRows(sections: SignalSections): SignalThread[] {
-	return [...sections.needs, ...sections.answers, ...sections.managed, ...sections.snoozed, ...sections.done]
+	return [...sections.needs, ...sections.managed, ...sections.snoozed, ...sections.done]
 }
 
 /**
@@ -160,7 +132,7 @@ export function orderedRows(sections: SignalSections): SignalThread[] {
  * itself (now listed elsewhere).
  */
 export function following(sections: SignalSections, id: number, leaving: ReadonlySet<number> = new Set([id])): number {
-	for (const key of ['needs', 'answers', 'managed', 'snoozed', 'done'] as const) {
+	for (const key of ['needs', 'managed', 'snoozed', 'done'] as const) {
 		const peers = sections[key]
 		const index = peers.findIndex(thread => thread.id === id)
 		if (index < 0) continue
@@ -218,7 +190,7 @@ export function nextWeekdayMorning(now: number): Date {
 
 // ---------- actions ----------
 
-/** `Enter` reads an agent answer (the Read flow); the hint shows it as `↵`. */
+/** `Enter` reads an agent answer (its detail panel); the hint shows it as `↵`. */
 export type SignalActionKey = 'p' | 'n' | 'm' | 't' | 's' | 'd' | 'o' | 'r' | 'x' | 'Enter'
 
 export interface SignalAction {
@@ -373,7 +345,7 @@ export function detailFacts(thread: SignalThread, snapshot: AgentDockSnapshot | 
 }
 
 /**
- * An agent answer is read, not answered or routed: `↵` reads it (the Read flow), `o` opens its one
+ * An agent answer is read, not answered or routed: `↵` reads it (the detail panel), `o` opens its one
  * link or lists several, `s` snooze, `d` done (closed once read); never r, p, n, m or x.
  */
 function answerActions(thread: SignalThread, section: SignalSection): SignalAction[] {
@@ -381,7 +353,7 @@ function answerActions(thread: SignalThread, section: SignalSection): SignalActi
 	const open: SignalAction | null = count === 0 ? null : { key: 'o', label: count === 1 ? 'open' : 'links' }
 	const read: SignalAction = { key: 'Enter', label: 'read' }
 	const list: Array<SignalAction | null> =
-		section === 'needs' || section === 'answers'
+		section === 'needs'
 			? [read, open, { key: 's', label: 'snooze' }, { key: 'd', label: 'done' }]
 			: section === 'managed'
 				? [read, { key: 't', label: 'take back' }, open]
@@ -693,7 +665,7 @@ export function doneReason(thread: SignalThread): DoneReason | null {
 		kind = 'gone'
 		word = thread.source === 'agent' ? 'gone' : `gone from ${SOURCE_LABEL[thread.source]}`
 	} else if (thread.closedBy === 'jakub' && isAnswer(thread)) {
-		// An answer is closed once Jakub has read it (`d`, or leaving its Read flow).
+		// An answer is closed once Jakub has read it (`d` or the detail panel's Done).
 		kind = 'read'
 		word = 'read'
 	} else if (thread.closedBy === 'jakub') {
@@ -858,22 +830,6 @@ export function needsYouCount(sections: SignalSections, now: number): number {
 /** Needs you has a new thread that waits on Jakub (the band mark's warn tone); answers never count. */
 export function needsYouNew(sections: SignalSections, now: number): boolean {
 	return sections.needs.some(thread => !isAnswer(thread) && thread.state === 'new' && !handled(thread, now))
-}
-
-/** An answer not opened yet (the Answers band mark's accent tone). */
-export function answersNew(threads: readonly SignalThread[]): boolean {
-	return threads.some(thread => isAnswer(thread) && thread.state === 'new')
-}
-
-/** Lines the inline layout shows of an answer's body before `… ↵ read all`. */
-export const ANSWER_INLINE_LINES = 6
-
-/** The inline layout's body: its first {@link ANSWER_INLINE_LINES} lines, and whether more follow. */
-export function answerInline(thread: Pick<SignalThread, 'body'>): { text: string; more: boolean } | null {
-	const lines = (thread.body ?? '').split('\n')
-	while (lines.length > 0 && lines[lines.length - 1]?.trim() === '') lines.pop()
-	if (lines.length === 0) return null
-	return { text: lines.slice(0, ANSWER_INLINE_LINES).join('\n'), more: lines.length > ANSWER_INLINE_LINES }
 }
 
 /**

@@ -26,8 +26,6 @@ import { GLYPH } from '../sidebar/ui'
 import { SignalsList } from './SignalsList'
 import {
 	type AgentMatch,
-	type AnswerLayout,
-	type DetailLayout,
 	PICK_MAX,
 	REPLY_MAX,
 	type SignalActionKey,
@@ -36,7 +34,6 @@ import {
 	actionNote,
 	actionPatch,
 	agentBlockedNote,
-	answerInline,
 	askChoices,
 	askDeliveryTarget,
 	askReceipt,
@@ -83,16 +80,6 @@ export interface SignalsColumnProps {
 	/** Review fixtures only: the row selected and the flow open on first render. */
 	initialSelected?: number
 	initialFlow?: SignalsFlow
-	/**
-	 * Review only, until Jakub picks: where agent answers live and what closes them (see
-	 * `AnswerLayout`). Production passes nothing (`section`).
-	 */
-	answerLayout?: AnswerLayout
-	/**
-	 * Review only, until Jakub picks: where an agent row's detail panel opens (see `DetailLayout`).
-	 * Production passes nothing (`slide-over`).
-	 */
-	detailLayout?: DetailLayout
 	/** Review fixtures only: the agent row whose detail is open on first render. */
 	initialDetail?: number
 }
@@ -177,7 +164,6 @@ function SignalRow({
 	now,
 	selected,
 	onSelect,
-	inline = false,
 	open = false,
 }: {
 	thread: SignalThread
@@ -187,12 +173,9 @@ function SignalRow({
 	onSelect(): void
 	/** Its detail panel is open. */
 	open?: boolean
-	/** The `inline` answer layout: an open answer shows its body in place of the dim body line. */
-	inline?: boolean
 }) {
 	const view = signalRowView(thread, snapshot, now)
 	const section = signalSection(thread, now) ?? 'done'
-	const body = inline && isAnswer(thread) && section !== 'done' ? answerInline(thread) : null
 	return (
 		<li
 			className="signals-tr"
@@ -252,21 +235,7 @@ function SignalRow({
 				) : null}
 				{view.agent}
 			</span>
-			{body ? (
-				<span className="signals-td-answer">
-					{body.text}
-					{body.more || thread.links.length > 0 ? (
-						<span className="signals-td-answer-more">
-							{[
-								body.more ? '… ↵ read all' : '',
-								thread.links.length > 0 ? (thread.links.length === 1 ? '1 link' : `${thread.links.length} links`) : '',
-							]
-								.filter(Boolean)
-								.join(' · ')}
-						</span>
-					) : null}
-				</span>
-			) : view.detail ? (
+			{view.detail ? (
 				<span className="signals-td-detail" title={view.detail}>
 					{view.detail}
 				</span>
@@ -323,8 +292,6 @@ export function SignalsColumn({
 	now: clock = Date.now,
 	initialSelected,
 	initialFlow = null,
-	answerLayout = 'section',
-	detailLayout = 'slide-over',
 	initialDetail,
 }: SignalsColumnProps) {
 	const bridge = useSyncExternalStore(service.subscribe, service.getState)
@@ -360,7 +327,7 @@ export function SignalsColumn({
 	}, [clock])
 
 	const threads = useMemo(() => mergeThreads(bridge.snapshot?.threads ?? [], overrides), [bridge.snapshot, overrides])
-	const allSections = useMemo(() => signalSections(threads, now, answerLayout), [threads, now, answerLayout])
+	const allSections = useMemo(() => signalSections(threads, now), [threads, now])
 	// Done rows are listed only in their own view (D); the list's subhead counts them.
 	const sections = useMemo(() => ({ ...allSections, done: [] }), [allSections])
 	const rows = useMemo(() => orderedRows(sections), [sections])
@@ -614,14 +581,6 @@ export function SignalsColumn({
 		if (from === 'list') refocus()
 	}
 
-	/** Leaving the detail panel (Esc, ↵ again, a second click): in the `read-closes` layout that closes an open answer. */
-	const leaveDetail = (thread: SignalThread | undefined): void => {
-		const from = detail?.from
-		closeDetail()
-		if (thread && answerLayout === 'read-closes' && isAnswer(thread) && thread.state !== 'done')
-			act('d', thread, from === 'done' ? setDoneSelected : setSelected)
-	}
-
 	/** `D` / the done count: the threads done today, in place of the list. */
 	const openDone = (): void => {
 		setNote(null)
@@ -634,7 +593,7 @@ export function SignalsColumn({
 		setFlow({ type: 'filtered' })
 	}
 
-	// The panel is on screen: over or beside the list, or (in place, or from the done list) instead of it.
+	// The panel is on screen: sliding over the terminals beside the list, or in place of Done today.
 	const detailShown =
 		detail !== null && (detail.from === 'done' ? flow?.type === 'done' && detailThread !== undefined : !flow)
 
@@ -669,12 +628,13 @@ export function SignalsColumn({
 		event.preventDefault()
 	}
 
-	const detailPanel = (layout: DetailLayout, thread: SignalThread | undefined) =>
+	/** Beside the list it slides over the terminals; opened from Done today it shows in place of that list. */
+	const detailPanel = (inPlace: boolean, thread: SignalThread | undefined) =>
 		thread && thread.source === 'agent' ? (
 			<SignalDetail
 				key={thread.id}
 				thread={thread}
-				layout={layout}
+				inPlace={inPlace}
 				snapshot={snapshot}
 				service={service}
 				dock={dock}
@@ -684,9 +644,8 @@ export function SignalsColumn({
 				onRoute={route}
 				note={note}
 				apiRef={detailApi}
-				closesOnLeave={answerLayout === 'read-closes'}
 				onOpen={index => openAskLink(thread, index)}
-				onLeave={() => leaveDetail(thread)}
+				onLeave={closeDetail}
 				onDone={() => {
 					const from = detail?.from
 					closeDetail()
@@ -694,7 +653,7 @@ export function SignalsColumn({
 				}}
 			/>
 		) : (
-			<DetailEmpty layout={layout} apiRef={detailApi} onLeave={closeDetail} />
+			<DetailEmpty inPlace={inPlace} apiRef={detailApi} onLeave={closeDetail} />
 		)
 
 	const selectedThread = rows.find(thread => thread.id === current)
@@ -737,7 +696,7 @@ export function SignalsColumn({
 			{flow?.type === 'filtered' ? (
 				<FilteredMail service={service} count={filteredCount} now={now} onClose={closeFlow} />
 			) : flow?.type === 'done' && detail?.from === 'done' && detailThread ? (
-				detailPanel('in-place', detailThread)
+				detailPanel(true, detailThread)
 			) : flow?.type === 'done' ? (
 				<DoneToday
 					sections={allSections}
@@ -787,8 +746,6 @@ export function SignalsColumn({
 						onClose={closeFlow}
 					/>
 				)
-			) : detail?.from === 'list' && detailLayout === 'in-place' ? (
-				detailPanel('in-place', detailThread)
 			) : (
 				<>
 					<header className="signals-title">
@@ -812,13 +769,12 @@ export function SignalsColumn({
 										snapshot={snapshot}
 										now={now}
 										selected={current === thread.id}
-										inline={answerLayout === 'inline'}
 										open={detail?.from === 'list' && current === thread.id}
 										onSelect={() => {
 											setNote(null)
 											// An agent row opens its detail; a second click on it closes the detail.
 											if (thread.source === 'agent' && detail?.from === 'list' && current === thread.id) {
-												leaveDetail(thread)
+												closeDetail()
 												return
 											}
 											setSelected(thread.id)
@@ -833,29 +789,25 @@ export function SignalsColumn({
 							<p className="signals-placeholder">{bridge.error ?? 'Reading signals…'}</p>
 						)}
 					</div>
-					{detail?.from === 'list' && detailLayout === 'split' ? (
-						detailPanel('split', detailThread)
-					) : (
-						<footer className="signals-foot">
-							<span className="signals-foot-hints" aria-hidden="true">
-								{selectedThread
-									? threadActions(selectedThread, now).map(action => (
-											<Hint key={action.key} keys={actionKeyHint(action.key)}>
-												{action.label}
-											</Hint>
-										))
-									: null}
+					<footer className="signals-foot">
+						<span className="signals-foot-hints" aria-hidden="true">
+							{selectedThread
+								? threadActions(selectedThread, now).map(action => (
+										<Hint key={action.key} keys={actionKeyHint(action.key)}>
+											{action.label}
+										</Hint>
+									))
+								: null}
+						</span>
+						<output className="signals-note">{note ?? (routing ? `${routing.label} (still running)` : null)}</output>
+						{bridge.snapshot && bridge.error ? <span className="signals-health">{bridge.error}</span> : null}
+						{health.map(line => (
+							<span key={line} className="signals-health">
+								{line}
 							</span>
-							<output className="signals-note">{note ?? (routing ? `${routing.label} (still running)` : null)}</output>
-							{bridge.snapshot && bridge.error ? <span className="signals-health">{bridge.error}</span> : null}
-							{health.map(line => (
-								<span key={line} className="signals-health">
-									{line}
-								</span>
-							))}
-						</footer>
-					)}
-					{detail?.from === 'list' && detailLayout === 'slide-over' ? detailPanel('slide-over', detailThread) : null}
+						))}
+					</footer>
+					{detail?.from === 'list' ? detailPanel(false, detailThread) : null}
 				</>
 			)}
 		</section>
@@ -1852,13 +1804,12 @@ function useDetailApi(apiRef: { current: DetailApi | null }, key: DetailApi['key
  * its links (a click or 1–9 opens one through main, which checks it again; never an anchor), and for
  * an ask Jakub can answer, its quick answers and an answer field, both sent through `useAskReply`.
  * 1–9 serve the quick answers when the ask has any, else the links. Esc, ↵ or a second click on the
- * row leaves it; `closesOnLeave` (the `read-closes` review layout) closes an open answer on leaving.
- * It does not take the focus beside the list (j/k keep moving the list, the panel follows); in place
- * it does.
+ * row leaves it. Beside the list it slides over the terminals and does not take the focus (j/k keep
+ * moving the list, the panel follows); in place of Done today (`inPlace`) it does.
  */
 function SignalDetail({
 	thread,
-	layout,
+	inPlace,
 	snapshot,
 	service,
 	dock,
@@ -1868,13 +1819,13 @@ function SignalDetail({
 	onRoute,
 	note: columnNote,
 	apiRef,
-	closesOnLeave,
 	onOpen,
 	onLeave,
 	onDone,
 }: {
 	thread: SignalThread
-	layout: DetailLayout
+	/** In place of Done today (it takes the keys); else the slide-over beside the list. */
+	inPlace: boolean
 	snapshot: AgentDockSnapshot | null
 	service: SignalsService
 	dock: DockService
@@ -1885,7 +1836,6 @@ function SignalDetail({
 	/** The column's own note (a reply's receipt lands there). */
 	note: string | null
 	apiRef: { current: DetailApi | null }
-	closesOnLeave: boolean
 	/** Resolves with the failure note, or null once opened. */
 	onOpen(index: number): Promise<string | null>
 	onLeave(): void
@@ -1930,12 +1880,10 @@ function SignalDetail({
 			opening.current = false
 		}
 	}
-	const leave = (): void => (closesOnLeave && answer && open ? onDone() : onLeave())
-
 	const key = (event: KeyboardEvent<HTMLElement>): boolean => {
 		const target = event.target as HTMLElement
 		if (event.key === 'Escape') {
-			leave()
+			onLeave()
 			return true
 		}
 		if (event.key === 'Enter' && (mod === 'cmd' ? event.metaKey : event.ctrlKey)) {
@@ -1955,7 +1903,7 @@ function SignalDetail({
 		if (event.key === 'Enter') {
 			// Enter on one of the panel's buttons is that button's own.
 			if (target.closest('button')) return false
-			leave()
+			onLeave()
 			return true
 		}
 		if (event.key === 'r' && replyable) {
@@ -1975,21 +1923,13 @@ function SignalDetail({
 		note ??
 		(routing ? routing.label : null) ??
 		columnNote ??
-		(replyable
-			? where
-			: answer
-				? open
-					? closesOnLeave
-						? 'Going back closes it as read'
-						: 'Close it once read'
-					: 'Read and closed'
-				: null)
+		(replyable ? where : answer ? (open ? 'Close it once read' : 'Read and closed') : null)
 	return (
 		<section
-			ref={layout === 'in-place' ? takeKeys : undefined}
+			ref={inPlace ? takeKeys : undefined}
 			tabIndex={-1}
 			className="signals-detail"
-			data-layout={layout}
+			data-layout={inPlace ? 'in-place' : 'slide-over'}
 			data-kind={thread.kind}
 			data-signal-id={thread.id}
 			aria-label={`${answer ? 'Answer' : 'Ask'} from ${thread.ref}`}
@@ -1998,7 +1938,7 @@ function SignalDetail({
 				glyph={answer ? '↳' : '?'}
 				kind={`${answer ? 'Answer' : 'Ask'} from ${thread.ref}`}
 				context={age}
-				onClose={leave}
+				onClose={onLeave}
 			/>
 			<div className="signals-scroll signals-flow signals-detail-body">
 				<p className="signals-ask-title">{thread.title}</p>
@@ -2072,7 +2012,7 @@ function SignalDetail({
 					) : null}
 					{replyable ? <Hint keys={submitKeys(mod)}>send</Hint> : null}
 					{answer && open ? <Hint keys="d">done</Hint> : null}
-					<Hint keys="esc">{closesOnLeave && answer && open ? 'done and close' : 'close'}</Hint>
+					<Hint keys="esc">close</Hint>
 				</span>
 				<output className="signals-note">{status}</output>
 				{replyable ? (
@@ -2102,11 +2042,11 @@ function SignalDetail({
 
 /** The panel while the list's selection is not an agent row (j/k moved off one): nothing to show. */
 function DetailEmpty({
-	layout,
+	inPlace,
 	apiRef,
 	onLeave,
 }: {
-	layout: DetailLayout
+	inPlace: boolean
 	apiRef: { current: DetailApi | null }
 	onLeave(): void
 }) {
@@ -2119,10 +2059,10 @@ function DetailEmpty({
 	useDetailApi(apiRef, key)
 	return (
 		<section
-			ref={layout === 'in-place' ? takeKeys : undefined}
+			ref={inPlace ? takeKeys : undefined}
 			tabIndex={-1}
 			className="signals-detail"
-			data-layout={layout}
+			data-layout={inPlace ? 'in-place' : 'slide-over'}
 			aria-label="Details"
 		>
 			<FlowHeader glyph="·" kind="Details" context="" quiet onClose={onLeave} />
@@ -2417,7 +2357,7 @@ export function mountSignals(host: HTMLElement, props: SignalsColumnProps): Moun
 	root.render(<SignalsColumn {...props} />)
 	return {
 		focus() {
-			// A flow's answer field, the flow, a detail in place of the list; beside the list the list keeps the keys.
+			// A flow's answer field, the flow, a detail in place of Done today; beside the list the list keeps the keys.
 			;(
 				host.querySelector<HTMLElement>('.signals-flow-keys .signals-answer-input') ??
 				host.querySelector<HTMLElement>('.signals-flow-keys') ??

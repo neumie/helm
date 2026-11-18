@@ -10,8 +10,8 @@ declare global {
 // An agent row's detail panel in the Signals column (design §3.25), on the production column with the
 // in-memory fixture services: a click (or ↵) opens it, a second click or Esc closes it; it shows the
 // whole body, who filed it and its agent, clickable links (main opens them) and, for an ask, quick
-// answers and an answer field sent through the same reply path. The three layouts are review-only
-// (`detailLayout`) until Jakub picks one.
+// answers and an answer field sent through the same reply path. It slides over the terminals beside
+// the column (Jakub's pick 2026-11-18).
 
 const story = (id: string) => `/iframe.html?id=${id}&viewMode=story`
 
@@ -70,7 +70,7 @@ test('slide-over: a click opens the detail over the terminals, a second click an
 })
 
 test('a quick answer sends that choice as the reply through the reply path', async ({ page }) => {
-	const view = await open(page, 'views-signals-detail--slide-over')
+	const view = await open(page, 'views-signals-detail--ask')
 	await expect(view.detail.locator('.signals-detail-choice')).toHaveText(['1 Ano', '2 Ne'])
 	await view.signals.focus()
 	await page.keyboard.press('1')
@@ -84,7 +84,7 @@ test('a quick answer sends that choice as the reply through the reply path', asy
 })
 
 test('the answer field: r focuses it, digits type there, ⌘↵ sends it', async ({ page }) => {
-	const view = await open(page, 'views-signals-detail--slide-over')
+	const view = await open(page, 'views-signals-detail--ask')
 	await view.signals.focus()
 	await page.keyboard.press('r')
 	const field = view.detail.locator('.signals-answer-input')
@@ -115,15 +115,13 @@ test('a link click asks main to open it (never an anchor)', async ({ page }) => 
 		])
 })
 
-test('split: the detail sits under the list, and j/k move the list while the detail follows', async ({ page }) => {
-	const view = await open(page, 'views-signals-detail--split')
-	await expect(view.detail).toHaveAttribute('data-layout', 'split')
+test('j/k move the list while the slide-over follows the selection', async ({ page }) => {
+	const view = await open(page, 'views-signals-detail--ask')
+	await expect(view.detail).toHaveAttribute('data-layout', 'slide-over')
 	await expect(view.detail).toHaveAttribute('data-signal-id', '505')
-	const list = await view.signals.locator('.signals-scroll').first().boundingBox()
-	const panel = await view.detail.boundingBox()
-	if (!list || !panel) throw new Error('not laid out')
-	expect(panel.y).toBeGreaterThanOrEqual(list.y + list.height - 1)
-	await page.screenshot({ path: test.info().outputPath('signals-detail-split.png') })
+	// The list stays beside it, with the column's own footer.
+	await expect(view.row(505)).toHaveAttribute('data-open', 'true')
+	await expect(view.signals.locator(':scope > .signals-foot')).toBeVisible()
 	await view.signals.focus()
 	await page.keyboard.press('j')
 	await expect(view.detail).toHaveAttribute('data-signal-id', '506')
@@ -133,15 +131,6 @@ test('split: the detail sits under the list, and j/k move the list while the det
 	)
 	await page.keyboard.press('k')
 	await expect(view.detail).toHaveAttribute('data-signal-id', '505')
-	await page.keyboard.press('Escape')
-	await expect(view.detail).toHaveCount(0)
-})
-
-test('in place: the detail replaces the list; Esc gives the list back', async ({ page }) => {
-	const view = await open(page, 'views-signals-detail--in-place')
-	await expect(view.detail).toHaveAttribute('data-layout', 'in-place')
-	await expect(view.signals.locator('.signals-tr')).toHaveCount(0)
-	await page.screenshot({ path: test.info().outputPath('signals-detail-in-place.png') })
 	await page.keyboard.press('Escape')
 	await expect(view.detail).toHaveCount(0)
 	await expect(view.row(505)).toHaveAttribute('data-selected', 'true')

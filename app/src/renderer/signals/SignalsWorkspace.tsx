@@ -8,7 +8,6 @@ import { useEffect, useMemo, useRef } from 'react'
 import { focusActiveTerminal, memoryLeftColumnMode, mountLeftColumn, mountSignalsShortcut } from '../left-column'
 import { type TerminalWorkspaceFixtureOptions, TerminalWorkspaceFixtureView } from '../terminal-workspace-fixtures'
 import { type SignalsFlow, mountSignals } from './Signals'
-import type { AnswerLayout, DetailLayout } from './model'
 import {
 	ASK_TERMINAL_IDLE,
 	type SignalsFixture,
@@ -54,10 +53,6 @@ export interface SignalsWorkspaceProps {
 	 * and links: the `Signals asks` row-layout ask), or the filtered mail or done today list.
 	 */
 	flow?: 'send' | 'new-agent' | 'reply' | 'slack-reply' | 'links' | 'filtered' | 'done'
-	/** Review only: where agent answers live and what closes them (the `answers` scenario). */
-	answerLayout?: AnswerLayout
-	/** Review only: where an agent row's detail opens. */
-	detailLayout?: DetailLayout
 	/** The agent row whose detail is open on load (the `detail` scenario: 505 the quick-answer ask). */
 	detail?: number
 	/**
@@ -170,15 +165,7 @@ const FLOW_THREAD: Record<Exclude<NonNullable<SignalsWorkspaceProps['flow']>, 'f
 	links: 501,
 }
 
-export function SignalsWorkspace({
-	scenario = 'column',
-	flow,
-	terminalPrompt,
-	width,
-	answerLayout,
-	detailLayout,
-	detail,
-}: SignalsWorkspaceProps) {
+export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, width, detail }: SignalsWorkspaceProps) {
 	const fixture = useMemo(() => fixtureFor(flow === 'slack-reply' ? 'slack' : scenario), [scenario, flow])
 	const options = useMemo<TerminalWorkspaceFixtureOptions>(
 		() => ({ agentDock: { scenario: 'real-case', position: 'bottom', output: 'claude-code' } }),
@@ -225,8 +212,6 @@ export function SignalsWorkspace({
 					onLeave: () => focusActiveTerminal(root),
 					mod: 'cmd',
 					initialFlow,
-					...(answerLayout ? { answerLayout } : {}),
-					...(detailLayout ? { detailLayout } : {}),
 					...(detail !== undefined ? { initialDetail: detail } : {}),
 				}),
 		})
@@ -249,7 +234,7 @@ export function SignalsWorkspace({
 			content?.style.removeProperty('--left-width')
 			if (window.__signalsFixture === fixture) window.__signalsFixture = undefined
 		}
-	}, [options, fixture, flow, terminalPrompt, width, answerLayout, detailLayout, detail])
+	}, [options, fixture, flow, terminalPrompt, width, detail])
 
 	return (
 		<div ref={wrapRef} style={{ display: 'contents' }}>

@@ -465,7 +465,7 @@ export function signalAskChoiceFixtures(now = Date.now()): SignalThread[] {
 				'Doporučuju Ano.',
 			].join('\n'),
 			choices: ['Ano', 'Ne'],
-			links: ['https://github.com/neumie/helm/pull/431', `${STORY}views-signals-detail--slide-over`],
+			links: ['https://github.com/neumie/helm/pull/431', `${STORY}views-signals-detail--ask`],
 			askTerminal: ASK_TERMINAL_IDLE,
 			ago: 4,
 		}),
@@ -507,8 +507,8 @@ export function signalAskChoiceFixtures(now = Date.now()): SignalThread[] {
 
 /**
  * Agent answers (`helm signal add --kind answer`): informational replies to something Jakub asked an
- * agent in its chat — a longer one from the dispatcher (more than six lines, so the inline layout
- * folds it), one with a link, one already opened (seen). None takes a reply or a terminal.
+ * agent in its chat — a longer one from the dispatcher (its detail scrolls), one with a link, one
+ * already opened (seen). None takes a reply or a terminal.
  */
 export function signalAnswerFixtures(now = Date.now()): SignalThread[] {
 	const answer = (seed: Omit<ThreadSeed, 'source' | 'kind' | 'head' | 'fullRef' | 'ref'> & { from?: string }) => {

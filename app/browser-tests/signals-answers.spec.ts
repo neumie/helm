@@ -9,8 +9,8 @@ declare global {
 
 // Agent answers in the Signals column (design §3.25), on the production column with the in-memory
 // fixture services: an answer reads differently from an ask (↳, no `r`, never counted in Needs you),
-// `↵` (or a click) opens its detail and marks it seen, `d` closes it (Done today: `read`). The four placement
-// variants are review-only (`answerLayout`) until Jakub picks one.
+// `↵` (or a click) opens its detail and marks it seen, `d` closes it (Done today: `read`). Answers are
+// listed in Needs you, set apart only by ↳ (Jakub's pick 2026-11-18).
 
 const story = (id: string) => `/iframe.html?id=${id}&viewMode=story`
 
@@ -30,70 +30,18 @@ async function open(page: Page, id: string) {
 
 const calls = (page: Page) => page.evaluate(() => window.__signalsFixture?.calls)
 
-test('A: answers sit on their own band under Needs you, read as ↳ with no reply', async ({ page }) => {
-	const view = await open(page, 'views-signals-answers--answers-band')
-	const answers = view.section('Answers')
-	await expect(answers).toBeVisible()
-	await expect(answers.locator('.signals-band-count')).toHaveText('3')
-	// New answers light the band mark in the accent, not the warn of waiting.
-	await expect(answers.locator('.signals-braille-mark')).toHaveAttribute('data-tone', 'info')
-	const answer = view.row(601)
-	await expect(answer).toHaveAttribute('data-section', 'answers')
+test('answers stay in Needs you, read as ↳ with no reply, and the band counts only what waits', async ({ page }) => {
+	const view = await open(page, 'views-signals-answers--in-needs-you')
+	// No band of their own.
+	await expect(view.section('Answers')).toHaveCount(0)
+	const needs = view.section('Needs you')
+	const answer = needs.locator('.signals-tr[data-signal-id="601"]')
+	await expect(answer).toBeVisible()
+	await expect(answer).toHaveAttribute('data-section', 'needs')
 	await expect(answer.locator('.signals-glyph')).toHaveText('↳')
 	await expect(answer.locator('.signals-glyph')).toHaveAttribute('data-kind', 'answer')
 	await expect(answer.locator('.signals-td-ref')).toHaveText('dispatcher')
 	await expect(answer.locator('.signals-td-what')).toHaveText('Proxy blokuje Remote')
-	// Bands in order: Needs you, Answers, Managed.
-	const bands = await view.signals.locator('.signals-band-label').allTextContents()
-	expect(bands.slice(0, 3)).toEqual(['Needs you', 'Answers', 'Managed'])
-	// Needs you does not list (or count) answers.
-	await expect(view.section('Needs you').locator('.signals-tr[data-signal-id="601"]')).toHaveCount(0)
-	await answer.click()
-	// The click opens its detail; the column's own footer still says what the row offers.
-	const hints = view.signals.locator(':scope > .signals-foot .signals-foot-hints')
-	await expect(hints).toContainText('↵ read')
-	await expect(hints).toContainText('d done')
-	await expect(hints).not.toContainText('reply')
-	// r does nothing on an answer: no reply flow opens.
-	await page.keyboard.press('r')
-	await expect(page.locator('.signals-answer-input')).toHaveCount(0)
-	expect((await calls(page))?.replies).toEqual([])
-	await page.screenshot({ path: test.info().outputPath('signals-answers-a-band.png') })
-})
-
-test('↵ reads the whole answer, marks it seen; d closes it and Done today says read', async ({ page }) => {
-	const view = await open(page, 'views-signals-answers--answers-band')
-	await view.row(601).click()
-	const flow = page.locator('.signals-detail')
-	// The click already opened it; ↵ closes it and ↵ again opens it.
-	await expect(flow).toBeVisible()
-	await page.keyboard.press('Enter')
-	await expect(flow).toHaveCount(0)
-	await page.keyboard.press('Enter')
-	await expect(flow).toBeVisible()
-	await expect(flow.locator('.signals-title-kind')).toHaveText('↳Answer from dispatcher')
-	await expect(flow.locator('.signals-ask-body')).toContainText('Nic dalšího po tobě nechci')
-	await expect(flow.locator('a')).toHaveCount(0)
-	await expect.poll(async () => (await calls(page))?.updates).toEqual([{ id: 601, patch: { state: 'seen' } }])
-	await page.screenshot({ path: test.info().outputPath('signals-answers-read.png') })
-	// Esc goes back without closing it (layout A); it is still listed, now seen.
-	await page.keyboard.press('Escape')
-	await expect(flow).toHaveCount(0)
-	await expect(view.row(601).locator('.signals-glyph')).not.toHaveAttribute('data-kind', 'answer')
-	await page.keyboard.press('d')
-	await expect(view.row(601)).toHaveCount(0)
-	await expect(view.note).toHaveText('Closed the answer from dispatcher')
-	await page.keyboard.press('Shift+D')
-	const done = page.locator('.signals-flow-keys')
-	await expect(done.locator('.signals-tr[data-signal-id="601"] .signals-done-reason')).toHaveText(' · read')
-	await expect(done.locator('.signals-tr[data-signal-id="604"] .signals-done-reason')).toHaveText(' · read')
-})
-
-test('B: answers stay in Needs you, marked only by ↳, and the band counts only what waits', async ({ page }) => {
-	const view = await open(page, 'views-signals-answers--in-needs-you')
-	await expect(view.section('Answers')).toHaveCount(0)
-	const needs = view.section('Needs you')
-	await expect(needs.locator('.signals-tr[data-signal-id="601"]')).toBeVisible()
 	// Three answers listed there, none counted: the count is the rows that wait on Jakub (no ↳, no receipt).
 	const waiting = await needs
 		.locator('.signals-tr')
@@ -105,33 +53,64 @@ test('B: answers stay in Needs you, marked only by ↳, and the band counts only
 		)
 	await expect(needs.locator('.signals-tr .signals-glyph', { hasText: '↳' })).toHaveCount(3)
 	await expect(needs.locator('.signals-band-count')).toHaveText(String(waiting))
-	await page.screenshot({ path: test.info().outputPath('signals-answers-b-needs.png') })
+	await page.screenshot({ path: test.info().outputPath('signals-answers-needs.png') })
+	await answer.click()
+	// The click opens its detail; the column's own footer still says what the row offers.
+	const hints = view.signals.locator(':scope > .signals-foot .signals-foot-hints')
+	await expect(hints).toContainText('↵ read')
+	await expect(hints).toContainText('d done')
+	await expect(hints).not.toContainText('reply')
+	// r does nothing on an answer: no reply flow opens.
+	await page.keyboard.press('r')
+	await expect(page.locator('.signals-answer-input')).toHaveCount(0)
+	expect((await calls(page))?.replies).toEqual([])
 })
 
-test('C: an answer reads in the list, six lines, then says there is more', async ({ page }) => {
-	const view = await open(page, 'views-signals-answers--read-in-the-list')
-	const body = view.row(601).locator('.signals-td-answer')
-	await expect(body).toContainText('Remote z telefonu nejde')
-	await expect(body.locator('.signals-td-answer-more')).toHaveText('… ↵ read all')
-	await expect(body).not.toContainText('Nic dalšího po tobě nechci')
-	await expect(view.row(602).locator('.signals-td-answer-more')).toHaveText('1 link')
-	await page.screenshot({ path: test.info().outputPath('signals-answers-c-inline.png') })
-})
-
-test('D: leaving the detail closes the answer as read', async ({ page }) => {
-	const view = await open(page, 'views-signals-answers--reading-closes-it')
+test('↵ reads the whole answer, marks it seen; d closes it and Done today says read', async ({ page }) => {
+	const view = await open(page, 'views-signals-answers--in-needs-you')
 	await view.row(601).click()
 	const flow = page.locator('.signals-detail')
-	await expect(flow.locator('.signals-note')).toHaveText('Going back closes it as read')
+	// The click already opened it; ↵ closes it and ↵ again opens it.
+	await expect(flow).toBeVisible()
+	await expect(flow).toHaveAttribute('data-layout', 'slide-over')
+	await page.keyboard.press('Enter')
+	await expect(flow).toHaveCount(0)
+	await page.keyboard.press('Enter')
+	await expect(flow).toBeVisible()
+	await expect(flow.locator('.signals-title-kind')).toHaveText('↳Answer from dispatcher')
+	await expect(flow.locator('.signals-ask-body')).toContainText('Nic dalšího po tobě nechci')
+	await expect(flow.locator('.signals-note')).toHaveText('Close it once read')
+	await expect(flow.locator('a')).toHaveCount(0)
+	await expect.poll(async () => (await calls(page))?.updates).toEqual([{ id: 601, patch: { state: 'seen' } }])
+	await page.screenshot({ path: test.info().outputPath('signals-answers-read.png') })
+	// Esc goes back without closing it; it is still listed in Needs you, now seen.
 	await page.keyboard.press('Escape')
 	await expect(flow).toHaveCount(0)
+	await expect(view.row(601)).toHaveAttribute('data-section', 'needs')
+	await expect(view.row(601).locator('.signals-glyph')).not.toHaveAttribute('data-kind', 'answer')
+	await page.keyboard.press('d')
 	await expect(view.row(601)).toHaveCount(0)
-	await expect(view.signals).toBeFocused()
-	const updates = (await calls(page))?.updates
-	expect(updates).toEqual([
-		{ id: 601, patch: { state: 'seen' } },
-		{ id: 601, patch: { state: 'done' } },
-	])
-	// The next answer is selected.
-	await expect(view.row(602)).toHaveAttribute('data-selected', 'true')
+	await expect(view.note).toHaveText('Closed the answer from dispatcher')
+	await page.keyboard.press('Shift+D')
+	const done = page.locator('.signals-flow-keys')
+	await expect(done.locator('.signals-tr[data-signal-id="601"] .signals-done-reason')).toHaveText(' · read')
+	await expect(done.locator('.signals-tr[data-signal-id="604"] .signals-done-reason')).toHaveText(' · read')
+})
+
+test('Done today: ↵ on a read answer shows it in place of that list, Esc goes back there', async ({ page }) => {
+	await open(page, 'views-signals-answers--done-today')
+	const done = page.locator('.signals-flow-keys')
+	const row = done.locator('.signals-tr[data-signal-id="604"]')
+	await expect(row.locator('.signals-done-reason')).toHaveText(' · read')
+	await row.click()
+	await page.keyboard.press('Enter')
+	const detail = page.locator('.signals-detail')
+	await expect(detail).toHaveAttribute('data-layout', 'in-place')
+	await expect(detail).toHaveAttribute('data-signal-id', '604')
+	await expect(detail).toBeFocused()
+	await expect(detail.locator('.signals-note')).toHaveText('Read and closed')
+	await expect(done).toHaveCount(0)
+	await page.keyboard.press('Escape')
+	await expect(detail).toHaveCount(0)
+	await expect(page.locator('.signals-flow-keys .signals-tr[data-signal-id="604"]')).toBeVisible()
 })

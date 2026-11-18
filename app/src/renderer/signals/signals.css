@@ -322,11 +322,6 @@
 	background: var(--warn);
 }
 
-/* An Answers band with an answer not opened yet: the answer glyph's accent, not the warn of waiting. */
-.signals-braille-mark[data-tone="info"] .signals-braille-dot[data-lit="true"] {
-	background: var(--accent);
-}
-
 .signals-tr {
 	grid-column: 1 / -1;
 	display: grid;
@@ -380,29 +375,6 @@
 .signals-tr > .signals-td-detail {
 	grid-area: 3 / 3 / 4 / 5;
 	color: var(--dock-dim);
-}
-
-/* The inline answer layout (review): the answer's body read in place, 13/20, at most six lines,
- * then a dim `… ↵ read all · 1 link`. Plain untrusted text, line breaks kept. */
-.signals-tr > .signals-td-answer {
-	grid-area: 3 / 3 / 4 / 5;
-	display: flex;
-	flex-direction: column;
-	margin-top: 4px;
-	font-size: var(--dock-prose-fs);
-	line-height: var(--dock-prose-lh);
-	color: var(--text-1);
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
-}
-
-.signals-td-answer-more {
-	font-size: var(--dock-fs);
-	line-height: var(--dock-lh);
-	color: var(--dock-dim);
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
 }
 
 .signals-tr:hover {
@@ -755,7 +727,7 @@
 	user-select: text;
 }
 
-/* The Read flow numbers an answer's links: 1–9 opens that one. */
+/* The detail panel numbers the links while 1–9 open them. */
 .signals-ask-link-n {
 	color: var(--text-1);
 	font-variant-numeric: tabular-nums;
@@ -774,20 +746,9 @@
 	background: var(--pane);
 }
 
-/* In place: it replaces the list, like the flows. */
+/* In place (opened from Done today): it replaces the done list, like the flows. */
 .signals-detail[data-layout="in-place"] {
 	flex: 1 1 auto;
-}
-
-/* Split: the lower part of the column; the list above keeps at least a few rows. */
-.signals-detail[data-layout="split"] {
-	flex: 3 1 0;
-	border-top: 1px solid var(--hairline);
-}
-
-.signals:has(> .signals-detail[data-layout="split"]) > .signals-scroll {
-	flex: 2 1 0;
-	min-height: calc(96px * var(--ui-scale));
 }
 
 /* Slide-over: out of the column over the terminals, the column's own material; the column keeps its
