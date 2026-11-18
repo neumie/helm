@@ -23,7 +23,7 @@ type Story = StoryObj<typeof SignalsWorkspace>
 /** The dispatcher's ask with quick answers, in the panel over the terminals. */
 export const Ask: Story = { name: 'Ask', args: { detail: 505 } }
 
-/** An answer: no answer field, `d` or Done closes it once read. */
+/** An answer: no answer field; its Done button (or `d` from the list) closes it once read. */
 export const Answer: Story = { name: 'Answer', args: { detail: 601 } }
 
 /** A long ask from a terminal the dock does not list: the body scrolls, the answer is saved on the thread. */
