@@ -752,20 +752,21 @@
 }
 
 /* Slide-over: out of the column over the terminals, the column's own material; the column keeps its
- * width, so nothing refits. Its edge toward the terminals is a hairline, lifted by --shadow-1. */
+ * width, so nothing refits. Its edge toward the terminals is a hairline, lifted by --shadow-1. It is a
+ * popover (§2.7): above the terminals, under sheets and toasts. */
 .signals-detail[data-layout="slide-over"] {
 	position: absolute;
 	top: 0;
 	bottom: 0;
 	left: calc(100% + 1px);
-	z-index: 30;
+	z-index: var(--z-menu);
 	width: clamp(360px, 32vw, 420px);
 	box-shadow: inset -1px 0 var(--hairline), var(--shadow-1);
 }
 
 @media (prefers-reduced-motion: no-preference) {
 	.signals-detail[data-layout="slide-over"] {
-		animation: signals-slide-over 140ms ease-out;
+		animation: signals-slide-over var(--motion-enter) var(--ease-out);
 	}
 }
 

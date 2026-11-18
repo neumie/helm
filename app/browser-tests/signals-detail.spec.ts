@@ -49,7 +49,7 @@ test('slide-over: a click opens the detail over the terminals, a second click an
 	await expect(view.detail.locator('a')).toHaveCount(0)
 	// Over the terminals: the column keeps its width and the terminal area does not move.
 	if (!terms || !column) throw new Error('not laid out')
-	// (Once its 140 ms slide has settled.)
+	// (Once its 150 ms slide has settled.)
 	await expect
 		.poll(async () => (await view.detail.boundingBox())?.x ?? 0)
 		.toBeGreaterThanOrEqual(column.x + column.width)
