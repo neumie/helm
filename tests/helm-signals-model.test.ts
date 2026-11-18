@@ -43,8 +43,15 @@ const {
 	routedReceipt,
 	sendPrompt,
 	signalRowView,
+	signalSection,
 	signalSections,
 	needsYouCount,
+	needsYouNew,
+	actionKeyHint,
+	isAnswer,
+	askChoices,
+	detailDigits,
+	detailFacts,
 	restingWords,
 	slug,
 	snoozeLabel,
@@ -116,6 +123,24 @@ function ask(patch: Partial<SignalThread> & { id: number }): SignalThread {
 		body: 'Two variants.\nA: title only.\nB: with the body.',
 		links: ['http://127.0.0.1:6006/?path=/story/a', 'http://127.0.0.1:6006/?path=/story/b'],
 		askTerminal: TERMINAL,
+		...patch,
+	})
+}
+
+/** An agent answer (`helm signal add --kind answer`): no terminal, no reply. */
+function answer(patch: Partial<SignalThread> & { id: number }): SignalThread {
+	return ask({
+		threadKey: `agent:answer-${patch.id}`,
+		kind: 'answer',
+		reasons: ['answer'],
+		ref: 'dispatcher',
+		fullRef: 'dispatcher',
+		title: 'Proxy blokuje Remote',
+		head: 'Proxy blokuje Remote',
+		actor: 'dispatcher',
+		body: 'Firemní proxy blokuje WebSocket.\nZ LTE to jde.',
+		links: [],
+		askTerminal: null,
 		...patch,
 	})
 }
@@ -316,22 +341,29 @@ test('x mutes the sender of mail from a person or a list: Needs you and snoozed,
 
 test('agent asks: r reply instead of p/n/m, o opens one link or lists several, none without links', () => {
 	const keys = (entry: SignalThread) => threadActions(entry, NOW).map(action => `${action.key} ${action.label}`)
-	assert.deepEqual(keys(ask({ id: 1 })), ['r reply', 'o links', 's snooze', 'd dismiss'])
+	assert.deepEqual(keys(ask({ id: 1 })), ['r reply', 'o links', 's snooze', 'd dismiss', 'Enter details'])
 	assert.deepEqual(keys(ask({ id: 1, links: ['https://github.com/acme/widgets/pull/7'] })), [
 		'r reply',
 		'o open',
 		's snooze',
 		'd dismiss',
+		'Enter details',
 	])
-	assert.deepEqual(keys(ask({ id: 1, links: [] })), ['r reply', 's snooze', 'd dismiss'])
+	assert.deepEqual(keys(ask({ id: 1, links: [] })), ['r reply', 's snooze', 'd dismiss', 'Enter details'])
 	assert.deepEqual(keys(ask({ id: 1, state: 'snoozed', snoozedUntil: iso(-600) })), [
 		'r reply',
 		't wake',
 		'd dismiss',
 		'o links',
+		'Enter details',
 	])
-	assert.deepEqual(keys(ask({ id: 1, state: 'done', updatedAt: iso(5) })), ['t reopen', 'o links'])
-	assert.deepEqual(keys(ask({ id: 1, owner: 'managed', state: 'seen' })), ['t take back', 's snooze', 'o links'])
+	assert.deepEqual(keys(ask({ id: 1, state: 'done', updatedAt: iso(5) })), ['t reopen', 'o links', 'Enter details'])
+	assert.deepEqual(keys(ask({ id: 1, owner: 'managed', state: 'seen' })), [
+		't take back',
+		's snooze',
+		'o links',
+		'Enter details',
+	])
 	// p, n and m never apply to an ask.
 	for (const state of ['new', 'seen', 'snoozed'] as const)
 		for (const action of threadActions(ask({ id: 1, state, snoozedUntil: iso(-600) }), NOW))
@@ -1063,4 +1095,117 @@ test('filtered mail: the count after Done today, the header summary, rows by dec
 	// Only the daemon knows whether a mute alone keeps the sender out (an exclude glob Jakub wrote does not).
 	assert.deepEqual(includeAction({ unmute: true }), { label: 'unmute sender', button: 'Unmute sender' })
 	assert.deepEqual(includeAction({}), { label: 'always show sender', button: 'Always show sender' })
+})
+
+test('agent answers: listed in Needs you, set apart only by ↳, never counted', () => {
+	const threads = [
+		thread({ id: 1 }),
+		answer({ id: 2, lastActivityAt: iso(2) }),
+		answer({ id: 3, state: 'seen', lastActivityAt: iso(3) }),
+		answer({ id: 4, state: 'snoozed', snoozedUntil: iso(-60) }),
+		ask({ id: 5 }),
+	]
+	assert.equal(isAnswer(threads[1] as SignalThread), true)
+	assert.equal(isAnswer(threads[4] as SignalThread), false)
+	const sections = signalSections(threads, NOW)
+	assert.deepEqual(sections.needs.map(entry => entry.id).sort(), [1, 2, 3, 5])
+	assert.deepEqual(
+		sections.snoozed.map(entry => entry.id),
+		[4],
+	)
+	assert.equal(signalSection(threads[1] as SignalThread, NOW), 'needs')
+	// j/k walk Needs you (answers among it), then the rest.
+	assert.deepEqual(
+		orderedRows(sections).map(entry => entry.id),
+		[...sections.needs.map(entry => entry.id), 4],
+	)
+	const two = sections.needs.findIndex(entry => entry.id === 2)
+	assert.equal(following(sections, 2), sections.needs[two + 1]?.id ?? sections.needs[two - 1]?.id)
+	// An answer waits on nothing: Needs you counts only the review and the ask, and a new answer
+	// alone never lights the band's warn tone.
+	assert.equal(needsYouCount(sections, NOW), 2)
+	const onlyAnswers = signalSections([answer({ id: 2 })], NOW)
+	assert.deepEqual(
+		onlyAnswers.needs.map(entry => entry.id),
+		[2],
+	)
+	assert.equal(needsYouCount(onlyAnswers, NOW), 0)
+	assert.equal(needsYouNew(onlyAnswers, NOW), false)
+	assert.equal(needsYouNew(sections, NOW), true)
+})
+
+test('agent answers: read instead of r/p/n/m/x, o for links, d closes', () => {
+	const keys = (entry: SignalThread) => threadActions(entry, NOW).map(action => action.key)
+	assert.deepEqual(keys(answer({ id: 1 })), ['Enter', 's', 'd'])
+	assert.deepEqual(keys(answer({ id: 1, links: ['https://github.com/acme/widgets/pull/1'] })), ['Enter', 'o', 's', 'd'])
+	assert.deepEqual(
+		threadActions(answer({ id: 1, links: ['https://a.example/1', 'https://a.example/2'] }), NOW).find(
+			action => action.key === 'o',
+		)?.label,
+		'links',
+	)
+	assert.deepEqual(keys(answer({ id: 1, state: 'snoozed', snoozedUntil: iso(-60) })), ['Enter', 't', 'd'])
+	assert.deepEqual(keys(answer({ id: 1, state: 'done', updatedAt: iso(5) })), ['Enter', 't'])
+	assert.equal(threadActions(answer({ id: 1 }), NOW)[0]?.label, 'read')
+	assert.equal(actionKeyHint('Enter'), '↵')
+	assert.equal(actionKeyHint('d'), 'd')
+	assert.deepEqual(actionPatch('d', answer({ id: 1 }), NOW), { state: 'done' })
+	assert.equal(actionNote('d', answer({ id: 1 }), NOW), 'Closed the answer from dispatcher')
+})
+
+test('agent answers: the row reads like an ask without receipts, and Done today says read', () => {
+	const view = signalRowView(answer({ id: 1 }), null, NOW)
+	assert.equal(view.glyph, '↳')
+	assert.equal(view.toned, true)
+	assert.equal(view.ref, 'dispatcher')
+	assert.equal(view.what, 'Proxy blokuje Remote')
+	assert.equal(view.detail, 'Firemní proxy blokuje WebSocket.')
+	assert.equal(view.receipt, null)
+	assert.equal(view.age, '10m')
+	assert.equal(view.title, 'Agent answer · dispatcher')
+	assert.equal(signalRowView(answer({ id: 1, state: 'seen' }), null, NOW).toned, false)
+	assert.equal(
+		signalRowView(answer({ id: 1, links: ['https://a.example/1'] }), null, NOW).detail,
+		'Firemní proxy blokuje WebSocket. · 1 link',
+	)
+
+	const read = doneReason(answer({ id: 1, state: 'done', closedBy: 'jakub' }))
+	assert.equal(read?.kind, 'read')
+	assert.equal(read?.word, 'read')
+	const byAgent = doneReason(
+		answer({ id: 1, state: 'done', closedBy: 'agent', closedReason: SIGNAL_ASK_CLOSED_REASON }),
+	)
+	assert.equal(byAgent?.kind, 'agent')
+	assert.equal(byAgent?.word, 'closed by agent')
+	// An ask Jakub dismisses still says dismissed.
+	assert.equal(doneReason(ask({ id: 2, state: 'done', closedBy: 'jakub' }))?.word, 'dismissed')
+})
+
+test('detail panel: quick answers, who the digits serve, and the facts about the ask and its agent', () => {
+	const choice = ask({ id: 1, choices: ['  Ano ', 'Ne', '', 'Možná\nzítra'], links: ['https://a.example/1'] })
+	assert.deepEqual(askChoices(choice), ['Ano', 'Ne', 'Možná zítra'])
+	assert.deepEqual(askChoices(ask({ id: 2, choices: ['1', '2', '3', '4', '5', '6', '7'] })).length, 6)
+	// Older daemons send no choices; answers and other sources never have any.
+	assert.deepEqual(askChoices(ask({ id: 3, choices: undefined })), [])
+	assert.deepEqual(askChoices(answer({ id: 4, choices: ['Ano'] })), [])
+	assert.deepEqual(askChoices(thread({ id: 5, choices: ['Ano'] })), [])
+	// 1–9 answer when there are quick answers, else open links.
+	assert.equal(detailDigits(choice), 'choices')
+	assert.equal(detailDigits(ask({ id: 6, links: ['https://a.example/1'] })), 'links')
+	assert.equal(detailDigits(ask({ id: 7, links: [] })), null)
+
+	const idle = session({ terminalId: TERMINAL, name: 'Signals asks', branch: 'feat/signals-asks', status: 'idle' })
+	const facts = detailFacts(ask({ id: 8, fullRef: 'dispatcher · Okena terminal' }), dock([idle]), NOW)
+	assert.equal(facts[0], 'Asked by dispatcher · Okena terminal')
+	assert.match(facts[1] ?? '', /^signals-asks · idle · .*feat\/signals-asks · Okena terminal [0-9a-f-]{8}$/)
+	assert.equal(facts[2], '10m ago · new')
+	assert.deepEqual(detailFacts(ask({ id: 9 }), dock([]), NOW)[1]?.endsWith('not in the dock'), true)
+	assert.deepEqual(detailFacts(answer({ id: 10, state: 'done', closedBy: 'jakub' }), null, NOW), [
+		'Answered by dispatcher',
+		'10m ago · done · read',
+	])
+	assert.equal(
+		detailFacts(ask({ id: 11, state: 'seen', reply: 'Ano', replyAt: iso(1) }), dock([]), NOW)[2],
+		'10m ago · seen · answer saved 1m ago',
+	)
 })

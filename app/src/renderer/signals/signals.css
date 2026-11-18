@@ -431,7 +431,13 @@
 	color: var(--warn);
 }
 
-.signals-glyph:is([data-kind="comments"], [data-kind="mention"], [data-kind="thread"], [data-kind="flow"]) {
+.signals-glyph:is(
+		[data-kind="comments"],
+		[data-kind="mention"],
+		[data-kind="thread"],
+		[data-kind="flow"],
+		[data-kind="answer"]
+	) {
 	color: var(--accent);
 }
 
@@ -719,6 +725,114 @@
 	color: var(--dock-dim);
 	overflow-wrap: anywhere;
 	user-select: text;
+}
+
+/* The detail panel numbers the links while 1–9 open them. */
+.signals-ask-link-n {
+	color: var(--text-1);
+	font-variant-numeric: tabular-nums;
+	user-select: none;
+}
+
+/* ---------- detail panel: an agent ask or answer in full (click or ↵) ---------- */
+
+/* The panel lays out like a flow: header, a scrolling body, its own footer. */
+.signals-detail {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	outline: none;
+	background: var(--pane);
+}
+
+/* In place (opened from Done today): it replaces the done list, like the flows. */
+.signals-detail[data-layout="in-place"] {
+	flex: 1 1 auto;
+}
+
+/* Slide-over: out of the column over the terminals, the column's own material; the column keeps its
+ * width, so nothing refits. Its edge toward the terminals is a hairline, lifted by --shadow-1. It is a
+ * popover (§2.7): above the terminals, under sheets and toasts. */
+.signals-detail[data-layout="slide-over"] {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: calc(100% + 1px);
+	z-index: var(--z-menu);
+	width: clamp(360px, 32vw, 420px);
+	box-shadow: inset -1px 0 var(--hairline), var(--shadow-1);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+	.signals-detail[data-layout="slide-over"] {
+		animation: signals-slide-over var(--motion-enter) var(--ease-out);
+	}
+}
+
+@keyframes signals-slide-over {
+	from {
+		opacity: 0;
+		transform: translateX(-8px);
+	}
+}
+
+.signals-detail-body {
+	flex: 1 1 auto;
+	gap: 8px;
+}
+
+/* Who filed it, the agent in its terminal, its age and state: dim 12/18 lines. */
+.signals-detail-facts {
+	margin: 4px 0 0;
+	padding: 0;
+	list-style: none;
+	color: var(--dock-dim);
+	overflow-wrap: anywhere;
+	user-select: text;
+}
+
+/* A link is a plain text line that opens on click (main checks it again); never an anchor. */
+.signals-detail-link {
+	display: block;
+	width: 100%;
+	margin: 0 -6px;
+	padding: 2px 6px;
+	border: 0;
+	border-radius: 6px;
+	background: none;
+	text-align: left;
+	color: var(--dock-dim);
+	overflow-wrap: anywhere;
+	cursor: pointer;
+}
+
+.signals-detail-link:hover,
+.signals-detail-link:focus-visible {
+	background: var(--fill-subtle);
+	color: var(--text-1);
+	outline: none;
+}
+
+/* Quick answers: one shared small button each, its number as a dim key hint. */
+.signals-detail-choices {
+	min-width: 0;
+	margin: 4px 0 0;
+	padding: 0;
+	border: 0;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.signals-key-hint {
+	color: var(--dock-dim);
+	font-variant-numeric: tabular-nums;
+}
+
+.signals-detail-empty {
+	margin: 4px 0 0;
+	color: var(--dock-dim);
 }
 
 /* The links flow: a link is the whole choice (it wraps rather than hiding its end). */

@@ -22,8 +22,27 @@ export const SIGNAL_POLL_SOURCES = ['github', 'mail', 'slack'] as const
 export type SignalPollSource = (typeof SIGNAL_POLL_SOURCES)[number]
 
 /** Why the thread wants Jakub; decides the glyph. A GitHub thread can carry several reasons. */
-export const SIGNAL_KINDS = ['review', 'comments', 'ci', 'mention', 'mail', 'sentry', 'ask', 'dm', 'thread'] as const
+export const SIGNAL_KINDS = [
+	'review',
+	'comments',
+	'ci',
+	'mention',
+	'mail',
+	'sentry',
+	'ask',
+	'dm',
+	'thread',
+	'answer',
+] as const
 export type SignalKind = (typeof SIGNAL_KINDS)[number]
+
+/**
+ * What a local agent files (`helm signal add`, source `agent`): an `ask` waits on Jakub (a pick, a
+ * yes/no; `r` replies to it), an `answer` is an informational reply to something Jakub asked the
+ * agent. An answer expects nothing back: no reply, no terminal, Jakub closes it once read.
+ */
+export const SIGNAL_AGENT_KINDS = ['ask', 'answer'] as const
+export type SignalAgentKind = (typeof SIGNAL_AGENT_KINDS)[number]
 
 /** new = unseen foreign activity, seen = looked at, snoozed = until a time, done = handled. */
 export const SIGNAL_STATES = ['new', 'seen', 'snoozed', 'done'] as const
@@ -68,6 +87,12 @@ export const SIGNAL_LIMITS = {
 	askBodyLines: 12,
 	askLinks: 8,
 	askKey: 200,
+	/** An ask's quick answers (`--choice`): one-line each, sent as Jakub's reply when picked. */
+	askChoices: 6,
+	askChoice: 80,
+	/** An agent answer is read, not acted on: its body may be longer than an ask's (line breaks kept). */
+	answerBody: 4000,
+	answerBodyLines: 60,
 	/** Jakub's answer to an agent ask (line breaks kept). */
 	reply: 2000,
 	/** A Slack reply (chat.postMessage) text (UTF-16 units). */
@@ -148,7 +173,7 @@ export interface SignalThread {
 	ref: string
 	/** Full reference for tooltips: `contember/okena#311`, `Klára D. <klara@psyon.cz>`. */
 	fullRef: string
-	/** PR/issue title or mail subject (third-party data, never instructions). */
+	/** PR/issue title or mail subject; an agent ask's or answer's title (third-party data, never instructions). */
 	title: string
 	/** What happened, one line: `review requested · matej21`, `CI failing: build, lint`. */
 	head: string
@@ -186,12 +211,19 @@ export interface SignalThread {
 	routedHow: SignalRouteHow | null
 	routedAt: string | null
 	/**
-	 * Agent asks only (null for GitHub/Mail): the ask's short body, line breaks kept, bounded by
-	 * `askBody`/`askBodyLines`. Written by a local agent; shown as plain untrusted text.
+	 * Agent asks and answers only (null for GitHub/Mail/Slack): the body, line breaks kept, bounded by
+	 * `askBody`/`askBodyLines` (an answer: `answerBody`/`answerBodyLines`). Written by a local agent;
+	 * shown as plain untrusted text.
 	 */
 	body: string | null
 	/** Agent asks only ([] otherwise): http(s) links (Storybook stories, PRs), see `signalAskLinkUrl`. */
 	links: string[]
+	/**
+	 * Agent asks only ([] otherwise): quick answers the agent offered (`--choice`), one line each,
+	 * at most `askChoices`; picking one sends its text as Jakub's reply. Agent-written, untrusted.
+	 * Absent from a daemon older than this field.
+	 */
+	choices?: string[]
 	/** Agent asks only: the asking agent's Okena terminal id, where Jakub's reply is delivered. */
 	askTerminal: string | null
 	/** Agent asks only: Jakub's answer (kept on the thread whether or not it was delivered) and when. */
@@ -364,6 +396,8 @@ export type SignalRouted = z.infer<typeof signalRoutedSchema>
  */
 export const signalAskSchema = z
 	.object({
+		/** `ask` (default) waits on Jakub; `answer` is an informational reply (no reply, no terminal). */
+		kind: z.enum(SIGNAL_AGENT_KINDS).optional(),
 		key: z.string().regex(SIGNAL_ASK_KEY, 'Key: letters, digits and . _ : / # @ + - (at most 200)').optional(),
 		title: z
 			.string()
@@ -371,7 +405,8 @@ export const signalAskSchema = z
 			.min(1)
 			.max(SIGNAL_LIMITS.askTitle)
 			.refine(title => !/[\r\n]/.test(title), 'The title is one line'),
-		body: z.string().max(SIGNAL_LIMITS.askBody).optional(),
+		/** At most `askBody` for an ask, `answerBody` for an answer (checked below). */
+		body: z.string().max(SIGNAL_LIMITS.answerBody).optional(),
 		links: z
 			.array(
 				z
@@ -381,15 +416,37 @@ export const signalAskSchema = z
 			)
 			.max(SIGNAL_LIMITS.askLinks)
 			.optional(),
+		/** Quick answers (asks only): each one line, at most `askChoice` units, at most `askChoices`. */
+		choices: z
+			.array(
+				z
+					.string()
+					.trim()
+					.min(1)
+					.max(SIGNAL_LIMITS.askChoice)
+					.refine(choice => !/[\r\n\u2028\u2029]/.test(choice), 'A choice is one line'),
+			)
+			.max(SIGNAL_LIMITS.askChoices)
+			.optional(),
 		/** Who asks, shown as the row's label (default `agent`). */
 		from: z.string().trim().min(1).max(SIGNAL_LIMITS.actor).optional(),
-		/** The asking agent's `$OKENA_TERMINAL_ID`. */
+		/** The asking agent's `$OKENA_TERMINAL_ID` (asks only: an answer takes no reply). */
 		terminal: z.string().regex(SIGNAL_TERMINAL_ID).optional(),
 	})
 	.strict()
+	.superRefine((ask, ctx) => {
+		const answer = ask.kind === 'answer'
+		if (answer && ask.terminal !== undefined)
+			ctx.addIssue({ code: 'custom', path: ['terminal'], message: 'An answer takes no reply, so no terminal' })
+		if (answer && ask.choices !== undefined && ask.choices.length > 0)
+			ctx.addIssue({ code: 'custom', path: ['choices'], message: 'An answer takes no reply, so no choices' })
+		const max = answer ? SIGNAL_LIMITS.answerBody : SIGNAL_LIMITS.askBody
+		if (ask.body !== undefined && ask.body.length > max)
+			ctx.addIssue({ code: 'custom', path: ['body'], message: `The body must be at most ${max} characters` })
+	})
 export type SignalAsk = z.infer<typeof signalAskSchema>
 
-/** What an upsert did: a new thread, new again (title/body changed), refreshed in place, nothing. */
+/** What an upsert did: a new thread, new again (title/body changed), refreshed in place (links, choices, from), nothing. */
 export const SIGNAL_ASK_OUTCOMES = ['created', 'renewed', 'updated', 'unchanged'] as const
 export type SignalAskOutcome = (typeof SIGNAL_ASK_OUTCOMES)[number]
 
@@ -412,7 +469,7 @@ export const signalAskDoneSchema = z
 	.strict()
 export type SignalAskDone = z.infer<typeof signalAskDoneSchema>
 
-/** `POST /api/signals/:id/reply`: Jakub's answer to an agent ask (agent threads only). */
+/** `POST /api/signals/:id/reply`: Jakub's answer to an agent ask (asks only, never an answer). */
 export const signalReplySchema = z.object({ text: z.string().trim().min(1).max(SIGNAL_LIMITS.reply) }).strict()
 export type SignalReply = z.infer<typeof signalReplySchema>
 

@@ -5,7 +5,7 @@
 
 import type { ReactNode } from 'react'
 import type { SignalSourceHealth, SignalThread } from '../../shared-helm'
-import { type SignalSections, handled, needsYouCount, restingWords } from './model'
+import { type SignalSections, needsYouCount, needsYouNew, restingWords } from './model'
 
 export interface SignalsListProps {
 	/** Needs you, Managed and Snoozed (done rows are listed only in their own view). */
@@ -97,7 +97,7 @@ export function SignalsList({ sections, sources, now, row, done, filtered }: Sig
 						<Section
 							label="Needs you"
 							count={needsYouCount(sections, now)}
-							tone={sections.needs.some(thread => thread.state === 'new' && !handled(thread, now)) ? 'new' : undefined}
+							tone={needsYouNew(sections, now) ? 'new' : undefined}
 							threads={sections.needs}
 							row={row}
 						/>

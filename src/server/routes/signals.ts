@@ -77,7 +77,9 @@ export interface SignalRouteDependencies {
 	canUnmuteSlackUser?: (userId: string) => boolean
 }
 
-const MAX_SIGNAL_BODY_BYTES = 16 * 1024
+// An agent answer's body (4000 UTF-16 units, up to 12 KB of UTF-8) plus eight 2 KB links and a
+// title must fit, with room for JSON escaping.
+const MAX_SIGNAL_BODY_BYTES = 40 * 1024
 /** Longest `wait` a client may ask `GET /signals/events` to hold the request open. */
 export const SIGNAL_EVENTS_MAX_WAIT_SECONDS = 25
 const DEFAULT_EVENT_POLL_MS = 500

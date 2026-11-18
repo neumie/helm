@@ -12,6 +12,9 @@ import {
 	ASK_TERMINAL_IDLE,
 	type SignalsFixture,
 	createSignalsFixture,
+	signalAnswerDoneFixture,
+	signalAnswerFixtures,
+	signalAskChoiceFixtures,
 	signalAskFixtures,
 	signalDoneFixtures,
 	signalSlackFilteredFixture,
@@ -26,7 +29,17 @@ import {
  * `empty`: every thread done (nothing needs you, nothing managed, nothing snoozed); `empty-down`: the
  * same while Mail needs permission (no all-clear).
  */
-export type SignalsScenario = 'column' | 'quiet' | 'source-down' | 'asks' | 'done' | 'slack' | 'empty' | 'empty-down'
+export type SignalsScenario =
+	| 'column'
+	| 'quiet'
+	| 'source-down'
+	| 'asks'
+	| 'answers'
+	| 'detail'
+	| 'done'
+	| 'slack'
+	| 'empty'
+	| 'empty-down'
 
 export interface SignalsWorkspaceProps {
 	/**
@@ -40,6 +53,8 @@ export interface SignalsWorkspaceProps {
 	 * and links: the `Signals asks` row-layout ask), or the filtered mail or done today list.
 	 */
 	flow?: 'send' | 'new-agent' | 'reply' | 'slack-reply' | 'links' | 'filtered' | 'done'
+	/** The agent row whose detail is open on load (the `detail` scenario: 505 the quick-answer ask). */
+	detail?: number
 	/**
 	 * Story only: 1 s after load, Jakub types this prompt into the idle ask agent's Okena terminal
 	 * (`ASK_TERMINAL_IDLE`); main's real ask resolver closes the open asks bound to it.
@@ -93,6 +108,28 @@ export function fixtureFor(scenario: SignalsWorkspaceProps['scenario']): Signals
 			dock: { ...dock, sessions: [...dock.sessions, ...signalsAskSessions(now)] },
 		})
 	}
+	if (scenario === 'detail') {
+		const dock = signalsDockFixture(now)
+		// The dispatcher's asks with quick answers and a long one, answers, then the column's threads.
+		return createSignalsFixture({
+			threads: [
+				...signalAskChoiceFixtures(now),
+				...signalAnswerFixtures(now),
+				...signalAskFixtures(now).filter(thread => thread.id === 501),
+				...threads,
+			],
+			dock: { ...dock, sessions: [...dock.sessions, ...signalsAskSessions(now)] },
+		})
+	}
+	if (scenario === 'answers') {
+		const dock = signalsDockFixture(now)
+		// Answers beside an ask and the column's threads; one read today shows in Done today.
+		const asks = signalAskFixtures(now).filter(thread => thread.id === 502)
+		return createSignalsFixture({
+			threads: [...signalAnswerFixtures(now), signalAnswerDoneFixture(now), ...asks, ...threads],
+			dock: { ...dock, sessions: [...dock.sessions, ...signalsAskSessions(now)] },
+		})
+	}
 	if (scenario === 'asks') {
 		const dock = signalsDockFixture(now)
 		return createSignalsFixture({
@@ -128,7 +165,7 @@ const FLOW_THREAD: Record<Exclude<NonNullable<SignalsWorkspaceProps['flow']>, 'f
 	links: 501,
 }
 
-export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, width }: SignalsWorkspaceProps) {
+export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, width, detail }: SignalsWorkspaceProps) {
 	const fixture = useMemo(() => fixtureFor(flow === 'slack-reply' ? 'slack' : scenario), [scenario, flow])
 	const options = useMemo<TerminalWorkspaceFixtureOptions>(
 		() => ({ agentDock: { scenario: 'real-case', position: 'bottom', output: 'claude-code' } }),
@@ -175,6 +212,7 @@ export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, wi
 					onLeave: () => focusActiveTerminal(root),
 					mod: 'cmd',
 					initialFlow,
+					...(detail !== undefined ? { initialDetail: detail } : {}),
 				}),
 		})
 		const disposeShortcut = mountSignalsShortcut({
@@ -196,7 +234,7 @@ export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, wi
 			content?.style.removeProperty('--left-width')
 			if (window.__signalsFixture === fixture) window.__signalsFixture = undefined
 		}
-	}, [options, fixture, flow, terminalPrompt, width])
+	}, [options, fixture, flow, terminalPrompt, width, detail])
 
 	return (
 		<div ref={wrapRef} style={{ display: 'contents' }}>

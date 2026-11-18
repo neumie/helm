@@ -719,6 +719,8 @@ function askDaemon(outcome: SignalAskResult['outcome'] = 'created') {
 				body: posted.body ?? null,
 				links: posted.links ?? [],
 				askTerminal: posted.terminal ?? null,
+				choices: posted.choices ?? [],
+				...(posted.kind === 'answer' ? { kind: 'answer' as const, reasons: ['answer' as const] } : {}),
 				lastActivityAt: NOW.toISOString(),
 			}),
 		})
@@ -983,7 +985,7 @@ test('add counts body lines as the store keeps them', async () => {
 })
 
 test('add: a refused ask (429, too many open) prints the daemon message', async () => {
-	const message = 'Too many open agent asks (50). Close some with helm signal done.'
+	const message = 'Too many open agent asks and answers (50). Close some with helm signal done.'
 	const daemon = fakeDaemon(() => json({ error: message }, 429))
 	const run = capture(daemon.fetch)
 	assert.equal(await runSignalCli(['add', '--title', 'One too many'], run.deps), 1)
@@ -1161,4 +1163,141 @@ test('show prints an ask: body, links, terminal, reply and its delivery, all str
 	const gh = capture(fakeDaemon(() => json(thread({ id: 12 }))).fetch)
 	assert.equal(await runSignalCli(['show', '12'], gh.deps), 0)
 	assert.doesNotMatch(gh.out.join('\n'), /^(body|links|terminal|reply)/m)
+})
+
+// ---------------------------------------------------------------------------
+// answers (`helm signal answer`, `add --kind answer`)
+// ---------------------------------------------------------------------------
+
+test('answer files an answer: kind answer, named after the terminal, but no terminal sent', async () => {
+	const daemon = askDaemon()
+	const lookups: string[] = []
+	const run = capture(daemon.fetch, {
+		env: { ...ENV, OKENA_TERMINAL_ID: TERMINAL },
+		okenaTerminalName: async (id: string) => {
+			lookups.push(id)
+			return 'dispatcher'
+		},
+	})
+	const args = [
+		'answer',
+		'--title',
+		'Proxy blocks Remote',
+		'--body',
+		'It is the corporate proxy.',
+		'--key',
+		'remote-proxy',
+	]
+	assert.equal(await runSignalCli(args, run.deps), 0)
+	assert.deepEqual(lookups, [TERMINAL], 'the terminal still names the answer')
+	assert.deepEqual(daemon.calls[0]?.body, {
+		kind: 'answer',
+		key: 'remote-proxy',
+		title: 'Proxy blocks Remote',
+		body: 'It is the corporate proxy.',
+		from: 'dispatcher',
+	})
+	const [head, row] = (run.out[0] ?? '').split('\n')
+	assert.equal(head, 'created #12')
+	assert.match(row ?? '', /^ {2}#12 {2}new {2}answer {2}dispatcher {2}Proxy blocks Remote {2}0s$/)
+
+	// `add --kind answer` is the same request; `--kind ask` (and no --kind) is an ask.
+	const viaAdd = capture(daemon.fetch)
+	assert.equal(await runSignalCli(['add', '--kind', 'answer', '--title', 'Proxy blocks Remote'], viaAdd.deps), 0)
+	assert.deepEqual(daemon.calls.at(-1)?.body, { kind: 'answer', title: 'Proxy blocks Remote', from: 'agent' })
+	assert.equal(await runSignalCli(['add', '--kind', 'ask', '--title', 'Merge?'], viaAdd.deps), 0)
+	assert.deepEqual(daemon.calls.at(-1)?.body, { title: 'Merge?', from: 'agent' })
+})
+
+test('answer refuses --terminal, a bad --kind, and allows a longer body than an ask', async () => {
+	const daemon = askDaemon()
+	const refuse = async (args: string[], pattern: RegExp) => {
+		const run = capture(daemon.fetch)
+		assert.equal(await runSignalCli(args, run.deps), 1, args.join(' '))
+		assert.match(run.err.join('\n'), pattern)
+	}
+	await refuse(['answer', '--title', 'x', '--terminal', TERMINAL], /Unknown option --terminal|--terminal/)
+	await refuse(['add', '--kind', 'answer', '--title', 'x', '--terminal', TERMINAL], /An answer takes no reply/)
+	await refuse(['add', '--kind', 'reply', '--title', 'x'], /--kind/)
+	await refuse(['answer', '--kind', 'ask', '--title', 'x'], /--kind/)
+	await refuse(['answer'], /answer requires --title/)
+	await refuse(['answer', 'stray', '--title', 'x'], /answer takes no arguments/)
+	assert.equal(daemon.calls.length, 0, 'nothing reaches the daemon')
+
+	// 2000 characters and 30 lines: too long for an ask, fine for an answer.
+	const long = Array.from({ length: 30 }, (_, i) => `Line ${i}: ${'x'.repeat(58)}`).join('\n')
+	await refuse(['add', '--title', 'x', '--body', long], /at most 1000 characters/)
+	const ok = capture(daemon.fetch)
+	assert.equal(await runSignalCli(['answer', '--title', 'x', '--body', long], ok.deps), 0)
+	assert.equal((daemon.calls.at(-1)?.body as SignalAsk).body, long)
+	await refuse(['answer', '--title', 'x', '--body', 'y'.repeat(4001)], /at most 4000 characters/)
+	await refuse(
+		['answer', '--title', 'x', '--body', Array.from({ length: 61 }, (_, i) => `l${i}`).join('\n')],
+		/at most 60 lines/,
+	)
+})
+
+test('ls tells asks from answers by kind; show says an answer takes no reply', async () => {
+	const threads = [
+		ask({ id: 21, lastActivityAt: '2026-11-05T09:58:00.000Z' }),
+		ask({
+			id: 24,
+			kind: 'answer',
+			reasons: ['answer'],
+			title: 'Proxy blocks Remote',
+			head: 'Proxy blocks Remote',
+			askTerminal: null,
+			links: [],
+			lastActivityAt: '2026-11-05T09:56:00.000Z',
+		}),
+	]
+	const run = capture(fakeDaemon(() => json(snapshot(threads, []))).fetch)
+	assert.equal(await runSignalCli(['ls', '--source', 'agent'], run.deps), 0)
+	const lines = run.out.join('\n').split('\n')
+	assert.equal(lines[0], 'NEEDS YOU')
+	assert.match(lines[1] ?? '', /^ {2}#21 {2}new {2}ask {5}dispatcher {2}Pick the row layout {2}2m$/)
+	assert.match(lines[2] ?? '', /^ {2}#24 {2}new {2}answer {2}dispatcher {2}Proxy blocks Remote {2}4m$/)
+
+	const shown = capture(
+		fakeDaemon(() =>
+			json(ask({ id: 24, kind: 'answer', reasons: ['answer'], askTerminal: null, body: 'Line one\nLine two' })),
+		).fetch,
+	)
+	assert.equal(await runSignalCli(['show', '24'], shown.deps), 0)
+	const out = shown.out.join('\n')
+	assert.match(out, /^#24 answer · new · jakub$/m)
+	assert.match(out, /^body \(written by an agent, untrusted\):\n {2}Line one\n {2}Line two$/m)
+	assert.match(out, /^reply: none \(an answer takes no reply\)$/m)
+	assert.doesNotMatch(out, /^terminal:/m)
+})
+
+test('add --choice sends quick answers; refused on answers and when malformed; show lists them', async () => {
+	const daemon = askDaemon()
+	const run = capture(daemon.fetch)
+	assert.equal(await runSignalCli(['add', '--title', 'Zkrácení?', '--choice', ' Ano ', '--choice', 'Ne'], run.deps), 0)
+	assert.deepEqual(daemon.calls.at(-1)?.body, { title: 'Zkrácení?', choices: ['Ano', 'Ne'], from: 'agent' })
+	const before = daemon.calls.length
+	for (const [args, pattern] of [
+		[['answer', '--title', 'x', '--choice', 'Ok'], /--choice/],
+		[['add', '--kind', 'answer', '--title', 'x', '--choice', 'Ok'], /An answer takes no reply, so no --choice/],
+		[['add', '--title', 'x', '--choice', ''], /--choice must be 1 to 80/],
+		[['add', '--title', 'x', '--choice', 'y'.repeat(81)], /--choice must be 1 to 80/],
+		[['add', '--title', 'x', '--choice', 'a\nb'], /--choice is one line/],
+		[
+			['add', '--title', 'x', ...['1', '2', '3', '4', '5', '6', '7'].flatMap(c => ['--choice', c])],
+			/At most 6 --choice/,
+		],
+	] as const) {
+		const refused = capture(daemon.fetch)
+		assert.equal(await runSignalCli([...args], refused.deps), 1, args.join(' '))
+		assert.match(refused.err.join('\n'), pattern)
+	}
+	assert.equal(daemon.calls.length, before, 'nothing reaches the daemon')
+
+	const shown = capture(fakeDaemon(() => json(ask({ id: 25, choices: ['Ano', 'Ne\u202e'] }))).fetch)
+	assert.equal(await runSignalCli(['show', '25'], shown.deps), 0)
+	assert.match(shown.out.join('\n'), /^choices:\n {2}1\. Ano\n {2}2\. Ne$/m)
+	const none = capture(fakeDaemon(() => json(ask({ id: 26 }))).fetch)
+	assert.equal(await runSignalCli(['show', '26'], none.deps), 0)
+	assert.match(none.out.join('\n'), /^choices: -$/m)
 })

@@ -425,6 +425,173 @@ export function signalAskFixtures(now = Date.now()): SignalThread[] {
 }
 
 /**
+ * The dispatcher's asks as it writes them from now on (`helm signal add --choice`): a one-line summary,
+ * then the project, the context, the options and its recommendation; quick answers when a word is
+ * enough. 505 asks from the idle Signals terminal (the answer is typed in), 506 is long and from a
+ * terminal the dock does not list.
+ */
+export function signalAskChoiceFixtures(now = Date.now()): SignalThread[] {
+	const ask = (seed: Omit<ThreadSeed, 'source' | 'kind' | 'head' | 'fullRef' | 'ref'> & { from?: string }) => {
+		const { from = 'dispatcher', ...rest } = seed
+		return thread(
+			{
+				source: 'agent',
+				kind: 'ask',
+				reasons: ['ask'],
+				head: seed.title,
+				actor: from,
+				fullRef: seed.askTerminal ? `${from} · Okena terminal` : from,
+				ref: from,
+				...rest,
+			},
+			now,
+		)
+	}
+	return [
+		ask({
+			id: 505,
+			threadKey: 'agent:dispatcher/zkraceni',
+			title: 'Zkrácení: mám zkrátit názvy terminálů na 24 znaků?',
+			body: [
+				'Zkrácení názvů terminálů v Okeně na 24 znaků, aby se vešly do záložek.',
+				'',
+				'Projekt: helm (Signals, Okena board)',
+				'Kontext: názvy jako "Inventura úpravy skladových karet" se v záložce uříznou uprostřed slova a nejde poznat, co terminál dělá.',
+				'',
+				'Možnosti:',
+				'Ano — zkrátím na 24 znaků po celých slovech, plný název zůstane v tooltipu.',
+				'Ne — nechám názvy, jak jsou.',
+				'',
+				'Doporučuju Ano.',
+			].join('\n'),
+			choices: ['Ano', 'Ne'],
+			links: ['https://github.com/neumie/helm/pull/431', `${STORY}views-signals-detail--ask`],
+			askTerminal: ASK_TERMINAL_IDLE,
+			ago: 4,
+		}),
+		ask({
+			id: 506,
+			threadKey: 'agent:dispatcher/remote-host',
+			title: 'Remote: přesunout host na Mac mini, nebo nechat na notebooku?',
+			body: [
+				'Přesun Helm Remote hostu z notebooku na Mac mini v kanceláři.',
+				'',
+				'Projekt: helm (Remote)',
+				'Kontext: Remote teď běží na notebooku; když ho zavřeš, telefon se nepřipojí.',
+				'Mac mini běží pořád, Tailscale na něm je, ale není tam Okena ani tvoje Pi session.',
+				'Remote umí jen existující Pi session na stejném stroji, takže by na mini viděl jen to, co tam poběží.',
+				'',
+				'Možnosti:',
+				'1. Nechat na notebooku. Nic se nemění; mimo kancelář jen s otevřeným víkem.',
+				'2. Přesunout na mini a pouštět tam agenty přes Okenu na mini.',
+				'   Telefon vidí vše, co běží na mini; notebook je pak jen terminál.',
+				'3. Dva hosty, každý se svým párováním.',
+				'   Funguje hned, ale na telefonu dva odkazy a dvě sady zařízení.',
+				'',
+				'Rizika:',
+				'- Na mini chybí tvoje SSH klíče a gh přihlášení; agent by se nedostal k privátním repům.',
+				'- Pi config se nesdílí; nastavení modelu by se muselo udržovat dvakrát.',
+				'- Párování se nepřenáší, musel bys spárovat telefon znovu.',
+				'',
+				'Co bych udělal:',
+				'Teď nechat na notebooku (1).',
+				'Až budeš chtít agenty přes noc, připravím mini jako druhý host (3) a sepíšu, co tam chybí.',
+				'',
+				'Nespěchá to; stačí odpověď do pátku.',
+			].join('\n'),
+			askTerminal: '0f4e9a12-77c1-4d5e-8a3b-9c2d1e6f5a40',
+			ago: 5,
+		}),
+	]
+}
+
+/**
+ * Agent answers (`helm signal add --kind answer`): informational replies to something Jakub asked an
+ * agent in its chat — a longer one from the dispatcher (its detail scrolls), one with a link, one
+ * already opened (seen). None takes a reply or a terminal.
+ */
+export function signalAnswerFixtures(now = Date.now()): SignalThread[] {
+	const answer = (seed: Omit<ThreadSeed, 'source' | 'kind' | 'head' | 'fullRef' | 'ref'> & { from?: string }) => {
+		const { from = 'dispatcher', ...rest } = seed
+		return thread(
+			{
+				source: 'agent',
+				kind: 'answer',
+				reasons: ['answer'],
+				head: seed.title,
+				actor: from,
+				fullRef: from,
+				ref: from,
+				...rest,
+			},
+			now,
+		)
+	}
+	return [
+		answer({
+			id: 601,
+			threadKey: 'agent:answer/remote-proxy',
+			title: 'Proxy blokuje Remote',
+			body: [
+				'Remote z telefonu nejde, protože firemní proxy na Wi‑Fi v kanceláři blokuje WebSocket na *.ts.net.',
+				'Helm Remote i Tailscale běží v pořádku: z LTE se připojíš hned.',
+				'Ověřil jsem to přes curl z notebooku za proxy: HTTP 403 od proxy, ne od Remote.',
+				'',
+				'Možnosti:',
+				'1. Na telefonu vypnout Wi‑Fi a jet přes LTE (funguje teď).',
+				'2. Požádat správce o výjimku pro *.ts.net (nejčistší).',
+				'3. Tailscale exit node doma — zbytečně složité.',
+				'',
+				'Nic dalšího po tobě nechci; jen ať víš, proč to nešlo.',
+			].join('\n'),
+			ago: 3,
+		}),
+		answer({
+			id: 602,
+			threadKey: 'agent:answer/slack-poll-rate',
+			title: 'Jak často Signals čtou Slack?',
+			body: 'Každých 60 s (signals.slack.pollSeconds), nejvýš 30 DM a 15 vláken na jedno čtení.\nRate limit Tier 3 je daleko.',
+			links: ['https://github.com/neumie/helm/blob/main/AGENTS.md'],
+			ago: 26,
+		}),
+		answer({
+			id: 603,
+			threadKey: 'agent:answer/okena-304-status',
+			from: 'okena-stream-lease',
+			title: 'okena#304: druhé kolo review je zapracované',
+			body: 'matej21 chtěl kratší lease; je 60 s a CI je zelené.',
+			links: ['https://github.com/contember/okena/pull/304'],
+			state: 'seen',
+			ago: 70,
+		}),
+	]
+}
+
+/** An answer Jakub read and closed today (Done today: `read`). */
+export function signalAnswerDoneFixture(now = Date.now()): SignalThread {
+	return thread(
+		{
+			id: 604,
+			threadKey: 'agent:answer/build-id',
+			source: 'agent',
+			kind: 'answer',
+			reasons: ['answer'],
+			ref: 'dispatcher',
+			fullRef: 'dispatcher',
+			title: 'Proč se daemon po buildu restartoval?',
+			head: 'Proč se daemon po buildu restartoval?',
+			actor: 'dispatcher',
+			body: 'Build ID se změnil (dirty checkout), takže ho Helm restartoval sám; běh nic neběželo.',
+			state: 'done',
+			closedBy: 'jakub',
+			updatedAt: iso(now - 12 * MINUTE),
+			ago: 50,
+		},
+		now,
+	)
+}
+
+/**
  * More threads done today, one per way a thread gets done (with okena#298 gone from GitHub and
  * crane-rental#965 dismissed in {@link signalThreadFixtures}): mail read in Mail (also a Sentry
  * alert), a managed mail closed by its agent with a note, a PR an agent closed, an answered ask the
@@ -953,6 +1120,8 @@ export function createSignalsFixture(options: SignalsFixtureOptions = {}): Signa
 							state: patch.state,
 							snoozedUntil: patch.state === 'snoozed' ? (patch.snoozedUntil ?? null) : null,
 							closedReason: null,
+							// As the daemon: a close through Helm (its control token) is Jakub's.
+							closedBy: patch.state === 'done' ? ('jakub' as const) : null,
 						}
 					: {}),
 				updatedAt: at,

@@ -31,6 +31,17 @@ async function open(page: Page, id: string) {
 	}
 }
 
+/**
+ * Selects an ask's row and closes the detail panel the click opens (Esc keeps the selection), so `r`
+ * opens the reply flow; the panel's own answer field is covered by signals-detail.spec.ts.
+ */
+async function select(page: Page, row: ReturnType<Awaited<ReturnType<typeof open>>['row']>) {
+	await row.click()
+	await expect(page.locator('.signals-detail')).toBeVisible()
+	await page.keyboard.press('Escape')
+	await expect(page.locator('.signals-detail')).toHaveCount(0)
+}
+
 const calls = (page: Page) => page.evaluate(() => window.__signalsFixture?.calls)
 
 test('an ask reads as who asks and what, then a dim line with its body and link count', async ({ page }) => {
@@ -70,7 +81,7 @@ test('an ask reads as who asks and what, then a dim line with its body and link 
 
 test('o on an ask with several links lists them as text; 2 opens the second by position', async ({ page }) => {
 	const view = await open(page, 'views-signals-agent-asks--needs-you')
-	await view.row(501).click()
+	await select(page, view.row(501))
 	await expect(view.signals.locator('.signals-foot-hints')).toContainText('o links')
 	await page.keyboard.press('o')
 	const links = page.locator('.signals-flow-keys .signals-choice')
@@ -90,7 +101,7 @@ test('o on an ask with several links lists them as text; 2 opens the second by p
 	expect(recorded?.updates).toEqual([{ id: 501, patch: { state: 'seen' } }])
 
 	// One link: o opens it at once.
-	await view.row(502).click()
+	await select(page, view.row(502))
 	await page.keyboard.press('o')
 	await expect(view.note).toHaveText('Opened link 1 of agent')
 	expect((await calls(page))?.openedLinks.at(-1)).toEqual({
@@ -105,7 +116,7 @@ test('r on an ask from an idle Okena agent saves the answer, types the fenced pr
 	page,
 }) => {
 	const view = await open(page, 'views-signals-agent-asks--needs-you')
-	await view.row(501).click()
+	await select(page, view.row(501))
 	await page.keyboard.press('r')
 	await expect(view.answer).toBeFocused()
 	await expect(page.locator('.signals-flow-keys .signals-note')).toHaveText(
@@ -152,7 +163,7 @@ test('r on an ask from an idle Okena agent saves the answer, types the fenced pr
 
 test('r on an ask whose agent is working queues the answer for after its turn', async ({ page }) => {
 	const view = await open(page, 'views-signals-agent-asks--needs-you')
-	await view.row(503).click()
+	await select(page, view.row(503))
 	await page.keyboard.press('r')
 	await expect(page.locator('.signals-flow-keys .signals-note')).toHaveText(
 		'Queued for okena-stream-lease: typed in once it stops working',
@@ -184,7 +195,7 @@ test('r on an ask whose agent has an item open in the dock, or that has no termi
 		if (!fixture || !busy) throw new Error('no okena-stream-lease session')
 		fixture.openTurn(busy.terminalId, 'sending')
 	})
-	await view.row(503).click()
+	await select(page, view.row(503))
 	await page.keyboard.press('r')
 	await expect(page.locator('.signals-flow-keys .signals-note')).toHaveText(
 		'okena-stream-lease has an open question in the dock; the answer is saved on the thread',
@@ -194,7 +205,7 @@ test('r on an ask whose agent has an item open in the dock, or that has no termi
 	await expect(view.note).toHaveText('Saved on #503. okena-stream-lease reads it with helm signal show')
 	await expect(view.row(503).locator('.signals-receipt')).toHaveText('saved now')
 
-	await view.row(502).click()
+	await select(page, view.row(502))
 	await page.keyboard.press('r')
 	await expect(page.locator('.signals-flow-keys .signals-note')).toHaveText(
 		'Saved on the thread; agent reads it with helm signal show',
@@ -251,7 +262,7 @@ test('r on an ask whose agent stopped after asking answers its open dock turn, n
 	// The usual case: the agent ran helm signal add and ended its turn; the dock opened a turn item.
 	const itemId = await page.evaluate(id => window.__signalsFixture?.openTurn(id), IDLE_TERMINAL)
 	expect(itemId).toEqual(expect.any(Number))
-	await view.row(501).click()
+	await select(page, view.row(501))
 	await page.keyboard.press('r')
 	await expect(page.locator('.signals-flow-keys .signals-note')).toHaveText(
 		'Typed into signals-agent-asks’s terminal as its next prompt',
@@ -272,7 +283,7 @@ test('r on an ask whose agent has another dock item open only saves the answer',
 	const view = await open(page, 'views-signals-agent-asks--needs-you')
 	// A turn reply already in flight from the dock (not the open turn): the answer is not typed over it.
 	await page.evaluate(id => window.__signalsFixture?.openTurn(id, 'sending'), IDLE_TERMINAL)
-	await view.row(501).click()
+	await select(page, view.row(501))
 	await page.keyboard.press('r')
 	await expect(page.locator('.signals-flow-keys .signals-note')).toHaveText(
 		'signals-agent-asks has an open question in the dock; the answer is saved on the thread',
@@ -297,7 +308,7 @@ test('a reply the dock refuses or cannot confirm stays saved on the thread, neve
 			prompt: { status: 'refused', reason: 'busy', detail: 'The agent is working again.' },
 		}),
 	)
-	await view.row(501).click()
+	await select(page, view.row(501))
 	await page.keyboard.press('r')
 	await page.keyboard.type('B')
 	await page.keyboard.press('Meta+Enter')
@@ -332,7 +343,7 @@ test('a reply the dock refuses or cannot confirm stays saved on the thread, neve
 test('a reply typed in whose receipt cannot be saved says so and keeps the answer on the thread', async ({ page }) => {
 	const view = await open(page, 'views-signals-agent-asks--needs-you')
 	await page.evaluate(() => window.__signalsFixture?.script({ routedError: 'database is locked' }))
-	await view.row(501).click()
+	await select(page, view.row(501))
 	await page.keyboard.press('r')
 	await page.keyboard.type('B')
 	await page.keyboard.press('Meta+Enter')
@@ -376,7 +387,7 @@ test('Jakub typing into an ask agent’s terminal closes its open asks; Done tod
 test('a prompt Helm typed counts only as the reply to its own ask; slash commands never count', async ({ page }) => {
 	const view = await open(page, 'views-signals-agent-asks--needs-you')
 	await page.evaluate(terminal => window.__signalsFixture?.terminalPrompt(terminal, '/compact'), IDLE_TERMINAL)
-	await view.row(501).click()
+	await select(page, view.row(501))
 	await page.keyboard.press('r')
 	await page.keyboard.type('B')
 	await page.keyboard.press('Meta+Enter')

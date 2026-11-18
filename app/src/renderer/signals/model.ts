@@ -21,6 +21,11 @@ import { agentNames, statusGlyph } from '../agent-dock/presentation'
 
 export type SignalSection = 'needs' | 'managed' | 'snoozed' | 'done'
 
+/** An agent answer (`helm signal add --kind answer`): an informational reply, nothing to act on. */
+export function isAnswer(thread: Pick<SignalThread, 'source' | 'kind'>): boolean {
+	return thread.source === 'agent' && thread.kind === 'answer'
+}
+
 /** The kind decides the glyph (and its tone in CSS); never the age. */
 export const KIND_GLYPH: Record<SignalKind, string> = {
 	review: '◇',
@@ -32,6 +37,7 @@ export const KIND_GLYPH: Record<SignalKind, string> = {
 	ask: '?',
 	dm: '@',
 	thread: '○',
+	answer: '↳',
 }
 
 export const KIND_WORD: Record<SignalKind, string> = {
@@ -44,6 +50,7 @@ export const KIND_WORD: Record<SignalKind, string> = {
 	ask: 'Agent ask',
 	dm: 'Direct message',
 	thread: 'Thread reply',
+	answer: 'Agent answer',
 }
 
 export const SOURCE_LABEL: Record<SignalSource, string> = {
@@ -83,7 +90,8 @@ const MUTED_REASON = 'sender muted'
 
 /**
  * Which section a thread is listed in, or null: done more than a day ago, or closed by muting its
- * sender (Filtered mail lists that mail instead).
+ * sender (Filtered mail lists that mail instead). An agent answer Jakub has not closed is listed in
+ * Needs you, set apart only by its ↳ glyph (it never counts there: `needsYouCount`).
  */
 export function signalSection(thread: SignalThread, now: number): SignalSection | null {
 	if (thread.state === 'snoozed') return 'snoozed'
@@ -182,16 +190,23 @@ export function nextWeekdayMorning(now: number): Date {
 
 // ---------- actions ----------
 
-export type SignalActionKey = 'p' | 'n' | 'm' | 't' | 's' | 'd' | 'o' | 'r' | 'x'
+/** `Enter` reads an agent answer (its detail panel); the hint shows it as `↵`. */
+export type SignalActionKey = 'p' | 'n' | 'm' | 't' | 's' | 'd' | 'o' | 'r' | 'x' | 'Enter'
 
 export interface SignalAction {
 	key: SignalActionKey
 	label: string
 }
 
+/** The key as its hint shows it. */
+export function actionKeyHint(key: SignalActionKey): string {
+	return key === 'Enter' ? '↵' : key
+}
+
 /** What the selected row offers, in key-hint order (footer). */
 export function threadActions(thread: SignalThread, now: number): SignalAction[] {
 	const section = signalSection(thread, now) ?? 'done'
+	if (isAnswer(thread)) return answerActions(thread, section)
 	if (thread.source === 'agent') return askActions(thread, section)
 	const open: SignalAction | null = thread.url ? { key: 'o', label: 'open' } : null
 	// Mail from a person or a list, or a Slack DM/mention/thread from a person (never a Sentry alert,
@@ -253,14 +268,98 @@ function askActions(thread: SignalThread, section: SignalSection): SignalAction[
 	const count = thread.links.length
 	const open: SignalAction | null = count === 0 ? null : { key: 'o', label: count === 1 ? 'open' : 'links' }
 	const reply: SignalAction = { key: 'r', label: 'reply' }
+	const details: SignalAction = { key: 'Enter', label: 'details' }
 	const list: Array<SignalAction | null> =
 		section === 'needs'
-			? [reply, open, { key: 's', label: 'snooze' }, { key: 'd', label: 'dismiss' }]
+			? [reply, open, { key: 's', label: 'snooze' }, { key: 'd', label: 'dismiss' }, details]
 			: section === 'managed'
-				? [{ key: 't', label: 'take back' }, { key: 's', label: 'snooze' }, open]
+				? [{ key: 't', label: 'take back' }, { key: 's', label: 'snooze' }, open, details]
 				: section === 'snoozed'
-					? [reply, { key: 't', label: 'wake' }, { key: 'd', label: 'dismiss' }, open]
-					: [{ key: 't', label: 'reopen' }, open]
+					? [reply, { key: 't', label: 'wake' }, { key: 'd', label: 'dismiss' }, open, details]
+					: [{ key: 't', label: 'reopen' }, open, details]
+	return list.filter((action): action is SignalAction => action !== null)
+}
+
+/** Quick answers an ask carries (`helm signal add --choice`), at most six one-line ones; [] otherwise. */
+export const CHOICES_MAX = 6
+export function askChoices(thread: Pick<SignalThread, 'source' | 'kind' | 'choices'>): string[] {
+	if (thread.source !== 'agent' || thread.kind === 'answer') return []
+	return (thread.choices ?? [])
+		.map(choice => choice.replace(/\s+/g, ' ').trim())
+		.filter(choice => choice.length > 0)
+		.slice(0, CHOICES_MAX)
+}
+
+/**
+ * Who the 1–9 keys serve in the detail panel: an ask's quick answers when it has any, else its links.
+ * (Links stay clickable either way; `o` still opens them.)
+ */
+export function detailDigits(
+	thread: Pick<SignalThread, 'source' | 'kind' | 'choices' | 'links'>,
+): 'choices' | 'links' | null {
+	if (askChoices(thread).length > 0) return 'choices'
+	return thread.links.length > 0 ? 'links' : null
+}
+
+/**
+ * The detail panel's dim facts about an agent ask or answer, one line each: who filed it, the agent
+ * in the terminal it came from (its dock name, state, project and branch; or that the dock does not
+ * list that terminal), and when and where it stands.
+ */
+export function detailFacts(thread: SignalThread, snapshot: AgentDockSnapshot | null, now: number): string[] {
+	const lines: string[] = []
+	const ask = !isAnswer(thread)
+	lines.push(`${ask ? 'Asked' : 'Answered'} by ${thread.fullRef}`)
+	const terminal = thread.askTerminal
+	if (terminal) {
+		const target = askDeliveryTarget(thread, snapshot)
+		const short = `terminal ${terminal.slice(0, 8)}`
+		if (target) {
+			const session = target.session
+			const where = [session.project, session.branch && session.branch !== session.project ? session.branch : null]
+				.filter(Boolean)
+				.join(' · ')
+			lines.push([`${target.name} · ${target.status}`, where, `Okena ${short}`].filter(Boolean).join(' · '))
+		} else lines.push(`Okena ${short} · not in the dock`)
+	}
+	const age = formatAgo(now - time(thread.lastActivityAt))
+	const state =
+		thread.state === 'snoozed'
+			? `snoozed ${snoozeLabel(thread.snoozedUntil, now)}`
+			: thread.state === 'done'
+				? `done · ${doneReason(thread)?.word ?? 'closed'}`
+				: thread.owner === 'managed'
+					? 'managed'
+					: thread.state
+	const receipt = ask ? askReceipt(thread, now) : null
+	lines.push(
+		[
+			`${age} ago`,
+			state,
+			receipt ? `${receipt.how === 'replied' ? 'replied' : 'answer saved'} ${receipt.ago} ago` : null,
+		]
+			.filter(Boolean)
+			.join(' · '),
+	)
+	return lines
+}
+
+/**
+ * An agent answer is read, not answered or routed: `↵` reads it (the detail panel), `o` opens its one
+ * link or lists several, `s` snooze, `d` done (closed once read); never r, p, n, m or x.
+ */
+function answerActions(thread: SignalThread, section: SignalSection): SignalAction[] {
+	const count = thread.links.length
+	const open: SignalAction | null = count === 0 ? null : { key: 'o', label: count === 1 ? 'open' : 'links' }
+	const read: SignalAction = { key: 'Enter', label: 'read' }
+	const list: Array<SignalAction | null> =
+		section === 'needs'
+			? [read, open, { key: 's', label: 'snooze' }, { key: 'd', label: 'done' }]
+			: section === 'managed'
+				? [read, { key: 't', label: 'take back' }, open]
+				: section === 'snoozed'
+					? [read, { key: 't', label: 'wake' }, { key: 'd', label: 'done' }, open]
+					: [read, { key: 't', label: 'reopen' }, open]
 	return list.filter((action): action is SignalAction => action !== null)
 }
 
@@ -293,7 +392,7 @@ export function actionNote(key: SignalActionKey, thread: SignalThread, now: numb
 		case 's':
 			return `Snoozed ${thread.ref} ${snoozeLabel(nextWeekdayMorning(now).toISOString(), now)}`
 		case 'd':
-			return `Dismissed ${thread.ref}`
+			return isAnswer(thread) ? `Closed the answer from ${thread.ref}` : `Dismissed ${thread.ref}`
 		default:
 			return ''
 	}
@@ -324,6 +423,7 @@ export function askReceipt(thread: SignalThread, now: number): { how: 'replied' 
 
 /** Handled for the header count: routed to an agent, or (an ask) answered. */
 export function handled(thread: SignalThread, now: number): boolean {
+	if (isAnswer(thread)) return false
 	return thread.source === 'agent' ? askReceipt(thread, now) !== null : routedReceipt(thread, now) !== null
 }
 
@@ -564,6 +664,10 @@ export function doneReason(thread: SignalThread): DoneReason | null {
 	} else if (reason !== null) {
 		kind = 'gone'
 		word = thread.source === 'agent' ? 'gone' : `gone from ${SOURCE_LABEL[thread.source]}`
+	} else if (thread.closedBy === 'jakub' && isAnswer(thread)) {
+		// An answer is closed once Jakub has read it (`d` or the detail panel's Done).
+		kind = 'read'
+		word = 'read'
 	} else if (thread.closedBy === 'jakub') {
 		// Only Jakub dismisses (`d`); the column's own word for it.
 		kind = 'dismissed'
@@ -719,7 +823,13 @@ function agentHintTitle(match: AgentMatch): string {
 
 /** Needs you threads not yet handled (sent on or answered): the Needs you band's count. */
 export function needsYouCount(sections: SignalSections, now: number): number {
-	return sections.needs.filter(thread => !handled(thread, now)).length
+	// An answer waits on nothing, even listed in Needs you.
+	return sections.needs.filter(thread => !isAnswer(thread) && !handled(thread, now)).length
+}
+
+/** Needs you has a new thread that waits on Jakub (the band mark's warn tone); answers never count. */
+export function needsYouNew(sections: SignalSections, now: number): boolean {
+	return sections.needs.some(thread => !isAnswer(thread) && thread.state === 'new' && !handled(thread, now))
 }
 
 /**
