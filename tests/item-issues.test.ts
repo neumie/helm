@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { dispatchSolveItem } from '../src/actions/dispatcher.js'
 import type { HelmConfig } from '../src/config.js'
 import { DB } from '../src/db/client.js'
 import { GhIssueClient, IssueUnavailableError, classifyGhError, parseGithubRemote } from '../src/github/issues.js'
@@ -17,7 +18,10 @@ import {
 } from '../src/github/item-issue-text.js'
 import { ItemCommands } from '../src/items/commands.js'
 import { ItemIssues } from '../src/items/issues.js'
+import { processSolveItem } from '../src/queue/worker.js'
+import { buildPrompt } from '../src/solver/prompt-builder.js'
 import { RunResultFile, runResultPath } from '../src/solver/run-result.js'
+import type { Solver } from '../src/solver/solver.js'
 import { FakeIssueClient } from './helpers/fake-issue-client.js'
 
 const config = {
@@ -99,6 +103,8 @@ test('GhIssueClient sends bodies on stdin, never argv, and parses created issues
 	assert.deepEqual(calls[0]?.args.slice(0, 4), ['issue', 'create', '-R', 'acme/app'])
 	const found = await client.find(repo, itemIssueMarker('abc'), 'all')
 	assert.deepEqual(found, { number: 4, url: 'u4', state: 'closed' }, 'only an exact marker matches')
+	const listArgs = calls.find(call => call.args[1] === 'list')?.args ?? []
+	assert.equal(listArgs[listArgs.indexOf('--author') + 1], '@me', 'only issues the gh user filed')
 	await client.comment(repo, 4, 'hello')
 	assert.deepEqual(calls.at(-1), {
 		args: ['issue', 'comment', '4', '-R', 'acme/app', '--body-file', '-'],
@@ -230,6 +236,25 @@ test('an Item without a recorded issue finds its own issue by marker, or the ope
 	const third = startSolve({ source: { provider: 'ClientCare', externalId: 'T-5' } })
 	const own = await issues.beginRun({ commands, item: third, repoPath: '/repo', task, run })
 	assert.equal(own?.number, 2, 'a closed source issue is not reused by another Item')
+})
+
+test('an issue someone else filed with a copied marker is never adopted', async t => {
+	const { commands, client, issues, startSolve } = fixture(t)
+	const item = startSolve({ source: { provider: 'ClientCare', externalId: 'T-7' } })
+	client.issues.push({
+		repo: 'acme/app',
+		number: 1,
+		url: 'https://github.com/acme/app/issues/1',
+		title: 'Planted',
+		body: `${itemIssueMarker(item.id)}\n<!-- helm:source ClientCare:T-7 -->`,
+		state: 'open',
+		author: 'mallory',
+		closeReason: null,
+		comments: [],
+	})
+	const linked = await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	assert.equal(linked?.number, 2, 'Helm files its own issue')
+	assert.deepEqual(client.issue(1).comments, [], 'the planted issue is untouched')
 })
 
 test('a project without a GitHub remote runs without an issue and records why', async t => {
@@ -399,7 +424,125 @@ test('RunResultFile reads a plain result and refuses links and stale attempts', 
 	assert.equal(file.exists(), false)
 	assert.equal(file.read(), null)
 
-	assert.throws(() => runResultPath('work', '../escape'), /Unsafe Item id/)
+	assert.match(runResultPath('work', '../escape'), /runs\/id-[0-9a-f]{32}\/solver-result\.json$/)
 	mkdirSync(join(dir, 'x'))
 	assert.match(runResultPath('work', 'abc-123'), /runs\/abc-123\/solver-result\.json$/)
+})
+
+test('a solve run files the task as an issue, writes its result outside the repo and links the PR', async t => {
+	const { db, commands, client, issues, dir } = fixture(t)
+	const provider = {
+		name: 'fake',
+		pollNewTasks: async () => [],
+		getTaskContext: async () => null,
+		resolveTaskSummary: async () => null,
+		postComment: async () => null,
+	}
+	const item = commands.createSolveItem({
+		title: 'Fix login',
+		projectSlug: 'helm',
+		prompt: 'The login button is dead.',
+	})
+	const prUrl = 'https://github.com/acme/app/pull/4'
+	client.pullRequests.set(prUrl, 'Fixes the login button.')
+	let prompt = ''
+	let worktree = ''
+	let resultPath = ''
+	const solver: Solver = {
+		async solve(params) {
+			worktree = join(dir, 'worktrees', params.taskId)
+			mkdirSync(worktree, { recursive: true })
+			params.onWorktreeReady(worktree)
+			// The issue exists before the agent starts, and the prompt names it.
+			assert.equal(client.issues.length, 1)
+			assert.equal(params.issue?.reference, '#1')
+			resultPath = params.resultPath
+			const run = new RunResultFile(params.resultPath)
+			run.prepare()
+			writeFileSync(
+				params.resultPath,
+				JSON.stringify({ summary: 'Wired the button', filesChanged: ['src/login.ts'], prUrl }),
+			)
+			prompt = buildPrompt(
+				{ title: params.taskTitle },
+				{ planDirName: params.planDirName, worktreePath: worktree, resultPath: params.resultPath, issue: params.issue },
+			)
+			return { worktreePath: worktree, branchName: params.branchName, outcome: { exitCode: 0, events: [] } }
+		},
+	}
+	await processSolveItem(item.id, config, db, provider, solver, undefined, { issues })
+
+	const after = db.items.get(item.id)
+	assert.equal(after?.status, 'review')
+	assert.equal(after?.prUrl, prUrl)
+	assert.equal(after?.githubIssue?.number, 1)
+	assert.ok(!resultPath.startsWith(worktree), 'the result lives in Helm state, not the worktree')
+	assert.equal(existsSync(join(worktree, 'docs')), false, 'nothing is written under docs/plans')
+	assert.match(prompt, /tracked as GitHub issue #1/)
+	assert.match(prompt, /Put `Closes #1` in the PR body/)
+	assert.ok(prompt.includes(resultPath))
+	assert.doesNotMatch(prompt, /git add .*solver-result/)
+
+	const issue = client.issue(1)
+	assert.ok(issue.body.includes('The login button is dead.'))
+	assert.equal(issue.comments.length, 2)
+	assert.match(issue.comments[0] ?? '', /^\*\*Helm\*\* started run 1/)
+	assert.equal(parseRunResultComment(issue.comments[1] ?? '')?.summary, 'Wired the button')
+	assert.equal(client.pullRequests.get(prUrl), 'Fixes the login button.\n\nCloses #1')
+})
+
+test('a solve run in a project without a GitHub remote still completes from its Helm-side result', async t => {
+	const { db, commands, client, issues, dir } = fixture(t)
+	client.remotes.clear()
+	const provider = {
+		name: 'fake',
+		pollNewTasks: async () => [],
+		getTaskContext: async () => null,
+		resolveTaskSummary: async () => null,
+		postComment: async () => null,
+	}
+	const item = commands.createSolveItem({ title: 'Local only', projectSlug: 'helm', prompt: 'p' })
+	const solver: Solver = {
+		async solve(params) {
+			const worktree = join(dir, 'wt-local')
+			mkdirSync(worktree, { recursive: true })
+			params.onWorktreeReady(worktree)
+			assert.equal(params.issue ?? null, null)
+			new RunResultFile(params.resultPath).prepare()
+			writeFileSync(params.resultPath, JSON.stringify({ summary: 'Done locally' }))
+			return { worktreePath: worktree, branchName: params.branchName, outcome: { exitCode: 0, events: [] } }
+		},
+	}
+	await processSolveItem(item.id, config, db, provider, solver, undefined, { issues })
+	const after = db.items.get(item.id)
+	assert.equal(after?.status, 'review')
+	assert.equal(after?.resultSummary, 'Done locally')
+	assert.equal(after?.githubIssue ?? null, null)
+	assert.ok(db.items.getEvents(item.id).some(event => event.eventType === 'issue_unavailable'))
+})
+
+test('the fallback PR body closes the tracking issue', async t => {
+	const { db, commands, client, issues } = fixture(t)
+	const item = commands.startItem(commands.createSolveItem({ title: 'T', projectSlug: 'helm', prompt: 'p' }).id)
+	await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	commands.completeSolveItem(item.id, { worktreePath: '/wt', branchName: 'b', planDirName: 'p', resultSummary: 's' })
+	const bodies: string[] = []
+	await dispatchSolveItem({
+		itemId: item.id,
+		result: { summary: 'Did it', filesChanged: [] },
+		config: { ...config, github: { ...config.github, createPrs: true } } as HelmConfig,
+		commands,
+		provider: { name: 'fake' } as never,
+		sideEffects: {
+			pushBranch: async () => undefined,
+			createPr: async opts => {
+				bodies.push(opts.body)
+				return 'https://github.com/acme/app/pull/8'
+			},
+			postComment: async () => null,
+		} as never,
+	})
+	assert.equal(bodies[0], 'Did it\n\nCloses #1')
+	assert.equal(db.items.get(item.id)?.prUrl, 'https://github.com/acme/app/pull/8')
+	void client
 })

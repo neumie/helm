@@ -14,6 +14,7 @@ export interface FakeIssue {
 	title: string
 	body: string
 	state: 'open' | 'closed'
+	author: string
 	closeReason: IssueCloseReason | null
 	comments: string[]
 }
@@ -21,6 +22,8 @@ export interface FakeIssue {
 /** In-memory GitHub for ItemIssues tests. Records every call; never touches the network. */
 export class FakeIssueClient implements IssueClient {
 	readonly issues: FakeIssue[] = []
+	/** The authenticated gh user; `find` only returns issues it authored. */
+	me = 'helm-operator'
 	readonly calls: string[] = []
 	readonly pullRequests = new Map<string, string>()
 	/** Local checkout path → repository; a missing entry means "no GitHub remote". */
@@ -58,7 +61,10 @@ export class FakeIssueClient implements IssueClient {
 		await this.enter('find', signal)
 		const found = this.issues.find(
 			issue =>
-				issue.repo === repoSlug(repo) && issue.body.includes(marker) && (state === 'all' || issue.state === 'open'),
+				issue.repo === repoSlug(repo) &&
+				issue.author === this.me &&
+				issue.body.includes(marker) &&
+				(state === 'all' || issue.state === 'open'),
 		)
 		return found ? this.view0(found) : null
 	}
@@ -73,6 +79,7 @@ export class FakeIssueClient implements IssueClient {
 			title: input.title,
 			body: input.body,
 			state: 'open',
+			author: this.me,
 			closeReason: null,
 			comments: [],
 		}

@@ -4,6 +4,7 @@ import type { HelmConfig } from '../../config.js'
 import { PlanWorkspace } from '../../plan/workspace.js'
 import { agentLabelFromConfig, buildInteractiveAgentCommand } from '../../solver/agent-command.js'
 import { buildPrompt } from '../../solver/prompt-builder.js'
+import { RunResultFile } from '../../solver/run-result.js'
 import type { SolveParams, SolveResult, Solver } from '../../solver/solver.js'
 import { phaseError, taskCancelled } from '../../util/errors.js'
 import { log } from '../../util/logger.js'
@@ -85,18 +86,20 @@ export class OkenaSolver implements Solver {
 
 		// Build the prompt now so the task-context builder sees any
 		// docs/plans/<planDirName>/ artifacts present in the worktree.
-		const workspace = new PlanWorkspace(worktreePath, planDirName)
-		// A reused worktree may still hold a prior run's solver-result.json. Clear it
-		// before launching, or the poll loop below exits instantly on the stale file
-		// and unlinks .helm-prompt.txt out from under the just-launched agent.
-		workspace.clearResult()
+		// A previous attempt may have left its result. Clear it before launching, or
+		// the poll loop below exits instantly on the stale file and unlinks
+		// .helm-prompt.txt out from under the just-launched agent. The worktree clear
+		// drops attempt-local knowledge candidates and a legacy docs/plans result.
+		const result = new RunResultFile(params.resultPath)
+		result.prepare()
+		new PlanWorkspace(worktreePath, planDirName).clearResult()
 		const promptFile = join(worktreePath, '.helm-prompt.txt')
 		// Main mode swaps the prompt's branch rules: the agent must branch itself.
 		const currentBranch = mainMode ? await getCurrentBranch(worktreePath) : null
 		if (signal?.aborted) throw taskCancelled()
 		const solverPrompt = buildPrompt(
 			taskContext,
-			{ planDirName, worktreePath },
+			{ planDirName, worktreePath, resultPath: params.resultPath, issue: params.issue ?? null },
 			{ ...solverConfig, knowledgeCandidates: params.knowledgeCandidatesEnabled === true },
 			mainMode ? { mode: 'main', currentBranch } : undefined,
 		)
@@ -116,7 +119,7 @@ export class OkenaSolver implements Solver {
 			throw phaseError('solve', `Failed to run command in Okena terminal: ${err instanceof Error ? err.message : err}`)
 		}
 
-		// Poll for solver-result.json — the agent writes this when done solving.
+		// Poll for the run result — the agent writes it (in Helm's state) when done solving.
 		//
 		// The timeout is IDLE-based, not wall-clock: real runs regularly exceed any
 		// fixed budget (a 30m wall-clock cap once "timed out" an agent that shipped
@@ -132,11 +135,11 @@ export class OkenaSolver implements Solver {
 		let lastScreen: string | null = null
 		let poll = 0
 
-		log.info('okena', `Waiting for solver-result.json (idle timeout: ${solverConfig.timeoutMinutes}m)`)
+		log.info('okena', `Waiting for the run result (idle timeout: ${solverConfig.timeoutMinutes}m)`)
 		await new Promise<void>((resolve, reject) => {
 			const check = async () => {
 				try {
-					if (workspace.resultExists()) {
+					if (result.exists()) {
 						resolve()
 						return
 					}
@@ -144,7 +147,7 @@ export class OkenaSolver implements Solver {
 					// workspace is gone, no agent can still produce the required result file;
 					// fail immediately instead of leaving the Item running until idle timeout.
 					if (!existsSync(worktreePath)) {
-						throw phaseError('solve', `${agentLabel} workspace disappeared while waiting for solver-result.json`)
+						throw phaseError('solve', `${agentLabel} workspace disappeared while waiting for the run result`)
 					}
 					if (signal?.aborted) {
 						try {
@@ -194,7 +197,7 @@ export class OkenaSolver implements Solver {
 		})
 
 		await sleep(500)
-		log.success('okena', `${agentLabel} finished — solver-result.json detected`)
+		log.success('okena', `${agentLabel} finished — run result detected`)
 
 		try {
 			if (existsSync(promptFile)) unlinkSync(promptFile)

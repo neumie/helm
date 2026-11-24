@@ -78,6 +78,15 @@ export interface KnowledgeDeliverySummary {
 	deliveredAt: string | null
 }
 
+/** The run-tracking GitHub issue as clients see it. */
+export interface GithubIssueLink {
+	owner: string
+	repo: string
+	number: number
+	url: string
+	state: 'open' | 'closed'
+}
+
 export interface DashboardItem {
 	id: string
 	/** Profile-qualified identity for deep links and cross-profile lookup. */
@@ -135,6 +144,8 @@ export interface DashboardItem {
 	errorPhase: string | null
 	runOutcome: ItemRecord['runOutcome']
 	deployState: ItemRecord['deployState']
+	/** GitHub issue tracking the Item's runs (task = body, runs = comments); null when untracked. */
+	githubIssue: GithubIssueLink | null
 	// The live source-task content (description/metadata/comments). Populated only
 	// by the single-Item detail route (a provider fetch); undefined in list rows.
 	sourceTask?: TaskContext | null
@@ -349,6 +360,15 @@ export function toDashboardItem(
 		errorPhase: item.errorPhase,
 		runOutcome: item.runOutcome,
 		deployState: item.deployState,
+		githubIssue: item.githubIssue
+			? {
+					owner: item.githubIssue.owner,
+					repo: item.githubIssue.repo,
+					number: item.githubIssue.number,
+					url: item.githubIssue.url,
+					state: item.githubIssue.state,
+				}
+			: null,
 		card: {
 			state: item.status,
 			statusLabel: STATUS_LABEL[item.status],

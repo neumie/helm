@@ -59,7 +59,11 @@ export class IssueUnavailableError extends Error {
 export interface IssueClient {
 	/** The GitHub repository behind a local checkout's `origin` remote. */
 	repoFor(repoPath: string, signal?: AbortSignal): Promise<GithubRepo>
-	/** An issue whose body contains `marker` exactly; `state: 'open'` skips closed ones. */
+	/**
+	 * An issue authored by the authenticated gh user whose body contains `marker`
+	 * exactly; `state: 'open'` skips closed ones. Issues by anyone else are never
+	 * adopted: a marker is plain text any repository user can copy.
+	 */
 	find(repo: GithubRepo, marker: string, state: 'open' | 'all', signal?: AbortSignal): Promise<GithubIssue | null>
 	create(repo: GithubRepo, issue: { title: string; body: string }, signal?: AbortSignal): Promise<GithubIssue>
 	view(repo: GithubRepo, number: number, signal?: AbortSignal): Promise<GithubIssue>
@@ -206,6 +210,8 @@ export class GhIssueClient implements IssueClient {
 				repoSlug(repo),
 				'--state',
 				state,
+				'--author',
+				'@me',
 				'--search',
 				`"${token}" in:body`,
 				'--json',

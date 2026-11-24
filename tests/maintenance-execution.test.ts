@@ -142,6 +142,7 @@ for (const kind of ['solve', 'plan'] as const) {
 				projectConfig: config.projects[0],
 				branchName: 'fix/fixture',
 				planDirName: 'fixture',
+				resultPath: join(tmpdir(), `helm-run-result-${process.pid}`, 'solver-result.json'),
 				taskTitle: 'Fixture',
 				taskId: 'fixture',
 				itemId: 'fixture',

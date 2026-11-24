@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
 import Database from 'better-sqlite3'
 import { configSchema } from '../src/config.js'
@@ -185,8 +185,9 @@ class SolveStub implements Solver {
 		params.onPromptSnapshot?.(`PROMPT\n${this.seenProjectContext}`)
 		const workspace = new PlanWorkspace(worktreePath, params.planDirName)
 		workspace.ensureDir()
+		mkdirSync(dirname(params.resultPath), { recursive: true })
 		writeFileSync(
-			workspace.resultPath,
+			params.resultPath,
 			JSON.stringify({
 				summary: 'Solved with external project knowledge',
 				filesChanged: [],
@@ -517,11 +518,14 @@ test('immutable evidence and candidate outbox remain profile scoped and idempote
 test('knowledge candidates use a bounded gitignored sidecar only for admitted knowledge runs', () => {
 	const root = mkdtempSync(join(tmpdir(), 'helm-knowledge-candidate-'))
 	try {
-		const ordinaryPrompt = buildPrompt({ title: 'Learn safely' }, { planDirName: 'safe-plan', worktreePath: root })
+		const ordinaryPrompt = buildPrompt(
+			{ title: 'Learn safely' },
+			{ planDirName: 'safe-plan', worktreePath: root, resultPath: join(root, 'result.json') },
+		)
 		assert.doesNotMatch(ordinaryPrompt, /\.helm-knowledge-candidates\.json/)
 		const knowledgePrompt = buildPrompt(
 			{ title: 'Learn safely' },
-			{ planDirName: 'safe-plan', worktreePath: root },
+			{ planDirName: 'safe-plan', worktreePath: root, resultPath: join(root, 'result.json') },
 			{ knowledgeCandidates: true },
 		)
 		assert.match(knowledgePrompt, /\.helm-knowledge-candidates\.json/)
@@ -584,6 +588,30 @@ test('candidate sidecars are ignored in linked worktrees through Git real-path e
 			execFileSync('git', ['check-ignore', relativePath], { cwd: linkedWorktree, encoding: 'utf8' }).trim(),
 			relativePath,
 		)
+		// Helm-written planning files and old run results stay untracked too.
+		for (const path of ['solver-result.json', '.planning-prompt.txt', 'context.md', 'README.md']) {
+			const helmFile = `docs/plans/sample-plan/${path}`
+			assert.equal(
+				execFileSync('git', ['check-ignore', helmFile], { cwd: linkedWorktree, encoding: 'utf8' }).trim(),
+				helmFile,
+			)
+		}
+		assert.throws(
+			() =>
+				execFileSync('git', ['check-ignore', 'docs/plans/sample-plan/prd.md'], {
+					cwd: linkedWorktree,
+					stdio: 'ignore',
+				}),
+			'user-written plan documents stay visible (check-ignore exits 1)',
+		)
+		// Idempotent: a second call appends nothing.
+		const excludePath = execFileSync('git', ['rev-parse', '--git-path', 'info/exclude'], {
+			cwd: linkedWorktree,
+			encoding: 'utf8',
+		}).trim()
+		const before = readFileSync(resolve(linkedWorktree, excludePath), 'utf8')
+		await excludeHelmFiles(linkedWorktree)
+		assert.equal(readFileSync(resolve(linkedWorktree, excludePath), 'utf8'), before)
 	} finally {
 		rmSync(root, { recursive: true, force: true })
 	}

@@ -135,7 +135,7 @@ export const DEFAULT_MODEL_GUIDANCE: Record<string, string> = {
 		'You are running as Opus 5 — a premium tier that is strongest on long-horizon, multi-file work. Take the whole task in one decisive pass:',
 		'- Delegate sparingly: a subagent (the Task tool) pays off only for genuinely independent, sizeable tracks — never for work you could finish in a handful of tool calls, and never to verify your own work.',
 		'- You already verify as you go; do not add a separate double-check pass on top of it.',
-		'- Deliver exactly the requested scope. If a better approach exists, say so in one line in the solver-result.json summary and keep going with the task as asked.',
+		'- Deliver exactly the requested scope. If a better approach exists, say so in one line in the summary of your result JSON and keep going with the task as asked.',
 	].join('\n'),
 	'claude-opus-4-8': [
 		'You are running as Opus 4.8 — a strong premium tier. Delegate broad exploration and mechanical sweeps to subagents (the Task tool); do the design, tricky edits, and verification yourself.',
@@ -144,7 +144,7 @@ export const DEFAULT_MODEL_GUIDANCE: Record<string, string> = {
 		'You are running as Sonnet 5 — a balanced tier. Work directly; use subagents only for genuinely parallel exploration.',
 	'claude-haiku-4-5': [
 		'You are running as Haiku 4.5 — a fast, budget tier. Keep the change tightly scoped and mechanical.',
-		'If the task turns out to be architectural, ambiguous, or larger than it looked, do NOT guess — say so in the solver-result.json summary and stop.',
+		'If the task turns out to be architectural, ambiguous, or larger than it looked, do NOT guess — say so in the summary of your result JSON and stop.',
 	].join('\n'),
 	'gpt-6-astra': [
 		'You are running as GPT-6 Astra — a frontier tier for complex, multi-step work. Use its long-horizon judgment deliberately:',
@@ -165,7 +165,7 @@ export const DEFAULT_MODEL_GUIDANCE: Record<string, string> = {
 		'You are running as Terra (GPT-5.6) — a balanced tier. Work directly and verify with the test suite before shipping.',
 	'gpt-5.6-luna': [
 		'You are running as Luna (GPT-5.6) — a fast, budget tier. Keep the change tightly scoped and mechanical.',
-		'If the task turns out to be architectural, ambiguous, or larger than it looked, do NOT guess — say so in the solver-result.json summary and stop.',
+		'If the task turns out to be architectural, ambiguous, or larger than it looked, do NOT guess — say so in the summary of your result JSON and stop.',
 	].join('\n'),
 	'gpt-5.5':
 		'You are running as GPT-5.5 — a strong premium tier. Plan briefly, then make one decisive, well-verified pass; avoid redundant re-reads of files you have already seen.',

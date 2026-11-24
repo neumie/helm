@@ -227,6 +227,10 @@ export const configSchema = z
 				// shipped Items and surface the deploy ladder. Read-only GitHub polling.
 				trackDeployments: z.boolean().default(true),
 				deployPollSeconds: z.number().min(15).default(120),
+				// Track each solve run on a GitHub issue in the project's repository
+				// (task = body, start/result = comments, closed by the merged PR). Off:
+				// the result stays in Helm's state only. Never written to docs/plans.
+				issues: z.boolean().default(true),
 			})
 			.default({}),
 		scheduledRuns: scheduledRunsSchema,

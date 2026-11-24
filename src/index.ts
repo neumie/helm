@@ -5,7 +5,9 @@ import { unknownConfigPaths } from './config-document.js'
 import { loadConfig } from './config.js'
 import { DB, migrateProfileDatabasesToShared } from './db/client.js'
 import { DeployWatcher } from './github/deploy-watcher.js'
+import { GhIssueClient } from './github/issues.js'
 import { ItemEnricher } from './items/enricher.js'
+import { ItemIssueSettler, ItemIssues } from './items/issues.js'
 import { validateProfileKnowledgeConfiguration } from './knowledge/bindings.js'
 import { KnowledgeIntegration } from './knowledge/integration.js'
 import { KnowledgeOutboxDrainer } from './knowledge/outbox-drainer.js'
@@ -78,6 +80,9 @@ async function main() {
 	const spawner = await createSpawner(config)
 	log.info('helm', `Spawner configured: ${config.spawner.name}, active: ${spawner.constructor.name}`)
 
+	// Solve runs are tracked on GitHub issues in the project's repository (task =
+	// body, start/result = comments). Best effort: off without a remote or gh.
+	const itemIssues = config.github.issues ? new ItemIssues(new GhIssueClient()) : undefined
 	const queue = new Drainer(
 		config,
 		db,
@@ -87,6 +92,7 @@ async function main() {
 		() => profiles.getState().profiles.map(profile => profile.id),
 		() => profiles.activeProfile().id,
 		knowledge,
+		itemIssues,
 	)
 	// Direct Item start routes must stay closed until durable scheduled sessions
 	// have restored their shared solve-capacity reservations.
@@ -105,6 +111,7 @@ async function main() {
 	const poller = new Poller(config, db, provider, enricher, () => profiles.activeRuntime())
 	const deployWatcher = new DeployWatcher(config, db, registeredProfileIds)
 	const planStatusWatcher = new PlanStatusWatcher(config, db, registeredProfileIds)
+	const issueSettler = itemIssues ? new ItemIssueSettler(itemIssues, config, db, registeredProfileIds) : undefined
 	if (knowledge) knowledgeDelivery = new KnowledgeOutboxDrainer(db, knowledge, registeredProfileIds)
 	// Signals are global (not per profile) and poll whenever enabled; not gated by the task sidebar watch.
 	const signalsWatcher = new SignalsWatcher(config, db, {
@@ -183,6 +190,7 @@ async function main() {
 	// Start read-only background observation independently of the queue.
 	deployWatcher.start()
 	planStatusWatcher.start()
+	issueSettler?.start()
 	knowledgeDelivery?.start()
 	signalsWatcher.start()
 
@@ -200,6 +208,7 @@ async function main() {
 				pollingStopped,
 				deployWatcher.stop(),
 				planStatusWatcher.stop(),
+				issueSettler?.stop(),
 				scheduledRuns.stop(),
 				knowledgeDelivery?.stop(),
 				signalsWatcher.stop(),

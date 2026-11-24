@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { constants, closeSync, fstatSync, mkdirSync, openSync, readSync, rmSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { profileRuntimeRoot } from '../profiles/runtime.js'
@@ -15,8 +16,8 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/
  * checkout can write it; per Item, so one run never sees another's result.
  */
 export function runResultPath(profileId: string, itemId: string): string {
-	if (!SAFE_ID.test(itemId)) throw new Error(`Unsafe Item id for a run directory: ${itemId}`)
-	return join(profileRuntimeRoot(profileId), 'runs', itemId, 'solver-result.json')
+	const dir = SAFE_ID.test(itemId) ? itemId : `id-${createHash('sha256').update(itemId).digest('hex').slice(0, 32)}`
+	return join(profileRuntimeRoot(profileId), 'runs', dir, 'solver-result.json')
 }
 
 /**

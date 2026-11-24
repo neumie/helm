@@ -1,3 +1,5 @@
+import type { HelmConfig } from '../config.js'
+import type { DB } from '../db/client.js'
 import {
 	type GithubIssue,
 	type GithubRepo,
@@ -24,7 +26,7 @@ import type { SolverResult } from '../solver/result-schema.js'
 import { isCancellation, taskCancelled } from '../util/errors.js'
 import { log } from '../util/logger.js'
 import { isItemAssigned } from './assignment.js'
-import type { ItemCommands } from './commands.js'
+import { ItemCommands } from './commands.js'
 import type { ItemGithubIssue, ItemRecord } from './schema.js'
 
 /** Linking the issue happens on the run's start path; never hold the run longer than this. */
@@ -290,6 +292,66 @@ export class ItemIssues {
 			await fn()
 		} catch (error) {
 			log.warn('issues', `Item ${itemId}: could not ${what}: ${classifyGhError(error).message}`)
+		}
+	}
+}
+
+const SETTLE_INTERVAL_MS = 120_000
+
+/**
+ * Closes the issues of Items that finished outside a run: set done or
+ * cancelled by hand, rejected, cancelled while queued, or merged (where
+ * GitHub's `Closes #N` usually closed the issue already and Helm only records
+ * it). Also retries a close that failed earlier. Non-overlapping ticks over
+ * every registered profile; independent of the task sidebar watch.
+ */
+export class ItemIssueSettler {
+	private timer: ReturnType<typeof setTimeout> | null = null
+	private running: Promise<void> | null = null
+	private stopped = false
+
+	constructor(
+		private readonly issues: ItemIssues,
+		private readonly config: HelmConfig,
+		private readonly db: DB,
+		private readonly profileIds: () => string[],
+		private readonly intervalMs = SETTLE_INTERVAL_MS,
+	) {}
+
+	start(): void {
+		this.stopped = false
+		this.schedule(5_000)
+	}
+
+	async stop(): Promise<void> {
+		this.stopped = true
+		if (this.timer) clearTimeout(this.timer)
+		this.timer = null
+		await this.running
+	}
+
+	private schedule(delay: number): void {
+		if (this.stopped) return
+		this.timer = setTimeout(() => {
+			this.timer = null
+			this.running = this.tick().finally(() => {
+				this.running = null
+				this.schedule(this.intervalMs)
+			})
+		}, delay)
+		this.timer.unref?.()
+	}
+
+	async tick(): Promise<void> {
+		for (const profileId of this.profileIds()) {
+			if (this.stopped) return
+			const store = this.db.forProfile(profileId).items
+			const commands = new ItemCommands(store, this.config)
+			try {
+				await this.issues.settleAll(commands, store.listOpenIssuesToSettle())
+			} catch (error) {
+				log.warn('issues', `Could not settle issues for profile ${profileId}`, error)
+			}
 		}
 	}
 }
