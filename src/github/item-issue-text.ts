@@ -70,6 +70,22 @@ export function scrubLocalPaths(text: string, home = process.env.HOME): string {
 	return text.split(home).join('~')
 }
 
+/**
+ * Strip credentials an error message may carry before it is posted: URL
+ * userinfo, bearer/basic auth values, GitHub/OpenAI/Slack-style tokens and
+ * `key=value` / `key: value` pairs whose key names a secret.
+ */
+export function redactSecrets(text: string): string {
+	return text
+		.replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1[redacted]@')
+		.replace(/\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '$1 [redacted]')
+		.replace(/\b(gh[pousr]_|github_pat_|sk-|xox[abposr]-|AKIA)[A-Za-z0-9_-]{8,}/g, '[redacted]')
+		.replace(
+			/\b([A-Za-z0-9_-]*(?:token|secret|password|passwd|api[_-]?key|auth|cookie|credential)[A-Za-z0-9_-]*)(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;&]+)/gi,
+			'$1$2[redacted]',
+		)
+}
+
 export function issueTitle(item: { title: string; displayName?: string | null }): string {
 	return oneLine(item.displayName?.trim() || item.title, TITLE_LIMIT) || 'Helm task'
 }
@@ -209,7 +225,7 @@ export function pullRequestComment(prUrl: string): string {
 }
 
 export function runFailureComment(input: { attempt: number; phase: string; message: string }): string {
-	const message = bounded(untrusted(scrubLocalPaths(input.message.trim())), ERROR_LIMIT)
+	const message = bounded(untrusted(redactSecrets(scrubLocalPaths(input.message.trim()))), ERROR_LIMIT)
 	return `**Helm** run ${input.attempt} failed (${input.phase}).\n\n> ${message.replace(/\n/g, '\n> ')}`
 }
 

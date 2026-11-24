@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,6 +14,7 @@ import {
 	issueBody,
 	itemIssueMarker,
 	parseRunResultComment,
+	redactSecrets,
 	runResultComment,
 	withClosingReference,
 } from '../src/github/item-issue-text.js'
@@ -164,6 +166,35 @@ test('issue text defuses mentions and markers and round-trips the hidden result 
 	assert.deepEqual(parsed?.filesChanged, ['src/a.ts'])
 	assert.equal(parsed?.prUrl, 'https://github.com/acme/app/pull/9')
 	assert.equal(parseRunResultComment('no block'), null)
+})
+
+test('failure text is redacted before it is posted', () => {
+	const text = redactSecrets(
+		'push to https://x-access-token:ghs_abcdefghijklmnop@github.com/a/b failed; Authorization: Bearer abc.def.ghi123; API_KEY=sk-live123456789 token: "s3cr3t-value" ok=1',
+	)
+	assert.ok(!text.includes('ghs_abcdefghijklmnop'))
+	assert.ok(!text.includes('abc.def.ghi123'))
+	assert.ok(!text.includes('sk-live123456789'))
+	assert.ok(!text.includes('s3cr3t-value'))
+	assert.ok(text.includes('ok=1'))
+	assert.ok(text.includes('github.com/a/b failed'))
+})
+
+test('GhIssueClient refuses public repositories and repositories without issues', async t => {
+	const repoPath = mkdtempSync(join(tmpdir(), 'helm-remote-'))
+	t.after(() => rmSync(repoPath, { recursive: true, force: true }))
+	execFileSync('git', ['init', '-q'], { cwd: repoPath })
+	execFileSync('git', ['remote', 'add', 'origin', 'git@github.com:acme/app.git'], { cwd: repoPath })
+	let view = { visibility: 'PUBLIC', hasIssuesEnabled: true }
+	const client = new GhIssueClient(async args => {
+		assert.deepEqual(args, ['repo', 'view', 'acme/app', '--json', 'visibility,hasIssuesEnabled'])
+		return JSON.stringify(view)
+	})
+	await assert.rejects(client.repoFor(repoPath), (error: IssueUnavailableError) => error.reason === 'public-repo')
+	view = { visibility: 'PRIVATE', hasIssuesEnabled: false }
+	await assert.rejects(client.repoFor(repoPath), (error: IssueUnavailableError) => error.reason === 'issues-disabled')
+	view = { visibility: 'PRIVATE', hasIssuesEnabled: true }
+	assert.deepEqual(await client.repoFor(repoPath), { owner: 'acme', name: 'app' })
 })
 
 test('closing references are recognized and appended once', () => {

@@ -30,6 +30,7 @@ export type IssueUnavailableReason =
 	| 'gh-auth'
 	| 'issues-disabled'
 	| 'repo-not-found'
+	| 'public-repo'
 	| 'failed'
 
 const REASON_TEXT: Record<IssueUnavailableReason, string> = {
@@ -38,6 +39,7 @@ const REASON_TEXT: Record<IssueUnavailableReason, string> = {
 	'gh-auth': 'the GitHub CLI is not logged in (run `gh auth login`)',
 	'issues-disabled': 'issues are disabled on the GitHub repository',
 	'repo-not-found': 'the GitHub repository was not found or is not accessible',
+	'public-repo': 'the GitHub repository is public; task text is only filed on private repositories',
 	failed: 'the GitHub CLI failed',
 }
 
@@ -57,7 +59,11 @@ export class IssueUnavailableError extends Error {
  * {@link IssueUnavailableError}; callers treat issue tracking as best effort.
  */
 export interface IssueClient {
-	/** The GitHub repository behind a local checkout's `origin` remote. */
+	/**
+	 * The GitHub repository behind a local checkout's `origin` remote, once it is
+	 * known to be private (or internal) with issues enabled. Task text may come
+	 * from clients and untrusted senders, so a public repository is refused.
+	 */
 	repoFor(repoPath: string, signal?: AbortSignal): Promise<GithubRepo>
 	/**
 	 * An issue authored by the authenticated gh user whose body contains `marker`
@@ -192,6 +198,11 @@ export class GhIssueClient implements IssueClient {
 		}
 		const repo = parseGithubRemote(url)
 		if (!repo) throw new IssueUnavailableError('no-github-remote')
+		const stdout = await this.run(['repo', 'view', repoSlug(repo), '--json', 'visibility,hasIssuesEnabled'], { signal })
+		const info = JSON.parse(stdout) as { visibility?: unknown; hasIssuesEnabled?: unknown }
+		const visibility = typeof info.visibility === 'string' ? info.visibility.toUpperCase() : ''
+		if (visibility !== 'PRIVATE' && visibility !== 'INTERNAL') throw new IssueUnavailableError('public-repo')
+		if (info.hasIssuesEnabled === false) throw new IssueUnavailableError('issues-disabled')
 		return repo
 	}
 
