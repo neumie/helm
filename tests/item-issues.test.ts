@@ -1,0 +1,405 @@
+import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test from 'node:test'
+import type { HelmConfig } from '../src/config.js'
+import { DB } from '../src/db/client.js'
+import { GhIssueClient, IssueUnavailableError, classifyGhError, parseGithubRemote } from '../src/github/issues.js'
+import {
+	closesIssue,
+	defuseMentions,
+	issueBody,
+	itemIssueMarker,
+	parseRunResultComment,
+	runResultComment,
+	withClosingReference,
+} from '../src/github/item-issue-text.js'
+import { ItemCommands } from '../src/items/commands.js'
+import { ItemIssues } from '../src/items/issues.js'
+import { RunResultFile, runResultPath } from '../src/solver/run-result.js'
+import { FakeIssueClient } from './helpers/fake-issue-client.js'
+
+const config = {
+	projects: [{ slug: 'helm', repoPath: '/repo', baseBranch: 'main' }],
+	solver: { agent: 'claude', branchNaming: { enabled: false }, displayName: { enabled: false } },
+	github: { createPrs: false, postComments: false, prPrefix: '[Helm]' },
+} as unknown as HelmConfig
+
+function payloadOf(event: { payload: unknown } | undefined): Record<string, unknown> | null {
+	if (!event || event.payload == null) return null
+	return typeof event.payload === 'string' ? JSON.parse(event.payload) : (event.payload as Record<string, unknown>)
+}
+
+const run = { agent: 'claude', model: 'claude-opus-4-7', workspace: 'worktree', branchName: 'fix/thing' }
+const task = { title: 'Fix the thing', description: 'Please fix it, @boss will review.' }
+
+function fixture(t: test.TestContext) {
+	const dir = mkdtempSync(join(tmpdir(), 'helm-issues-'))
+	const db = new DB(join(dir, 'helm.db'))
+	t.after(() => {
+		db.close()
+		rmSync(dir, { recursive: true, force: true })
+	})
+	const commands = new ItemCommands(db.items, config)
+	const client = new FakeIssueClient()
+	client.remotes.set('/repo', { owner: 'acme', name: 'app' })
+	const issues = new ItemIssues(client)
+	const startSolve = (input: Partial<Parameters<ItemCommands['createSolveItem']>[0]> = {}) => {
+		const item = commands.createSolveItem({ title: 'Fix the thing', projectSlug: 'helm', prompt: 'p', ...input })
+		return commands.startItem(item.id)
+	}
+	return { db, commands, client, issues, startSolve, dir }
+}
+
+test('parseGithubRemote accepts github https/ssh remotes only', () => {
+	assert.deepEqual(parseGithubRemote('https://github.com/acme/app.git'), { owner: 'acme', name: 'app' })
+	assert.deepEqual(parseGithubRemote('https://x-token@github.com/acme/app\n'), { owner: 'acme', name: 'app' })
+	assert.deepEqual(parseGithubRemote('git@github.com:acme/my.app.git'), { owner: 'acme', name: 'my.app' })
+	assert.deepEqual(parseGithubRemote('ssh://git@github.com/acme/app.git'), { owner: 'acme', name: 'app' })
+	assert.equal(parseGithubRemote('https://gitlab.com/acme/app.git'), null)
+	assert.equal(parseGithubRemote('/local/bare.git'), null)
+	assert.equal(parseGithubRemote('https://github.com/acme/app/../x'), null)
+})
+
+test('classifyGhError maps gh failures onto actionable reasons', () => {
+	assert.equal(classifyGhError(Object.assign(new Error('spawn gh'), { code: 'ENOENT' })).reason, 'gh-missing')
+	assert.equal(
+		classifyGhError({ code: 1, stderr: 'To get started with GitHub CLI, please run:  gh auth login' }).reason,
+		'gh-auth',
+	)
+	assert.equal(
+		classifyGhError({ code: 1, stderr: 'the acme/app repository has disabled issues' }).reason,
+		'issues-disabled',
+	)
+	assert.equal(
+		classifyGhError({ code: 1, stderr: "GraphQL: Could not resolve to a Repository with the name 'acme/x'." }).reason,
+		'repo-not-found',
+	)
+	assert.equal(classifyGhError({ code: 1, stderr: 'boom' }).reason, 'failed')
+})
+
+test('GhIssueClient sends bodies on stdin, never argv, and parses created issues', async () => {
+	const calls: Array<{ args: string[]; input?: string }> = []
+	const client = new GhIssueClient(async (args, options) => {
+		calls.push({ args, input: options.input })
+		if (args[1] === 'create') return 'https://github.com/acme/app/issues/7\n'
+		if (args[1] === 'list')
+			return JSON.stringify([
+				{ number: 3, url: 'u3', state: 'OPEN', body: 'mentions helm:item abc in text only' },
+				{ number: 4, url: 'u4', state: 'CLOSED', body: `${itemIssueMarker('abc')}\nbody` },
+			])
+		return ''
+	})
+	const repo = { owner: 'acme', name: 'app' }
+	const created = await client.create(repo, { title: 'T', body: 'secret-ish body' })
+	assert.deepEqual(created, { number: 7, url: 'https://github.com/acme/app/issues/7', state: 'open' })
+	assert.ok(!calls[0]?.args.includes('secret-ish body'))
+	assert.equal(calls[0]?.input, 'secret-ish body')
+	assert.deepEqual(calls[0]?.args.slice(0, 4), ['issue', 'create', '-R', 'acme/app'])
+	const found = await client.find(repo, itemIssueMarker('abc'), 'all')
+	assert.deepEqual(found, { number: 4, url: 'u4', state: 'closed' }, 'only an exact marker matches')
+	await client.comment(repo, 4, 'hello')
+	assert.deepEqual(calls.at(-1), {
+		args: ['issue', 'comment', '4', '-R', 'acme/app', '--body-file', '-'],
+		input: 'hello',
+	})
+})
+
+test('GhIssueClient turns gh failures into IssueUnavailableError', async () => {
+	const client = new GhIssueClient(async () => {
+		throw Object.assign(new Error('exit 4'), { code: 4, stderr: 'gh auth login required' })
+	})
+	await assert.rejects(client.comment({ owner: 'a', name: 'b' }, 1, 'x'), (error: unknown) => {
+		assert.ok(error instanceof IssueUnavailableError)
+		assert.equal(error.reason, 'gh-auth')
+		return true
+	})
+})
+
+test('issue text defuses mentions and markers and round-trips the hidden result block', () => {
+	assert.equal(defuseMentions('ping @boss and mail a@b.cz'), 'ping @​boss and mail a@b.cz')
+	const body = issueBody({
+		itemId: 'item-1',
+		projectSlug: 'psyon',
+		source: { provider: 'ClientCare', externalId: 'T-1', url: 'https://cc.test/t/1' },
+		task: {
+			title: 'Fix @team',
+			description: 'Do it <!-- helm:item other --> now',
+			attachments: [
+				{ name: 'shot.png', url: 'https://cdn.test/shot.png' },
+				{ name: 'mail.eml', url: '/api/items/x/attachments/mail.eml' },
+			],
+		},
+	})
+	assert.ok(body.startsWith(`${itemIssueMarker('item-1')}\n<!-- helm:source ClientCare:T-1 -->`))
+	assert.ok(body.includes('**Source:** https://cc.test/t/1'))
+	assert.ok(body.includes('Fix @​team'))
+	assert.ok(!body.includes('<!-- helm:item other'), 'task text cannot plant a Helm marker')
+	assert.ok(body.includes('- [shot.png](https://cdn.test/shot.png)'))
+	assert.ok(body.includes('- mail.eml'))
+
+	const comment = runResultComment({
+		v: 1,
+		itemId: 'item-1',
+		attempt: 2,
+		summary: 'Done --> fixed <tag> @boss',
+		filesChanged: ['src/a.ts'],
+		prUrl: 'https://github.com/acme/app/pull/9',
+		finishedAt: '2026-11-24T10:00:00.000Z',
+	})
+	assert.ok(comment.includes('**Helm** finished run 2.'))
+	assert.ok(comment.includes('- `src/a.ts`'))
+	const hidden = comment.slice(comment.lastIndexOf('<!-- helm:result'))
+	assert.ok(!hidden.slice(4, -3).includes('--'), 'hidden JSON cannot close its HTML comment')
+	assert.ok(!hidden.slice(0, -3).includes('>'))
+	const parsed = parseRunResultComment(comment)
+	assert.equal(parsed?.summary, 'Done --> fixed <tag> @boss')
+	assert.deepEqual(parsed?.filesChanged, ['src/a.ts'])
+	assert.equal(parsed?.prUrl, 'https://github.com/acme/app/pull/9')
+	assert.equal(parseRunResultComment('no block'), null)
+})
+
+test('closing references are recognized and appended once', () => {
+	assert.ok(closesIssue('Fixes #12', '#12'))
+	assert.ok(closesIssue('closes: #12.', '#12'))
+	assert.ok(!closesIssue('Closes #123', '#12'))
+	assert.ok(!closesIssue('See #12', '#12'))
+	assert.ok(closesIssue('Resolves acme/app#12', 'acme/app#12'))
+	assert.equal(withClosingReference('Body', '#12'), 'Body\n\nCloses #12')
+	assert.equal(withClosingReference('Body\n\nCloses #12', '#12'), 'Body\n\nCloses #12')
+	assert.equal(withClosingReference('', '#12'), 'Closes #12')
+})
+
+test('beginRun creates the issue, links it to the Item and posts the start comment', async t => {
+	const { commands, client, issues, startSolve, db } = fixture(t)
+	const item = startSolve({ source: { provider: 'ClientCare', externalId: 'T-9', url: 'https://cc.test/t/9' } })
+	const linked = await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	assert.deepEqual(linked, { number: 1, url: 'https://github.com/acme/app/issues/1', reference: '#1' })
+	const issue = client.issue(1)
+	assert.equal(issue.title, 'Fix the thing')
+	assert.ok(issue.body.startsWith(itemIssueMarker(item.id)))
+	assert.ok(issue.body.includes('@​boss'))
+	assert.deepEqual(issue.comments, [
+		'**Helm** started run 1 (agent claude, model claude-opus-4-7, worktree, branch `fix/thing`).',
+	])
+	const stored = db.items.get(item.id)?.githubIssue
+	assert.equal(stored?.number, 1)
+	assert.equal(stored?.owner, 'acme')
+	assert.equal(stored?.state, 'open')
+	assert.deepEqual(
+		db.items
+			.getEvents(item.id)
+			.filter(event => event.eventType.startsWith('issue_'))
+			.map(event => event.eventType),
+		['issue_linked'],
+	)
+})
+
+test('a later run reuses the issue, reopening it when it was closed', async t => {
+	const { commands, client, issues, startSolve, db } = fixture(t)
+	const item = startSolve()
+	await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	client.issue(1).state = 'closed'
+	commands.failItem(item.id, 'boom', 'solve')
+	commands.retryItem(item.id)
+	const second = commands.startItem(item.id)
+	const linked = await issues.beginRun({ commands, item: second, repoPath: '/repo', task, run })
+	assert.equal(linked?.number, 1)
+	assert.equal(client.issues.length, 1, 'no second issue')
+	assert.equal(client.issue(1).state, 'open')
+	assert.match(client.issue(1).comments.at(-1) ?? '', /started run 2/)
+	assert.ok(!client.calls.includes('repoFor') || client.calls.indexOf('repoFor') === 0, 'stored repo is reused')
+	const events = db.items.getEvents(item.id).filter(event => event.eventType === 'issue_linked')
+	assert.deepEqual(
+		events.map(event => payloadOf(event)?.how),
+		['created', 'reopened'],
+	)
+})
+
+test('an Item without a recorded issue finds its own issue by marker, or the open issue of its source task', async t => {
+	const { commands, client, issues, startSolve } = fixture(t)
+	const first = startSolve({ source: { provider: 'ClientCare', externalId: 'T-5' } })
+	await issues.beginRun({ commands, item: first, repoPath: '/repo', task, run })
+	const followUp = startSolve({ source: { provider: 'ClientCare', externalId: 'T-5' } })
+	const linked = await issues.beginRun({ commands, item: followUp, repoPath: '/repo', task, run })
+	assert.equal(linked?.number, 1, 'the open issue of the same source task is reused')
+	assert.equal(client.issues.length, 1)
+
+	client.issue(1).state = 'closed'
+	const third = startSolve({ source: { provider: 'ClientCare', externalId: 'T-5' } })
+	const own = await issues.beginRun({ commands, item: third, repoPath: '/repo', task, run })
+	assert.equal(own?.number, 2, 'a closed source issue is not reused by another Item')
+})
+
+test('a project without a GitHub remote runs without an issue and records why', async t => {
+	const { commands, client, issues, startSolve, db } = fixture(t)
+	client.remotes.clear()
+	const item = startSolve()
+	const linked = await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	assert.equal(linked, null)
+	assert.equal(client.issues.length, 0)
+	const unavailable = db.items.getEvents(item.id).find(event => event.eventType === 'issue_unavailable')
+	assert.deepEqual(payloadOf(unavailable), {
+		reason: 'no-github-remote',
+		message: 'the project has no GitHub remote (origin)',
+	})
+	assert.equal(db.items.get(item.id)?.githubIssue ?? null, null)
+	assert.equal(db.items.get(item.id)?.status, 'running', 'the run itself goes on')
+})
+
+test('gh failures while linking degrade to no issue; a cancelled run still throws', async t => {
+	const { commands, client, issues, startSolve } = fixture(t)
+	const item = startSolve()
+	client.failNext = { method: 'create', error: { code: 1, stderr: 'gh auth login' } }
+	assert.equal(await issues.beginRun({ commands, item, repoPath: '/repo', task, run }), null)
+
+	const cancelled = new AbortController()
+	cancelled.abort()
+	await assert.rejects(
+		issues.beginRun({ commands, item, repoPath: '/repo', task, run, signal: cancelled.signal }),
+		(error: Error) => error.name === 'AbortError',
+	)
+})
+
+test('the result comment carries the summary and a hidden JSON block', async t => {
+	const { commands, client, issues, startSolve } = fixture(t)
+	const item = startSolve()
+	await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	await issues.reportResult(commands, item.id, { summary: 'Fixed it', filesChanged: ['a.ts', 'b.ts'] })
+	const comment = client.issue(1).comments.at(-1) ?? ''
+	assert.match(comment, /^\*\*Helm\*\* finished run 1\.\n\nFixed it/)
+	const parsed = parseRunResultComment(comment)
+	assert.equal(parsed?.itemId, item.id)
+	assert.deepEqual(parsed?.filesChanged, ['a.ts', 'b.ts'])
+})
+
+test('an agent-shipped PR gets a closing reference; a Helm-opened PR is announced', async t => {
+	const { commands, client, issues, startSolve } = fixture(t)
+	const item = startSolve()
+	await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	commands.completeSolveItem(item.id, {
+		worktreePath: '/wt',
+		branchName: 'fix/thing',
+		planDirName: 'p',
+		resultSummary: 's',
+	})
+	const prUrl = 'https://github.com/acme/app/pull/5'
+	commands.recordDispatchPr(item.id, { prUrl, shippedByAgent: true })
+	client.pullRequests.set(prUrl, 'Agent body')
+	await issues.reportPullRequest(commands, item.id, { announce: false })
+	assert.equal(client.pullRequests.get(prUrl), 'Agent body\n\nCloses #1')
+	await issues.reportPullRequest(commands, item.id, { announce: true })
+	assert.equal(client.calls.filter(call => call === 'editPullRequestBody').length, 1, 'edited once')
+	assert.equal(client.issue(1).comments.at(-1), `**Helm** pull request: ${prUrl}`)
+})
+
+test('a PR in another repository refers to the issue by owner/repo#N', async t => {
+	const { commands, client, issues, startSolve } = fixture(t)
+	const item = startSolve()
+	await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	commands.completeSolveItem(item.id, { worktreePath: '/wt', branchName: 'b', planDirName: 'p', resultSummary: 's' })
+	const prUrl = 'https://github.com/acme/other/pull/2'
+	commands.recordDispatchPr(item.id, { prUrl })
+	await issues.reportPullRequest(commands, item.id, { announce: false })
+	assert.equal(client.pullRequests.get(prUrl), 'Closes acme/app#1')
+})
+
+test('settle closes done Items as completed and cancelled ones as not planned, once', async t => {
+	const { commands, client, issues, startSolve, db } = fixture(t)
+	const done = startSolve()
+	await issues.beginRun({ commands, item: done, repoPath: '/repo', task, run })
+	commands.completeSolveItem(done.id, { worktreePath: '/wt', branchName: 'b', planDirName: 'p', resultSummary: 's' })
+	await issues.settle(commands, done.id)
+	assert.equal(client.issue(1).state, 'open', 'review is not finished')
+	commands.setItemStatus(done.id, 'done')
+	await issues.settle(commands, done.id)
+	await issues.settle(commands, done.id)
+	assert.equal(client.issue(1).state, 'closed')
+	assert.equal(client.issue(1).closeReason, 'completed')
+	assert.equal(client.issue(1).comments.at(-1), '**Helm**: the task was marked done without a pull request, closing.')
+	assert.equal(client.calls.filter(call => call === 'close').length, 1)
+	assert.equal(db.items.get(done.id)?.githubIssue?.state, 'closed')
+
+	const cancelled = startSolve()
+	await issues.beginRun({ commands, item: cancelled, repoPath: '/repo', task, run })
+	commands.cancelProcessingItem(cancelled.id, 'Item cancelled by user', 'solve')
+	await issues.reportRunEnded(commands, cancelled.id, { cancelled: true })
+	assert.equal(client.issue(2).closeReason, 'not planned')
+	assert.deepEqual(client.issue(2).comments.slice(-2), [
+		'**Helm** run 1 was cancelled.',
+		'**Helm**: the task was cancelled, closing.',
+	])
+	assert.equal(db.items.get(cancelled.id)?.githubIssue?.closedReason, 'not_planned')
+})
+
+test('settle records an issue GitHub already closed (merged PR) without closing it again', async t => {
+	const { commands, client, issues, startSolve, db } = fixture(t)
+	const item = startSolve()
+	await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	commands.completeSolveItem(item.id, { worktreePath: '/wt', branchName: 'b', planDirName: 'p', resultSummary: 's' })
+	commands.recordDispatchPr(item.id, { prUrl: 'https://github.com/acme/app/pull/3' })
+	commands.markItemMerged(item.id)
+	client.issue(1).state = 'closed'
+	await issues.settle(commands, item.id)
+	assert.ok(!client.calls.includes('close'))
+	const stored = db.items.get(item.id)?.githubIssue
+	assert.equal(stored?.state, 'closed')
+	assert.equal(payloadOf(db.items.getEvents(item.id).find(event => event.eventType === 'issue_closed'))?.by, 'github')
+	assert.deepEqual(
+		db.items.listOpenIssuesToSettle().map(open => open.id),
+		[],
+	)
+})
+
+test('a failed run comments on the issue and keeps it open; a failed close is retried later', async t => {
+	const { commands, client, issues, startSolve, db } = fixture(t)
+	const item = startSolve()
+	await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	commands.failItem(item.id, `No solver-result.json at ${process.env.HOME}/x/result.json`, 'solve')
+	await issues.reportRunEnded(commands, item.id, {
+		cancelled: false,
+		phase: 'solve',
+		message: db.items.get(item.id)?.errorMessage ?? '',
+	})
+	assert.equal(client.issue(1).state, 'open')
+	assert.equal(
+		client.issue(1).comments.at(-1),
+		'**Helm** run 1 failed (solve).\n\n> No solver-result.json at ~/x/result.json',
+	)
+
+	commands.setItemStatus(item.id, 'cancelled')
+	client.failNext = { method: 'close', error: { code: 1, stderr: 'HTTP 502' } }
+	await issues.settle(commands, item.id)
+	assert.deepEqual(
+		db.items.listOpenIssuesToSettle().map(open => open.id),
+		[item.id],
+		'the close is still owed',
+	)
+	await issues.settleAll(commands, db.items.listOpenIssuesToSettle())
+	assert.equal(client.issue(1).state, 'closed')
+})
+
+test('RunResultFile reads a plain result and refuses links and stale attempts', t => {
+	const dir = mkdtempSync(join(tmpdir(), 'helm-run-result-'))
+	t.after(() => rmSync(dir, { recursive: true, force: true }))
+	const file = new RunResultFile(join(dir, 'runs', 'item-1', 'solver-result.json'))
+	file.prepare()
+	assert.equal(file.exists(), false)
+	assert.equal(file.read(), null)
+	writeFileSync(file.path, JSON.stringify({ summary: 'ok', prUrl: 'https://github.com/a/b/pull/1' }))
+	assert.equal(file.exists(), true)
+	assert.deepEqual(file.read(), { summary: 'ok', filesChanged: [], prUrl: 'https://github.com/a/b/pull/1' })
+	file.prepare()
+	assert.equal(file.exists(), false, 'prepare drops the previous attempt')
+
+	const target = join(dir, 'elsewhere.json')
+	writeFileSync(target, JSON.stringify({ summary: 'planted' }))
+	symlinkSync(target, file.path)
+	assert.equal(file.exists(), false)
+	assert.equal(file.read(), null)
+
+	assert.throws(() => runResultPath('work', '../escape'), /Unsafe Item id/)
+	mkdirSync(join(dir, 'x'))
+	assert.match(runResultPath('work', 'abc-123'), /runs\/abc-123\/solver-result\.json$/)
+})

@@ -123,6 +123,9 @@ const RESERVED_EVENT_TYPES = new Set([
 	'deploy_succeeded',
 	'item_merged',
 	'item_status_set',
+	'issue_linked',
+	'issue_closed',
+	'issue_unavailable',
 ])
 
 const COMPLETED_AT_STATUSES = new Set<ItemRecord['status']>(['review', 'done', 'failed', 'cancelled'])
@@ -703,6 +706,74 @@ export class ItemCommands {
 			})
 			return updated
 		})
+	}
+
+	/** How many runs this Item has started (1 for the first run). */
+	countRunAttempts(id: string): number {
+		return this.store.countEvents(id, 'item_started')
+	}
+
+	/**
+	 * Link (or refresh) the GitHub issue that tracks this solve Item's runs. Only
+	 * a newly linked or reopened issue records `issue_linked`; refreshing an
+	 * already linked open issue is silent.
+	 */
+	recordGithubIssue(
+		id: string,
+		issue: { owner: string; repo: string; number: number; url: string },
+		how: 'created' | 'found' | 'reopened' | 'kept',
+	): ItemRecord {
+		const item = this.requireItem(id)
+		if (item.kind !== 'solve') throw new Error('Only solve Items can track a GitHub issue')
+		requireItemAssignment(item)
+		const previous = item.githubIssue ?? null
+		const same =
+			previous !== null &&
+			previous.owner === issue.owner &&
+			previous.repo === issue.repo &&
+			previous.number === issue.number
+		if (same && previous.state === 'open' && how === 'kept') return item
+		const now = new Date().toISOString()
+		return this.store.transaction(() => {
+			const updated = this.store.updateGithubIssue(id, {
+				owner: issue.owner,
+				repo: issue.repo,
+				number: issue.number,
+				url: issue.url,
+				state: 'open',
+				closedReason: null,
+				linkedAt: same ? previous.linkedAt : now,
+				closedAt: null,
+			})
+			if (!same || how !== 'kept') {
+				this.store.insertEvent(id, 'issue_linked', { number: issue.number, url: issue.url, how })
+			}
+			return updated
+		})
+	}
+
+	/** The tracking issue was closed (by Helm, or observed closed on GitHub). */
+	recordGithubIssueClosed(id: string, reason: 'completed' | 'not_planned', by: 'helm' | 'github'): ItemRecord {
+		const item = this.requireItem(id)
+		const issue = item.githubIssue
+		if (!issue) throw new Error('Item has no GitHub issue')
+		if (issue.state === 'closed') return item
+		return this.store.transaction(() => {
+			const updated = this.store.updateGithubIssue(id, {
+				...issue,
+				state: 'closed',
+				closedReason: reason,
+				closedAt: new Date().toISOString(),
+			})
+			this.store.insertEvent(id, 'issue_closed', { number: issue.number, reason, by })
+			return updated
+		})
+	}
+
+	/** Helm could not track this run on a GitHub issue; the run goes on, its result stays in Helm. */
+	recordGithubIssueUnavailable(id: string, reason: string, message: string): void {
+		this.requireItem(id)
+		this.store.insertEvent(id, 'issue_unavailable', { reason, message })
 	}
 
 	recordDispatchComment(id: string, commentId: string): void {
