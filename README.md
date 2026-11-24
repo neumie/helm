@@ -487,12 +487,22 @@ candidate compilation, review, and canonical writes.
 A solve run proceeds through five phases:
 
 1. resolve provider, captured, or manual context;
-2. create/reuse the workspace and invoke the configured Solver;
+2. find or file the Item's GitHub issue (when `github.issues` is on), create/reuse
+   the workspace and invoke the configured Solver;
 3. persist the solver-produced event timeline;
-4. read `docs/plans/<planDirName>/solver-result.json`; and
+4. read the run result the agent wrote to Helm's own state
+   (`profiles/<id>/runs/<item>/solver-result.json`), never a file in the repo; and
 5. dispatch the result.
 
-The agent may ship a PR itself. If `solver-result.json` includes `prUrl`, Helm
+Run tracking on GitHub issues: the issue body is the task, each run posts start,
+result, PR and failure comments, and the PR closes the issue (`Closes #N`). An
+Item finished or cancelled without a merged PR has its issue closed by Helm within
+a few minutes. Issues are only filed on private repositories. A project without a
+GitHub remote, or without an authenticated `gh`, keeps working: the run records
+why its issue is unavailable and the result stays in Helm. Turn it off with
+`github.issues: false`.
+
+The agent may ship a PR itself. If the run result includes `prUrl`, Helm
 records it and does not create another PR. Otherwise Helm can push the branch,
 open a PR, and post a provider comment according to configuration.
 

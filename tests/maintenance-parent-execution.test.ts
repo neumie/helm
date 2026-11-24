@@ -122,8 +122,17 @@ function writeRunResult(resultPath: string): void {
 	writeFileSync(resultPath, JSON.stringify({ summary: 'done' }))
 }
 
+/**
+ * Untracked/changed files in a checkout, minus the Helm-owned plan files that
+ * `excludeHelmFiles` hides through the shared info/exclude (a run in a linked
+ * worktree writes that file; the checkout's working tree is never touched).
+ */
 async function gitStatus(cwd: string): Promise<string> {
+	const helmOwned = /\/(solver-result\.json|\.planning-prompt\.txt|context\.md|README\.md)$/
 	return (await exec('git', ['status', '--porcelain', '--untracked-files=all'], { cwd })).stdout
+		.split('\n')
+		.filter(line => line && !helmOwned.test(line))
+		.join('\n')
 }
 
 /** A Main plan as the Plan route leaves it in the canonical checkout. */

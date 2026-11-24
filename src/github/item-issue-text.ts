@@ -81,8 +81,8 @@ export function redactSecrets(text: string): string {
 		.replace(/\b(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '$1 [redacted]')
 		.replace(/\b(gh[pousr]_|github_pat_|sk-|xox[abposr]-|AKIA)[A-Za-z0-9_-]{8,}/g, '[redacted]')
 		.replace(
-			/\b([A-Za-z0-9_-]*(?:token|secret|password|passwd|api[_-]?key|auth|cookie|credential)[A-Za-z0-9_-]*)(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;&]+)/gi,
-			'$1$2[redacted]',
+			/(["']?)([A-Za-z0-9_-]*(?:token|secret|password|passwd|api[_-]?key|auth|cookie|credential)[A-Za-z0-9_-]*)\1(\s*[:=]\s*)("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,;&}\]]+)/gi,
+			'$1$2$1$3[redacted]',
 		)
 }
 

@@ -177,6 +177,12 @@ test('failure text is redacted before it is posted', () => {
 	assert.ok(!text.includes('sk-live123456789'))
 	assert.ok(!text.includes('s3cr3t-value'))
 	assert.ok(text.includes('ok=1'))
+	const json = redactSecrets(
+		'{"access_token": "abc\\"def123", \'client_secret\':\'zz9\', "Authorization":"Basic dXNlcjpwYXNz"}',
+	)
+	assert.ok(!json.includes('def123'), json)
+	assert.ok(!json.includes('zz9'), json)
+	assert.ok(!json.includes('dXNlcjpwYXNz'), json)
 	assert.ok(text.includes('github.com/a/b failed'))
 })
 
