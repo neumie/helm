@@ -183,6 +183,7 @@ test('failure text is redacted before it is posted', () => {
 	assert.ok(!json.includes('def123'), json)
 	assert.ok(!json.includes('zz9'), json)
 	assert.ok(!json.includes('dXNlcjpwYXNz'), json)
+	assert.ok(!redactSecrets('password=ab}cd]ef').includes('cd'), 'unquoted values are redacted up to whitespace')
 	assert.ok(text.includes('github.com/a/b failed'))
 })
 
