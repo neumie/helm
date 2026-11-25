@@ -4,7 +4,7 @@ import { SignalsWorkspace } from './SignalsWorkspace'
 /**
  * An agent row's detail (§3.25, Jakub's pick 2026-11-18): a click on an ask or an answer (or ↵)
  * opens it as a slide-over out of the column over the terminals; the column keeps its width, so no
- * terminal refits. A second click, ↵ again or Esc closes it. It shows the whole body (13/20, line
+ * terminal refits. A second click, ↵ again, Esc or a click into a terminal closes it. It shows the whole body (13/20, line
  * breaks kept), who filed it and the agent in the terminal it came from (dock name, state, project,
  * branch), its links (click or 1–9 opens one through main), and for an ask its quick answers (1–9 when
  * it has any) and an answer field (⌘↵ sends; saved first, typed into the agent when the dock can).

@@ -135,3 +135,101 @@ test('j/k move the list while the slide-over follows the selection', async ({ pa
 	await expect(view.detail).toHaveCount(0)
 	await expect(view.row(505)).toHaveAttribute('data-selected', 'true')
 })
+
+test('a click into a terminal closes the slide-over and the terminal takes the keys', async ({ page }) => {
+	const view = await open(page, 'views-signals-detail--click-a-row')
+	await view.row(505).click()
+	await expect(view.detail).toBeVisible()
+	// Presses inside the panel keep it open: its text, the answer field.
+	await view.detail.locator('.signals-ask-body').click()
+	await view.detail.locator('.signals-answer-input').click()
+	await expect(view.detail).toBeVisible()
+	await expect(view.detail.locator('.signals-answer-input')).toBeFocused()
+	// Esc still closes it from inside the panel.
+	await page.keyboard.press('Escape')
+	await expect(view.detail).toHaveCount(0)
+	await view.row(505).click()
+	await expect(view.detail).toBeVisible()
+	// A click on the terminal beside the panel: the panel closes, the clicked terminal has the focus.
+	const terms = await page.locator('#terms').boundingBox()
+	const panel = await view.detail.boundingBox()
+	if (!terms || !panel) throw new Error('not laid out')
+	await page.mouse.click(Math.round((panel.x + panel.width + terms.x + terms.width) / 2), Math.round(terms.y + 80))
+	await expect(view.detail).toHaveCount(0)
+	await expect(view.row(505)).not.toHaveAttribute('data-open', 'true')
+	await expect
+		.poll(() =>
+			page.evaluate(() => {
+				const active = document.activeElement
+				return Boolean(active?.classList.contains('xterm-helper-textarea') && active.closest('#terms'))
+			}),
+		)
+		.toBe(true)
+	// And it stays there: nothing hands the keys back to the list afterwards.
+	await page.waitForTimeout(100)
+	await expect(view.signals).not.toBeFocused()
+	expect(await page.evaluate(() => document.activeElement?.classList.contains('xterm-helper-textarea') ?? false)).toBe(
+		true,
+	)
+})
+
+test('an unsent answer survives the panel closing on a terminal click', async ({ page }) => {
+	const view = await open(page, 'views-signals-detail--click-a-row')
+	await view.row(505).click()
+	await view.detail.locator('.signals-answer-input').fill('Ano, ale až zítra')
+	const terms = await page.locator('#terms').boundingBox()
+	const panel = await view.detail.boundingBox()
+	if (!terms || !panel) throw new Error('not laid out')
+	await page.mouse.click(Math.round((panel.x + panel.width + terms.x + terms.width) / 2), Math.round(terms.y + 80))
+	await expect(view.detail).toHaveCount(0)
+	await view.row(505).click()
+	await expect(view.detail.locator('.signals-answer-input')).toHaveValue('Ano, ale až zítra')
+})
+
+// D27 proposal variants (Proposals / D27 Quick answer feedback): the same production panel, a quick
+// answer pressed by the story 1.5 s after load, the dock typing it in 0.7 s.
+const d27 = (variant: string) => `proposals-d27-quick-answer-feedback-signals-detail--${variant}`
+
+test('D27 A (picked): the sent answer stays pressed with a receipt line under the answers', async ({ page }) => {
+	const view = await open(page, d27('picked'))
+	await expect(view.detail.locator('.signals-detail-choice-sending')).toHaveText(/Ano/)
+	await expect(view.detail.locator('.signals-detail-sent')).toHaveText(/Sending “Ano”/)
+	await expect(view.detail.locator('.signals-detail-choice-sent')).toHaveText(/Ano/)
+	await expect(view.detail.locator('.signals-detail-sent')).toHaveText(/Replied to .* · “Ano”/)
+	// A second answer goes the same way.
+	await page.keyboard.press('2')
+	await expect(view.detail.locator('.signals-detail-choice-sent')).toHaveText(/Ne/)
+})
+
+test('D27 B (answered): the answers fold into the answer given; Answer again unfolds with the keys in the field', async ({
+	page,
+}) => {
+	const view = await open(page, d27('answered'))
+	const given = view.detail.locator('.signals-detail-given')
+	await expect(given.locator('.signals-detail-given-receipt')).toHaveText(/Replied to/)
+	await expect(given.locator('.signals-detail-given-text')).toHaveText('Ano')
+	await expect(view.detail.locator('.signals-detail-choice')).toHaveCount(0)
+	await expect(view.detail.locator('.signals-answer-input')).toHaveCount(0)
+	await page.keyboard.press('r')
+	await expect(view.detail.locator('.signals-answer-input')).toBeFocused()
+	await expect(view.detail.locator('.signals-detail-choice')).toHaveCount(2)
+	// A pointer press focuses that answer, which unmounts as it folds: the keys go to the folded answer.
+	await view.detail.locator('.signals-detail-choice', { hasText: 'Ne' }).click()
+	await expect(given.locator('.signals-detail-given-text')).toHaveText('Ne')
+	await expect(given).toBeFocused()
+	// ⌘↵ with the field folded away sends nothing.
+	const before = (await calls(page))?.replies.length ?? 0
+	await page.keyboard.press('Meta+Enter')
+	await page.waitForTimeout(300)
+	expect((await calls(page))?.replies.length ?? 0).toBe(before)
+})
+
+test('D27 C (flash): the pressed answer flashes once and a toast says where it went', async ({ page }) => {
+	const view = await open(page, d27('flash'))
+	await expect(view.detail.locator('.signals-detail-choice-flash')).toHaveText(/Ano/)
+	await expect(page.locator('#toasts .toast')).toContainText('Replied to')
+	await expect(view.detail.locator('.signals-detail-choice-flash')).toHaveCount(0)
+	// The toast is outside the column but no press away from the panel.
+	await page.locator('#toasts .toast').first().click()
+	await expect(view.detail).toBeVisible()
+})

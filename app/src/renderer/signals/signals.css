@@ -830,6 +830,87 @@
 	font-variant-numeric: tabular-nums;
 }
 
+/* D27 proposal (Proposals / D27 Quick answer feedback; the pick keeps one look, the rest goes).
+ * `picked`: the sent quick answer stays pressed (the raised fill, full text), its number turned into
+ * the success check, with one receipt line under the answers at reading size. */
+.signals-detail-choice:is(.signals-detail-choice-sent, .signals-detail-choice-sending) {
+	background: var(--fill-raised);
+	color: var(--text-0);
+}
+
+.signals-detail-choice-check {
+	color: var(--success);
+}
+
+.signals-detail-sent {
+	display: block;
+	min-width: 0;
+	color: var(--text-1);
+	font-size: var(--dock-prose-fs);
+	line-height: var(--dock-prose-lh);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.signals-detail-sent:is([data-how="saved"], [data-how="undelivered"], [data-how="sending"]),
+.signals-detail-given-receipt:is([data-how="saved"], [data-how="undelivered"], [data-how="sending"]) {
+	color: var(--dock-dim);
+}
+
+/* `answered`: the answer given in place of the quick answers and the field, then Answer again. */
+.signals-detail-given {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 4px;
+	margin: 4px 0 0;
+}
+
+.signals-detail-given-text {
+	margin: 0;
+	color: var(--text-0);
+	font-size: var(--dock-prose-fs);
+	line-height: var(--dock-prose-lh);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	user-select: text;
+}
+
+.signals-detail-given-receipt {
+	margin: 0 0 4px;
+	color: var(--text-1);
+}
+
+/* `flash`: the pressed answer takes the success tint once, the dock's arrival length; under reduced
+ * motion the tint holds still for as long, then goes. */
+@media (prefers-reduced-motion: no-preference) {
+	.signals-detail-choice.signals-detail-choice-flash {
+		animation: signals-answer-flash var(--motion-arrival) var(--ease-out);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.signals-detail-choice.signals-detail-choice-flash {
+		animation: signals-answer-hold var(--motion-arrival) var(--ease-linear);
+	}
+}
+
+@keyframes signals-answer-flash {
+	from {
+		background: var(--success-soft);
+		color: var(--success);
+	}
+}
+
+@keyframes signals-answer-hold {
+	0%,
+	100% {
+		background: var(--success-soft);
+		color: var(--success);
+	}
+}
+
 .signals-detail-empty {
 	margin: 4px 0 0;
 	color: var(--dock-dim);

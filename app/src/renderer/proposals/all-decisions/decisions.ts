@@ -47,5 +47,20 @@ export interface DecisionGroup {
 
 export const questionKey = (question: Question): string => (question.kind === 'text' ? question.key : question.title)
 
-// Empty since Jakub picked D7 and D15–D20 on 2026-11-17: no open decision has Proposals stories yet.
-export const DECISIONS: readonly DecisionGroup[] = []
+export const DECISIONS: readonly DecisionGroup[] = [
+	{
+		decision: 'D27',
+		name: 'Odezva rychlé odpovědi v Signals',
+		questions: [
+			{
+				kind: 'stories',
+				title: 'Proposals/D27 Quick answer feedback/Signals detail',
+				decision: 'D27',
+				topic: 'Po kliknutí na rychlou odpověď',
+				question:
+					'Když v detailu asku klikneš na rychlou odpověď („Jo“), skoro nejde poznat, že se něco stalo. Jak to má panel ukázat?',
+				height: 760,
+			},
+		],
+	},
+]
