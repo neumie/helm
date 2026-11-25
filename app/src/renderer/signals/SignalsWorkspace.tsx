@@ -7,7 +7,8 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { focusActiveTerminal, memoryLeftColumnMode, mountLeftColumn, mountSignalsShortcut } from '../left-column'
 import { type TerminalWorkspaceFixtureOptions, TerminalWorkspaceFixtureView } from '../terminal-workspace-fixtures'
-import { type SignalsFlow, mountSignals } from './Signals'
+import { type AnswerFeedback, type SignalsFlow, mountSignals } from './Signals'
+import type { DockService } from './services'
 import {
 	ASK_TERMINAL_IDLE,
 	type SignalsFixture,
@@ -62,6 +63,12 @@ export interface SignalsWorkspaceProps {
 	terminalPrompt?: string
 	/** The column's width in px (`--left-width`); default the production 340. */
 	width?: number
+	/** D27 proposal only: how the detail panel shows a sent answer (see `AnswerFeedback`). */
+	answerFeedback?: AnswerFeedback
+	/** D27 proposal only: this many ms after load, the open detail's first quick answer is pressed. */
+	autoAnswer?: number
+	/** Story only: the dock takes this many ms to type an answer in (the sending state shows meanwhile). */
+	answerDelay?: number
 }
 
 declare global {
@@ -165,7 +172,16 @@ const FLOW_THREAD: Record<Exclude<NonNullable<SignalsWorkspaceProps['flow']>, 'f
 	links: 501,
 }
 
-export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, width, detail }: SignalsWorkspaceProps) {
+export function SignalsWorkspace({
+	scenario = 'column',
+	flow,
+	terminalPrompt,
+	width,
+	detail,
+	answerFeedback,
+	autoAnswer,
+	answerDelay,
+}: SignalsWorkspaceProps) {
 	const fixture = useMemo(() => fixtureFor(flow === 'slack-reply' ? 'slack' : scenario), [scenario, flow])
 	const options = useMemo<TerminalWorkspaceFixtureOptions>(
 		() => ({ agentDock: { scenario: 'real-case', position: 'bottom', output: 'claude-code' } }),
@@ -182,6 +198,20 @@ export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, wi
 		window.__signalsFixture = fixture
 		const content = left.parentElement
 		if (width) content?.style.setProperty('--left-width', `${width}px`)
+		const dock: DockService =
+			answerDelay === undefined
+				? fixture.dock
+				: {
+						...fixture.dock,
+						prompt: async request => {
+							await new Promise(done => window.setTimeout(done, answerDelay))
+							return fixture.dock.prompt(request)
+						},
+						act: async request => {
+							await new Promise(done => window.setTimeout(done, answerDelay))
+							return fixture.dock.act(request)
+						},
+					}
 		const initialFlow: SignalsFlow =
 			flow === 'filtered' || flow === 'done' ? { type: flow } : flow ? { type: flow, id: FLOW_THREAD[flow] } : null
 		const column = mountLeftColumn({
@@ -207,12 +237,13 @@ export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, wi
 			mountSignals: host =>
 				mountSignals(host, {
 					service: fixture.service,
-					dock: fixture.dock,
+					dock,
 					onOpenSettings: () => column.setMode('settings'),
 					onLeave: () => focusActiveTerminal(root),
 					mod: 'cmd',
 					initialFlow,
 					...(detail !== undefined ? { initialDetail: detail } : {}),
+					...(answerFeedback ? { answerFeedback } : {}),
 				}),
 		})
 		const disposeShortcut = mountSignalsShortcut({
@@ -226,7 +257,12 @@ export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, wi
 			terminalPrompt === undefined
 				? undefined
 				: window.setTimeout(() => void fixture.terminalPrompt(ASK_TERMINAL_IDLE, terminalPrompt), 1_000)
+		const answerTimer =
+			autoAnswer === undefined
+				? undefined
+				: window.setTimeout(() => root.querySelector<HTMLElement>('.signals-detail-choice')?.click(), autoAnswer)
 		return () => {
+			window.clearTimeout(answerTimer)
 			window.clearTimeout(promptTimer)
 			cancelAnimationFrame(focusFrame)
 			disposeShortcut()
@@ -234,7 +270,7 @@ export function SignalsWorkspace({ scenario = 'column', flow, terminalPrompt, wi
 			content?.style.removeProperty('--left-width')
 			if (window.__signalsFixture === fixture) window.__signalsFixture = undefined
 		}
-	}, [options, fixture, flow, terminalPrompt, width, detail])
+	}, [options, fixture, flow, terminalPrompt, width, detail, answerFeedback, autoAnswer, answerDelay])
 
 	return (
 		<div ref={wrapRef} style={{ display: 'contents' }}>

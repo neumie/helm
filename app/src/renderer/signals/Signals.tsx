@@ -23,6 +23,7 @@ import { statusGlyph } from '../agent-dock/presentation'
 import { Btn } from '../button'
 import { IconBtn } from '../icon-button'
 import { GLYPH } from '../sidebar/ui'
+import { showToast } from '../toast'
 import { SignalsList } from './SignalsList'
 import {
 	type AgentMatch,
@@ -82,7 +83,18 @@ export interface SignalsColumnProps {
 	initialFlow?: SignalsFlow
 	/** Review fixtures only: the agent row whose detail is open on first render. */
 	initialDetail?: number
+	/** D27 proposal only (Proposals / D27 Quick answer feedback): see `AnswerFeedback`. */
+	answerFeedback?: AnswerFeedback
 }
+
+/**
+ * D27 (open, docs/plans/design-system/spec.md): how the detail panel shows an answer it sent. `note`
+ * is today's: every quick answer goes busy, then a dim footer note and the row's receipt. `picked`
+ * keeps the sent answer pressed with a receipt line under the answers; `answered` folds the answers
+ * and the field into the answer given, with Answer again; `flash` flashes the pressed answer and
+ * shows a toast. Jakub's pick keeps one and this prop goes.
+ */
+export type AnswerFeedback = 'note' | 'picked' | 'answered' | 'flash'
 
 /**
  * `send` (p), `new-agent` (n), `reply` (r on an agent ask), `links` (o on an ask with several links),
@@ -293,6 +305,7 @@ export function SignalsColumn({
 	initialSelected,
 	initialFlow = null,
 	initialDetail,
+	answerFeedback = 'note',
 }: SignalsColumnProps) {
 	const bridge = useSyncExternalStore(service.subscribe, service.getState)
 	const snapshot = useSyncExternalStore(dock.subscribe, dock.snapshot)
@@ -303,6 +316,9 @@ export function SignalsColumn({
 	const [flow, setFlow] = useState<SignalsFlow>(initialFlow)
 	const [detail, setDetail] = useState<DetailState>(initialDetail !== undefined ? { from: 'list' } : null)
 	const detailApi = useRef<DetailApi | null>(null)
+	// An unsent answer typed in an agent row's detail survives the panel closing (Esc, a click into a
+	// terminal) until it is sent: memory only, per thread.
+	const answerDrafts = useRef(new Map<number, string>())
 	const seenAsked = useRef(new Set<number>())
 	// The done list's selection, kept while a links list opened from it is on screen.
 	const [doneSelected, setDoneSelected] = useState<number | null>(null)
@@ -597,6 +613,24 @@ export function SignalsColumn({
 	const detailShown =
 		detail !== null && (detail.from === 'done' ? flow?.type === 'done' && detailThread !== undefined : !flow)
 
+	// The slide-over is a popover over the terminals: a press outside the column and its panel (a
+	// terminal, the tab strip, the dock) closes it. The press keeps the focus where it puts it (a
+	// terminal takes it on its own mousedown), so this close never moves the keys back to the list.
+	const slideOver = detail?.from === 'list' && !flow
+	useEffect(() => {
+		const column = sectionRef.current
+		if (!slideOver || !column) return
+		const doc = column.ownerDocument
+		const dismiss = (event: PointerEvent): void => {
+			if (event.target instanceof Node && column.contains(event.target)) return
+			// A toast about this panel's answer (D27 flash) is read or dismissed, not a press away from it.
+			if (event.target instanceof Element && event.target.closest('#toasts')) return
+			setDetail(previous => (previous?.from === 'list' ? null : previous))
+		}
+		doc.addEventListener('pointerdown', dismiss, true)
+		return () => doc.removeEventListener('pointerdown', dismiss, true)
+	}, [slideOver])
+
 	const onKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
 		// The detail panel answers first (Esc, ↵, 1–9, ⌘↵, r); j/k and the action keys fall through to the list.
 		if (detailShown && !event.defaultPrevented && detailApi.current?.key(event)) {
@@ -644,6 +678,12 @@ export function SignalsColumn({
 				onRoute={route}
 				note={note}
 				apiRef={detailApi}
+				feedback={answerFeedback}
+				draft={answerDrafts.current.get(thread.id)}
+				onDraft={value => {
+					if (value) answerDrafts.current.set(thread.id, value)
+					else answerDrafts.current.delete(thread.id)
+				}}
 				onOpen={index => openAskLink(thread, index)}
 				onLeave={closeDetail}
 				onDone={() => {
@@ -1529,7 +1569,11 @@ function useAskReply({
 	dock: DockService
 	routing: RouteJob | null
 	onRoute: RouteRunner
-}): { target: ReturnType<typeof askDeliveryTarget>; where: string; reply(text: string): Promise<string | null> } {
+}): {
+	target: ReturnType<typeof askDeliveryTarget>
+	where: string
+	reply(text: string, onOutcome?: (outcome: AskReplyOutcome) => void): Promise<string | null>
+} {
 	const target = useMemo(() => askDeliveryTarget(thread, snapshot), [thread, snapshot])
 	const alive = useRef(true)
 	useEffect(() => {
@@ -1547,7 +1591,7 @@ function useAskReply({
 				? `${target.name} has an open question in the dock; the answer is saved on the thread`
 				: `${target.name} is ${target.status}: the answer is saved on the thread`
 		: `Saved on the thread; ${thread.ref} reads it with helm signal show`
-	const reply = async (text: string): Promise<string | null> => {
+	const reply = async (text: string, onOutcome?: (outcome: AskReplyOutcome) => void): Promise<string | null> => {
 		if (routing) return `${routing.label} (still running)`
 		const answer = text.trim()
 		if (!answer) return 'The answer is empty'
@@ -1578,24 +1622,34 @@ function useAskReply({
 			attempt: async () => {
 				const saved = await service.reply(thread.id, { text: answer })
 				if (saved.error !== undefined) return { failed: `Not saved: ${saved.error}` }
+				const told = (how: AskReplyOutcome['how'], message: string): string => {
+					onOutcome?.({ text: answer, how, agent: deliver?.name ?? null, message })
+					return message
+				}
 				if (!deliver || !effect)
-					return { closed: `Saved on #${thread.id}. ${thread.ref} reads it with helm signal show`, thread: saved.data }
+					return {
+						closed: told('saved', `Saved on #${thread.id}. ${thread.ref} reads it with helm signal show`),
+						thread: saved.data,
+					}
 				const outcome = (await effect()).outcome
 				if (outcome.status !== 'sent')
 					return {
-						closed:
+						closed: told(
+							outcome.status === 'unconfirmed' ? 'unconfirmed' : 'undelivered',
 							outcome.status === 'unconfirmed'
 								? `Saved on #${thread.id}; delivery not confirmed: ${outcome.detail}. Check ${deliver.name} before replying again`
 								: `Saved on #${thread.id}; not delivered: ${outcome.detail}`,
+						),
 						thread: saved.data,
 					}
 				const queued = outcome.delivery === 'queued' || outcome.delivery === 'channel'
+				const how = queued ? 'queued' : 'replied'
+				const done = queued ? `Queued the answer for ${deliver.name}` : `Replied to ${deliver.name}`
 				return {
 					agent: deliver.name,
 					how: 'replied',
-					done: queued ? `Queued the answer for ${deliver.name}` : `Replied to ${deliver.name}`,
-					unsaved: error =>
-						`${queued ? `Queued the answer for ${deliver.name}` : `Replied to ${deliver.name}`}; the receipt was not saved: ${error}`,
+					done: told(how, done),
+					unsaved: error => told(how, `${done}; the receipt was not saved: ${error}`),
 					thread: saved.data,
 				}
 			},
@@ -1603,6 +1657,18 @@ function useAskReply({
 		return failed !== null && alive.current ? failed : null
 	}
 	return { target, where, reply }
+}
+
+/**
+ * What became of an answer `useAskReply` saved: `replied` typed into the agent, `queued` held until
+ * its turn ends, `saved` only on the thread (no agent to type into), `undelivered` saved but the
+ * typing failed, `unconfirmed` saved and maybe typed in (check the agent before answering again). `message` is the receipt the column's note shows.
+ */
+export interface AskReplyOutcome {
+	text: string
+	how: 'replied' | 'queued' | 'saved' | 'undelivered' | 'unconfirmed'
+	agent: string | null
+	message: string
 }
 
 /** The reply flow exists to be typed into: opening it puts the keys in the answer field. */
@@ -1804,7 +1870,7 @@ function useDetailApi(apiRef: { current: DetailApi | null }, key: DetailApi['key
  * its links (a click or 1–9 opens one through main, which checks it again; never an anchor), and for
  * an ask Jakub can answer, its quick answers and an answer field, both sent through `useAskReply`.
  * 1–9 serve the quick answers when the ask has any, else the links. Esc, ↵ or a second click on the
- * row leaves it. Beside the list it slides over the terminals and does not take the focus (j/k keep
+ * row leaves it, as does a press outside the column (the slide-over only). Beside the list it slides over the terminals and does not take the focus (j/k keep
  * moving the list, the panel follows); in place of Done today (`inPlace`) it does.
  */
 function SignalDetail({
@@ -1819,6 +1885,9 @@ function SignalDetail({
 	onRoute,
 	note: columnNote,
 	apiRef,
+	feedback,
+	draft,
+	onDraft,
 	onOpen,
 	onLeave,
 	onDone,
@@ -1836,6 +1905,11 @@ function SignalDetail({
 	/** The column's own note (a reply's receipt lands there). */
 	note: string | null
 	apiRef: { current: DetailApi | null }
+	/** D27 proposal: how an answer sent from here shows (`note` today). */
+	feedback: AnswerFeedback
+	/** The unsent answer this thread's panel held when it last closed. */
+	draft: string | undefined
+	onDraft(value: string): void
 	/** Resolves with the failure note, or null once opened. */
 	onOpen(index: number): Promise<string | null>
 	onLeave(): void
@@ -1846,10 +1920,21 @@ function SignalDetail({
 	const open = thread.state !== 'done'
 	const replyable = !answer && threadActions(thread, now).some(action => action.key === 'r')
 	const choices = replyable ? askChoices(thread) : []
-	const digits = replyable ? detailDigits(thread) : thread.links.length > 0 ? 'links' : null
-	const { where, reply } = useAskReply({ thread, snapshot, service, dock, routing, onRoute })
-	const [text, setText] = useState(() => (askReceipt(thread, now)?.how === 'saved' ? (thread.reply ?? '') : ''))
+	const { target, where, reply } = useAskReply({ thread, snapshot, service, dock, routing, onRoute })
+	const [text, setTextState] = useState(
+		() => draft ?? (askReceipt(thread, now)?.how === 'saved' ? (thread.reply ?? '') : ''),
+	)
+	const setText = (value: string): void => {
+		setTextState(value)
+		onDraft(value)
+	}
 	const [note, setNote] = useState<string | null>(null)
+	// D27: the answer this panel is sending, what became of the last one it sent, a flashed choice.
+	const [pending, setPending] = useState<string | null>(null)
+	const [outcome, setOutcome] = useState<AskReplyOutcome | null>(null)
+	const [again, setAgain] = useState(false)
+	const [flash, setFlash] = useState<{ index: number; at: number } | null>(null)
+	const focusField = useRef(false)
 	const field = useRef<HTMLTextAreaElement>(null)
 	const opening = useRef(false)
 	const alive = useRef(true)
@@ -1860,15 +1945,57 @@ function SignalDetail({
 		}
 	}, [])
 	const facts = detailFacts(thread, snapshot, now)
+	const given = givenAnswer(thread, now, routing, pending, outcome)
+	// `answered`: the answers and the field fold into the answer given until Answer again (or `r`).
+	const folded = feedback === 'answered' && replyable && given !== null && !again
+	const digits = folded ? null : replyable ? detailDigits(thread) : thread.links.length > 0 ? 'links' : null
+	// Folding (or unfolding) unmounts the control that held the keys: hand them to what replaces it.
+	const givenRef = useRef<HTMLElement>(null)
+	useEffect(() => {
+		if (feedback !== 'answered') return
+		if (focusField.current && !folded) {
+			focusField.current = false
+			field.current?.focus({ preventScroll: true })
+			return
+		}
+		const active = document.activeElement
+		const lost = active === null || active === document.body || !active.isConnected
+		if (folded && lost) givenRef.current?.focus({ preventScroll: true })
+	}, [feedback, folded])
+	const answerAgain = (): void => {
+		focusField.current = true
+		setAgain(true)
+	}
 
-	const send = async (value: string, fromField: boolean): Promise<void> => {
+	const send = async (value: string, fromField: boolean, index?: number): Promise<void> => {
 		setNote(null)
-		const failed = await reply(value)
+		const trimmed = value.trim()
+		// Only the send that set the answer in flight clears it: a refused second press leaves it.
+		const mine = trimmed !== '' && !routing
+		if (mine) setPending(trimmed)
+		let landed: AskReplyOutcome | null = null
+		const failed = await reply(value, result => {
+			landed = result
+		})
 		if (!alive.current) return
+		if (mine) setPending(null)
 		if (failed !== null) {
 			setNote(failed)
-			if (fromField) field.current?.focus({ preventScroll: true })
-		} else if (fromField) setText('')
+			if (fromField) {
+				focusField.current = true
+				field.current?.focus({ preventScroll: true })
+			}
+			return
+		}
+		if (fromField) setText('')
+		const result = landed as AskReplyOutcome | null
+		if (!result) return
+		setOutcome(result)
+		setAgain(false)
+		if (feedback === 'flash') {
+			if (index !== undefined) setFlash({ index, at: Date.now() })
+			showToast({ message: answerReceiptWords(result.how, result.agent), detail: `“${result.text}” · ${thread.title}` })
+		}
 	}
 	const openLink = async (index: number): Promise<void> => {
 		if (opening.current || index < 0 || index >= thread.links.length) return
@@ -1887,7 +2014,7 @@ function SignalDetail({
 			return true
 		}
 		if (event.key === 'Enter' && (mod === 'cmd' ? event.metaKey : event.ctrlKey)) {
-			if (!replyable) return false
+			if (!replyable || folded) return false
 			void send(text, true)
 			return true
 		}
@@ -1895,7 +2022,7 @@ function SignalDetail({
 		if (target.closest('textarea, input')) return false
 		const digit = Number(event.key)
 		if (event.key.length === 1 && Number.isInteger(digit) && digit >= 1 && digit <= PICK_MAX) {
-			if (digits === 'choices' && digit <= choices.length) void send(choices[digit - 1] ?? '', false)
+			if (digits === 'choices' && digit <= choices.length) void send(choices[digit - 1] ?? '', false, digit - 1)
 			else if (digits === 'links' && digit <= thread.links.length) void openLink(digit - 1)
 			else return false
 			return true
@@ -1907,7 +2034,8 @@ function SignalDetail({
 			return true
 		}
 		if (event.key === 'r' && replyable) {
-			field.current?.focus({ preventScroll: true })
+			if (folded) answerAgain()
+			else field.current?.focus({ preventScroll: true })
 			return true
 		}
 		if (event.key === 'd' && answer && open) {
@@ -1919,11 +2047,49 @@ function SignalDetail({
 	useDetailApi(apiRef, key)
 
 	const age = formatAgo(now - Date.parse(thread.lastActivityAt))
+	// `picked` and `answered` say the receipt beside the answer, so the footer does not repeat it.
+	const besideAnswer = (feedback === 'picked' || feedback === 'answered') && given !== null
 	const status =
 		note ??
 		(routing ? routing.label : null) ??
-		columnNote ??
-		(replyable ? where : answer && !open ? 'Read and closed' : null)
+		(besideAnswer ? null : columnNote) ??
+		(replyable ? (folded ? null : where) : answer && !open ? 'Read and closed' : null)
+	const sending = routing !== null
+	const picked = feedback === 'picked' && given !== null ? given.text : null
+	const choiceButtons =
+		choices.length > 0 ? (
+			<fieldset
+				className="signals-detail-choices"
+				aria-label="Quick answers"
+				// `flash`: the pressed answer's flash ends (its animation, also the static one under reduced motion).
+				onAnimationEnd={feedback === 'flash' ? () => setFlash(null) : undefined}
+			>
+				{choices.map((choice, index) => {
+					const mine = picked !== null && choice === picked
+					const flashed = feedback === 'flash' && flash?.index === index
+					return (
+						<Btn
+							// biome-ignore lint/suspicious/noArrayIndexKey: quick answers are positional (1–6)
+							key={index}
+							sm
+							className={`signals-key signals-detail-choice${mine ? ` signals-detail-choice-${given?.phase}` : ''}${flashed ? ' signals-detail-choice-flash' : ''}`}
+							// `picked`: only the answer being sent shows busy; the others wait disabled.
+							busy={feedback === 'picked' ? sending && mine && given?.phase === 'sending' : sending}
+							disabled={feedback === 'picked' && sending && !mine}
+							ariaKeyShortcuts={String(index + 1)}
+							onClick={() => void send(choice, false, index)}
+						>
+							{mine && given?.phase === 'sent' ? (
+								<span className="signals-key-hint signals-detail-choice-check">✓</span>
+							) : (
+								<span className="signals-key-hint">{index + 1}</span>
+							)}{' '}
+							{choice}
+						</Btn>
+					)
+				})}
+			</fieldset>
+		) : null
 	return (
 		<section
 			ref={inPlace ? takeKeys : undefined}
@@ -1968,24 +2134,18 @@ function SignalDetail({
 						))}
 					</ul>
 				) : null}
-				{choices.length > 0 ? (
-					<fieldset className="signals-detail-choices" aria-label="Quick answers">
-						{choices.map((choice, index) => (
-							<Btn
-								// biome-ignore lint/suspicious/noArrayIndexKey: quick answers are positional (1–6)
-								key={index}
-								sm
-								className="signals-key signals-detail-choice"
-								busy={routing !== null}
-								ariaKeyShortcuts={String(index + 1)}
-								onClick={() => void send(choice, false)}
-							>
-								<span className="signals-key-hint">{index + 1}</span> {choice}
-							</Btn>
-						))}
-					</fieldset>
-				) : null}
-				{replyable ? (
+				{folded && given ? (
+					<AnswerGiven
+						ref={givenRef}
+						given={given}
+						target={target?.delivery ? target.name : null}
+						onAgain={answerAgain}
+					/>
+				) : (
+					choiceButtons
+				)}
+				{feedback === 'picked' && given ? <AnswerReceipt given={given} /> : null}
+				{replyable && !folded ? (
 					<label className="signals-prompt">
 						<span className="signals-field-label">Answer</span>
 						<textarea
@@ -2010,11 +2170,11 @@ function SignalDetail({
 							open
 						</Hint>
 					) : null}
-					{replyable ? <Hint keys={submitKeys(mod)}>send</Hint> : null}
+					{folded ? <Hint keys="r">answer again</Hint> : replyable ? <Hint keys={submitKeys(mod)}>send</Hint> : null}
 					<Hint keys="esc">close</Hint>
 				</span>
 				<output className="signals-note">{status}</output>
-				{replyable ? (
+				{replyable && !folded ? (
 					<span className="signals-foot-actions">
 						<Btn
 							tone="primary"
@@ -2036,6 +2196,120 @@ function SignalDetail({
 					</span>
 				) : null}
 			</footer>
+		</section>
+	)
+}
+
+/** D27: the answer an ask was given, as the detail panel shows it (`picked`, `answered`). */
+interface GivenAnswer {
+	text: string
+	/** `sending` while this panel's answer is in flight. */
+	phase: 'sending' | 'sent'
+	how: AskReplyOutcome['how'] | null
+	agent: string | null
+	/** `just now`, `3m` … (from the thread's receipt); null while sending. */
+	ago: string | null
+}
+
+/**
+ * The answer in flight from this panel, else the one the thread holds (its receipt): worded from what
+ * this panel saw happen when it sent it, else from the thread (`replied` / `saved`), so reopening the
+ * panel later still shows it. A renewed ask (new title or body) has no receipt, so no answer.
+ */
+function givenAnswer(
+	thread: SignalThread,
+	now: number,
+	routing: RouteJob | null,
+	pending: string | null,
+	outcome: AskReplyOutcome | null,
+): GivenAnswer | null {
+	if (pending !== null && routing !== null && routing.id === thread.id)
+		return { text: pending, phase: 'sending', how: null, agent: null, ago: null }
+	const receipt = askReceipt(thread, now)
+	if (!receipt || thread.reply === null) return null
+	const mine = outcome !== null && outcome.text === thread.reply ? outcome : null
+	return {
+		text: thread.reply,
+		phase: 'sent',
+		how: mine?.how ?? receipt.how,
+		agent: mine?.agent ?? thread.routedAgent,
+		ago: receipt.ago,
+	}
+}
+
+/** `Replied to signals-agent-asks`, `Queued for …`, `Saved on the thread` … */
+function answerReceiptWords(how: AskReplyOutcome['how'] | null, agent: string | null): string {
+	if (how === 'replied') return agent ? `Replied to ${agent}` : 'Replied'
+	if (how === 'queued') return agent ? `Queued for ${agent}` : 'Queued'
+	if (how === 'undelivered') return 'Saved on the thread, not delivered'
+	if (how === 'unconfirmed') return agent ? `Not confirmed: check ${agent} before answering again` : 'Not confirmed'
+	return 'Saved on the thread'
+}
+
+const delivered = (how: GivenAnswer['how']): boolean => how === 'replied' || how === 'queued'
+
+/** D27 `picked`: one receipt line under the answers: `✓ Replied to signals-agent-asks · “Ano” · just now`. */
+function AnswerReceipt({ given }: { given: GivenAnswer }) {
+	const words =
+		given.phase === 'sending'
+			? `Sending “${given.text}”…`
+			: `${answerReceiptWords(given.how, given.agent)} · “${given.text}” · ${given.ago ?? ''}`
+	return (
+		<output
+			className="signals-detail-sent"
+			data-how={given.phase === 'sending' ? 'sending' : (given.how ?? undefined)}
+			title={words}
+		>
+			{given.phase === 'sent' && delivered(given.how) ? (
+				<span className="signals-receipt-mark" aria-hidden="true">
+					✓{' '}
+				</span>
+			) : null}
+			{words}
+		</output>
+	)
+}
+
+/** D27 `answered`: the answers and the field folded into the answer given, and Answer again. */
+function AnswerGiven({
+	ref,
+	given,
+	target,
+	onAgain,
+}: {
+	ref: RefObject<HTMLElement | null>
+	given: GivenAnswer
+	target: string | null
+	onAgain(): void
+}) {
+	const receipt =
+		given.phase === 'sending'
+			? target
+				? `Sending to ${target}…`
+				: 'Saving on the thread…'
+			: `${answerReceiptWords(given.how, given.agent)} · ${given.ago ?? ''}`
+	return (
+		<section ref={ref} tabIndex={-1} className="signals-detail-given" aria-label="Your answer" data-phase={given.phase}>
+			<span className="signals-field-label">Your answer</span>
+			<p className="signals-detail-given-text">{given.text}</p>
+			<p
+				className="signals-detail-given-receipt"
+				data-how={given.phase === 'sending' ? 'sending' : (given.how ?? undefined)}
+			>
+				{given.phase === 'sent' && delivered(given.how) ? (
+					<span className="signals-receipt-mark" aria-hidden="true">
+						✓{' '}
+					</span>
+				) : null}
+				{receipt}
+			</p>
+			{given.phase === 'sent' ? (
+				<span>
+					<Btn sm className="signals-key" ariaKeyShortcuts="r" onClick={onAgain}>
+						Answer again
+					</Btn>
+				</span>
+			) : null}
 		</section>
 	)
 }
