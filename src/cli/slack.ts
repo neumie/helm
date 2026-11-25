@@ -12,7 +12,7 @@ import { slackMrkdwnToPlain, slackTsToIso } from '../signals/slack-map.js'
 import { type SlackSession, SlackSessionStore, readSlackAppSessions, sessionInfo } from '../slack/session.js'
 import { SlackClient } from '../slack/web-api.js'
 import type { SlackAuthTest, SlackMessage, SlackRepliesResponse, SlackUser } from '../slack/web-types.js'
-import { DEFAULT_DAEMON_URL, type DaemonMethod, daemonBaseUrl, requestDaemon } from './daemon-http.js'
+import { DEFAULT_DAEMON_URL, type DaemonMethod, daemonBaseUrl, getFromDaemon, requestDaemon } from './daemon-http.js'
 
 export const SLACK_HELP = `Usage: helm slack <command> [options]
 
@@ -111,13 +111,22 @@ async function readText(flags: Flags): Promise<string> {
 	return readFileSync(flags.textFile, 'utf8')
 }
 
-/** The daemon's dashboard-safe config value at a path, or undefined when unreachable. */
-async function daemonConfig<T>(baseUrl: string, path: string[]): Promise<T | undefined> {
+/**
+ * signals.slack.agentSendTo as the daemon's Config Document has it (`GET /api/config/full`,
+ * under `config`: the parsed config file Settings edits). The dashboard-safe `GET /api/config`
+ * carries no `signals`, so the allowlist must not be read from there. Unreachable daemon, error
+ * reply or any other shape → undefined, which the send guard treats as an empty list (self-only).
+ */
+export async function readAgentSendTo(
+	baseUrl: string,
+	options: { fetch?: typeof fetch } = {},
+): Promise<string | undefined> {
 	try {
-		const config = await requestDaemon<Record<string, unknown>>('GET' as DaemonMethod, baseUrl, '/api/config')
-		let node: unknown = config
-		for (const key of path) node = node && typeof node === 'object' ? (node as Record<string, unknown>)[key] : undefined
-		return node as T
+		const document = await getFromDaemon<unknown>(baseUrl, '/api/config/full', options)
+		let node: unknown = document
+		for (const key of ['config', 'signals', 'slack', 'agentSendTo'])
+			node = node && typeof node === 'object' ? (node as Record<string, unknown>)[key] : undefined
+		return typeof node === 'string' ? node : undefined
 	} catch {
 		return undefined
 	}
@@ -318,9 +327,7 @@ async function runSend(actions: SlackActions, store: SlackSessionStore, flags: F
 	// identifiers the send will actually use (target.channel / target.user), plus the typed `to`
 	// ONLY when `to` is what produced the target (never on the --signal path).
 	const selfOnly = process.env.HELM_SLACK_SEND_SELF_ONLY === '1' || baseUrl !== DEFAULT_DAEMON_URL
-	const allowList = selfOnly
-		? []
-		: parseAllow(await daemonConfig<string>(DEFAULT_DAEMON_URL, ['signals', 'slack', 'agentSendTo']))
+	const allowList = selfOnly ? [] : parseAllow(await readAgentSendTo(DEFAULT_DAEMON_URL))
 	const isSelf = target.user !== undefined && target.user === session.userId
 	const allowed = isSelf || allowList.includes('*') || isAllowed(target, fromSignal ? undefined : to, allowList)
 	if (!allowed) {
