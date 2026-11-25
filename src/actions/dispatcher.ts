@@ -99,12 +99,14 @@ export async function dispatchSolveItem(args: DispatchSolveItemArgs): Promise<vo
 
 	const baseBody = args.result.prBody ?? args.result.summary
 	const sourceLink = item.source?.url ? `\n\n---\n**Source:** ${item.source.url}` : ''
+	// The tracking issue closes when GitHub merges this PR.
+	const closingLine = item.githubIssue ? `\n\nCloses #${item.githubIssue.number}` : ''
 	const prUrl = await sideEffects.createPr({
 		worktreePath,
 		branchName,
 		baseBranch: baseRef,
 		title: `${args.config.github.prPrefix} ${args.result.prTitle ?? item.title}`,
-		body: `${baseBody}${sourceLink}`,
+		body: `${baseBody}${sourceLink}${closingLine}`,
 		draft: false,
 	})
 	args.commands.recordDispatchPr(args.itemId, { prUrl })

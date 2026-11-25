@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
 import { promisify } from 'node:util'
 import { configSchema } from '../src/config.js'
@@ -116,8 +116,23 @@ for (const state of ['OPEN', 'MERGED', 'CLOSED'] as const) {
 	})
 }
 
+/** The agent's result goes to Helm's run state (cwd-relative here: no profile runtime). */
+function writeRunResult(resultPath: string): void {
+	mkdirSync(dirname(resultPath), { recursive: true })
+	writeFileSync(resultPath, JSON.stringify({ summary: 'done' }))
+}
+
+/**
+ * Untracked/changed files in a checkout, minus the Helm-owned plan files that
+ * `excludeHelmFiles` hides through the shared info/exclude (a run in a linked
+ * worktree writes that file; the checkout's working tree is never touched).
+ */
 async function gitStatus(cwd: string): Promise<string> {
+	const helmOwned = /\/(solver-result\.json|\.planning-prompt\.txt|context\.md|README\.md)$/
 	return (await exec('git', ['status', '--porcelain', '--untracked-files=all'], { cwd })).stdout
+		.split('\n')
+		.filter(line => line && !helmOwned.test(line))
+		.join('\n')
 }
 
 /** A Main plan as the Plan route leaves it in the canonical checkout. */
@@ -168,7 +183,7 @@ for (const kind of ['solve', 'loop'] as const) {
 						assert.ok(existsSync(join(worktree, 'docs/plans/fixture/issues/01-first.md')))
 						assert.equal(existsSync(join(worktree, 'docs/plans/fixture/solver-result.json')), false)
 						assert.equal(existsSync(join(worktree, 'docs/plans/fixture/.planning-prompt.txt')), false)
-						writeFileSync(join(worktree, 'docs/plans/fixture/solver-result.json'), JSON.stringify({ summary: 'done' }))
+						writeRunResult(params.resultPath)
 						return { worktreePath: worktree, branchName: params.branchName, outcome: { exitCode: 0, events: [] } }
 					},
 				}
@@ -242,8 +257,7 @@ test('an Item run in Main and recovered gets its own worktree when retried in Wo
 				ranIn = worktree
 				// Not a plan: nothing from the checkout's plan dir comes along.
 				assert.equal(existsSync(join(worktree, 'docs/plans/fixture/notes.md')), false)
-				mkdirSync(join(worktree, 'docs/plans/fixture'), { recursive: true })
-				writeFileSync(join(worktree, 'docs/plans/fixture/solver-result.json'), JSON.stringify({ summary: 'done' }))
+				writeRunResult(params.resultPath)
 				return { worktreePath: worktree, branchName: params.branchName, outcome: { exitCode: 0, events: [] } }
 			},
 		}
@@ -309,7 +323,7 @@ test('a Main plan survives a failed Worktree attempt: the retry reuses its branc
 				params.onWorktreeReady(worktree)
 				ranIn = worktree
 				assert.equal(readFileSync(join(worktree, 'docs/plans/fixture/prd.md'), 'utf8'), '# Plan written in Main\n')
-				writeFileSync(join(worktree, 'docs/plans/fixture/solver-result.json'), JSON.stringify({ summary: 'done' }))
+				writeRunResult(params.resultPath)
 				return { worktreePath: worktree, branchName: params.branchName, outcome: { exitCode: 0, events: [] } }
 			},
 		}

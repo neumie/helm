@@ -42,6 +42,7 @@
 			"vigil.config.json",
 			"profiles.json",
 			"profiles",
+			"runs",
 			"storybook-static",
 			"app/test-results",
 			"app/remote-dist",

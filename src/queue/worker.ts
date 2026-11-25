@@ -10,6 +10,7 @@ import { ItemCommands } from '../items/commands.js'
 import { buildItemExecutionContext, prepareItemExecutionContext } from '../items/context.js'
 import { loopPayloadForItem } from '../items/execution.js'
 import { resolveItemWorkspace } from '../items/identity.js'
+import type { ItemIssues } from '../items/issues.js'
 import { ensureItemDisplayName, ensureItemWorkspaceName } from '../items/naming.js'
 import type { EnsureItemDisplayNameDeps, EnsureItemNameDeps } from '../items/naming.js'
 import type { ItemRecord } from '../items/schema.js'
@@ -22,6 +23,7 @@ import { profileRuntimeRoot } from '../profiles/runtime.js'
 import { ProviderUnavailableError, type TaskContext, type TaskProvider } from '../providers/provider.js'
 import { assertAgentBudget } from '../solver/agent-adapter.js'
 import { effectiveSolverModel } from '../solver/models.js'
+import { RunResultFile, runResultPath } from '../solver/run-result.js'
 import type { SolveResult, Solver } from '../solver/solver.js'
 import { type ErrorPhase, errorPhase, isCancellation, phaseError } from '../util/errors.js'
 import { log } from '../util/logger.js'
@@ -285,6 +287,8 @@ export interface ProcessSolveItemDeps {
 	displayName?: EnsureItemDisplayNameDeps
 	workspaceName?: EnsureItemNameDeps
 	knowledge?: KnowledgeIntegration
+	/** Tracks the run on a GitHub issue (task = body, start/result = comments). Absent = off. */
+	issues?: ItemIssues
 }
 
 export async function processSolveItem(
@@ -426,6 +430,27 @@ export async function processSolveItem(
 			model: effectiveSolverModel(selectedAgent ?? config.solver.agent, selectedModel, config.solver),
 			workspace: workspaceMode,
 		}
+		// The task goes on a GitHub issue before the agent starts, so the prompt can
+		// tell it which issue the PR closes. Best effort: without a GitHub remote or
+		// gh the run goes on and its result stays in Helm's state only. The issue
+		// shows the task without project knowledge (repository readers see it).
+		const runIssue = deps.issues
+			? await deps.issues.beginRun({
+					commands,
+					item: commands.getItem(itemId) ?? named,
+					repoPath: projectConfig.repoPath,
+					task: taskContext,
+					run: {
+						agent: solverConfig.agent,
+						model: solverConfig.model ?? null,
+						workspace: workspaceMode,
+						branchName: mainMode ? null : branchName,
+					},
+					signal,
+				})
+			: null
+		// The agent writes its result into Helm's profile state, never the repository.
+		const resultPath = runResultPath(item.profileId, itemId)
 
 		let readinessCalls = 0
 		let readinessPath: string | undefined
@@ -456,6 +481,8 @@ export async function processSolveItem(
 				projectConfig: { ...projectConfig, baseBranch: baseRef },
 				branchName,
 				planDirName,
+				resultPath,
+				issue: runIssue,
 				canonicalContext: executionContext,
 				taskId: item.id,
 				taskTitle: item.title,
@@ -496,9 +523,10 @@ export async function processSolveItem(
 		}
 
 		const workspace = new PlanWorkspace(worktreePath, planDirName)
-		const solverResult = workspace.readResult()
+		const solverResult = new RunResultFile(resultPath).read()
 		if (!solverResult) {
-			throw phaseError('solve', `No solver-result.json at ${workspace.rel.result}`)
+			// Keep the "No solver-result.json" wording: runOutcomeForFailure maps it to no_result.
+			throw phaseError('solve', `No solver-result.json at ${resultPath}`)
 		}
 		const knowledgeCandidates = workspace.readKnowledgeCandidates()
 		let candidatesQueued = false
@@ -531,6 +559,8 @@ export async function processSolveItem(
 			workspace.clearKnowledgeCandidates()
 		}
 
+		await deps.issues?.reportResult(commands, itemId, solverResult)
+
 		log.info('worker', 'Solve Item complete - dispatching')
 		try {
 			await dispatchSolveItem({
@@ -544,6 +574,8 @@ export async function processSolveItem(
 			log.warn('worker', `Item action dispatch failed: ${err instanceof Error ? err.message : err}`)
 			commands.recordEvent(itemId, 'dispatch_failed', { error: (err as Error).message })
 		}
+		// The PR must close the issue on merge; announce a PR Helm opened itself.
+		await deps.issues?.reportPullRequest(commands, itemId, { announce: !solverResult.prUrl })
 		log.success('worker', `Solve Item ready for review: ${item.title}`)
 	} catch (err) {
 		const error = err as Error
@@ -552,6 +584,7 @@ export async function processSolveItem(
 		if (isCancelled) {
 			commands.cancelProcessingItem(itemId, 'Item cancelled by user', phase)
 			log.warn('worker', `Solve Item cancelled: ${item.title}`)
+			await deps.issues?.reportRunEnded(commands, itemId, { cancelled: true }).catch(() => undefined)
 		} else {
 			const mainRun =
 				((item.payload.kind === 'solve' ? item.payload.solverWorkspace : undefined) ??
@@ -566,6 +599,9 @@ export async function processSolveItem(
 				{ repoPath: projectConfig.repoPath, mainMode: mainRun },
 				signal,
 			)
+			await deps.issues
+				?.reportRunEnded(commands, itemId, { cancelled: false, phase, message: error.message })
+				.catch(() => undefined)
 		}
 	}
 }

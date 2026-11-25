@@ -3,6 +3,7 @@ import type { DB } from '../db/client.js'
 import { isItemAssigned } from '../items/assignment.js'
 import { ItemCommands, isRetryableItem } from '../items/commands.js'
 import { itemExecutionMode } from '../items/execution.js'
+import type { ItemIssues } from '../items/issues.js'
 import type { ItemRecord } from '../items/schema.js'
 import type { KnowledgeIntegration } from '../knowledge/integration.js'
 import type { TaskProvider } from '../providers/provider.js'
@@ -77,6 +78,7 @@ export class Drainer {
 		private readonly profileIds?: () => string[],
 		private readonly activeProfileId?: () => string,
 		private readonly knowledge?: KnowledgeIntegration,
+		private readonly issues?: ItemIssues,
 	) {
 		this.itemCommands = new ItemCommands(db.items, config)
 		// Automatic queue admission is opt-in: a missing state starts paused,
@@ -332,6 +334,7 @@ export class Drainer {
 
 		processSolveItem(itemId, this.config, runDb, this.provider, this.solver, controller.signal, {
 			knowledge: this.knowledge,
+			...(this.issues ? { issues: this.issues } : {}),
 		}).finally(() => {
 			this.activeSolveItems.delete(itemId)
 			this.maybeScheduleRetry(itemId, runDb)

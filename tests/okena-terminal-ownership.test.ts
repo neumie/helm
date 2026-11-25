@@ -357,6 +357,7 @@ test('the solve path binds its terminal by id with a short name, and Open in Oke
 				projectConfig: config.projects[0],
 				branchName: 'feat/inventura',
 				planDirName: '2026-11-09-inventura',
+				resultPath: join(tmpdir(), `helm-run-result-${process.pid}`, 'solver-result.json'),
 				canonicalContext: { title: 'Inventura' },
 				onWorktreeReady: () => ({ title: 'Inventura' }),
 				taskId: itemId,

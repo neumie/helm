@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { appendFileSync, existsSync, lstatSync, mkdirSync, realpathSync } from 'node:fs'
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import type { SolverWorkspace } from '../solver/workspace.js'
@@ -17,7 +17,19 @@ const execFileAsync = promisify(execFile)
 // `.vigil-*` stays in the list on purpose: worktrees created before the
 // vigil → helm rename still contain old `.vigil-prompt.txt` / `.vigil-attachments/`
 // artifacts, and they must stay invisible to git.
-const HELM_EXCLUDE_PATTERNS = ['.helm-*', '.vigil-*', '.mcp.json']
+// The docs/plans entries are files Helm writes itself (the planning task and
+// prompt, the plan README, and the run result older runs wrote and committed):
+// keeping them untracked stops runs from cluttering the target repository.
+// info/exclude only affects untracked files; already committed ones stay.
+export const HELM_EXCLUDE_PATTERNS = [
+	'.helm-*',
+	'.vigil-*',
+	'.mcp.json',
+	'docs/plans/*/solver-result.json',
+	'docs/plans/*/.planning-prompt.txt',
+	'docs/plans/*/context.md',
+	'docs/plans/*/README.md',
+]
 
 // Async exec means the event loop no longer serializes the daemon's git child
 // processes: two concurrent solves in ONE repo would interleave `git fetch` /
@@ -225,7 +237,12 @@ export async function excludeHelmFiles(worktreePath: string): Promise<void> {
 		const reportedPath = stdout.trim()
 		const excludePath = isAbsolute(reportedPath) ? reportedPath : resolve(worktreePath, reportedPath)
 		mkdirSync(dirname(excludePath), { recursive: true })
-		appendFileSync(excludePath, `\n# Helm temp files\n${HELM_EXCLUDE_PATTERNS.join('\n')}\n`)
+		// Append only what is missing: this runs on every solve and plan.
+		const present = new Set(
+			(existsSync(excludePath) ? readFileSync(excludePath, 'utf-8') : '').split('\n').map(line => line.trim()),
+		)
+		const missing = HELM_EXCLUDE_PATTERNS.filter(pattern => !present.has(pattern))
+		if (missing.length > 0) appendFileSync(excludePath, `\n# Helm temp files\n${missing.join('\n')}\n`)
 	} catch {
 		log.warn('worktree', 'Could not write git exclude patterns')
 	}

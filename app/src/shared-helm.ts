@@ -42,6 +42,14 @@ export interface DeploymentEntry {
 	url: string | null
 	updatedAt: string | null
 }
+export interface GithubIssueLink {
+	owner: string
+	repo: string
+	number: number
+	url: string
+	state: 'open' | 'closed'
+}
+
 export interface DeployState {
 	merged: boolean
 	mergedAt: string | null
@@ -286,6 +294,8 @@ export interface DashboardItem {
 	errorPhase: string | null
 	runOutcome: RunOutcome | null
 	deployState: DeployState | null
+	/** GitHub issue tracking the Item's runs; null when untracked (optional: older daemons omit it). */
+	githubIssue?: GithubIssueLink | null
 	sourceTask?: SourceTask | null
 	// Detail-only (omitted from list rows): the user's plan files and Okena action preview.
 	planArtifacts?: PlanArtifact[]

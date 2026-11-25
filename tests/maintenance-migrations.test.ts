@@ -90,7 +90,11 @@ for (const version of [31, 34]) {
 				migrateConnection(db)
 				assert.equal(db.pragma('foreign_keys', { simple: true }), 1)
 				assert.deepEqual(db.pragma('foreign_key_check'), [])
-				assert.deepEqual(db.prepare('SELECT * FROM items').get(), { ...item, knowledge_snapshot_id: null })
+				assert.deepEqual(db.prepare('SELECT * FROM items').get(), {
+					...item,
+					knowledge_snapshot_id: null,
+					github_issue: null,
+				})
 				assert.deepEqual(db.prepare('SELECT * FROM item_events').all(), events)
 				assert.throws(() => db.prepare("UPDATE item_events SET item_id = 'missing'").run(), /FOREIGN KEY/)
 				assert.equal(

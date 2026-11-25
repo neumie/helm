@@ -400,6 +400,16 @@ test('source health defaults to disabled and remembers the last good poll', () =
 	})
 })
 
+const LATEST_MIGRATION = Math.max(...MIGRATIONS.map(migration => migration.version))
+
+/**
+ * A test that deletes `schema_version` rows makes the runner apply those migrations again. Migration 46
+ * adds `items.github_issue`, so drop it first or the re-run fails with a duplicate column.
+ */
+function undoItemsGithubIssue(raw: Database.Database): void {
+	raw.exec('ALTER TABLE items DROP COLUMN github_issue')
+}
+
 test('migration 38 merges per-profile v37 rows into one global inbox without losing ids or cursors', () => {
 	const root = mkdtempSync(join(tmpdir(), 'helm-signals-v38-'))
 	try {
@@ -509,6 +519,8 @@ test('migration 38 merges per-profile v37 rows into one global inbox without los
 		)
 		source.run('alpha', 'github', 'error', 'old', T0.toISOString(), null)
 		source.run('beta', 'github', 'ok', null, at(5).toISOString(), at(5).toISOString())
+		// Migrations from 38 on run again; undo the later ones that do not rebuild a table they touch.
+		undoItemsGithubIssue(raw)
 		raw.prepare('DELETE FROM schema_version WHERE version >= 38').run()
 		raw.close()
 
@@ -1502,6 +1514,7 @@ test('migration 41 keeps every thread, id and event, and ids continue after the 
 		event.run(100, 7, 'created', '{"owner":"jakub"}', T0.toISOString())
 		event.run(101, 15, 'state', '{"to":"done"}', at(2).toISOString())
 		// A database at 40 (main's item_okena_terminals) runs only 41: the runner applies versions above its max.
+		undoItemsGithubIssue(raw)
 		raw.prepare('DELETE FROM schema_version WHERE version >= 41').run()
 		raw.close()
 
@@ -1535,7 +1548,7 @@ test('migration 41 keeps every thread, id and event, and ids continue after the 
 				.prepare('SELECT MAX(version) AS v FROM schema_version')
 				.get() as { v: number }
 			// 41 rebuilt the table, 42 added closed_by, 43 the mail sender, 44 widened source for slack.
-			assert.equal(versions.v, 45)
+			assert.equal(versions.v, LATEST_MIGRATION)
 			assert.equal(db.signals.get(15)?.closedBy, null)
 			assert.equal(db.signals.threadSender(15), null)
 			const ask = db.signals.upsertAsk({ title: 'After the migration' }, at(4)).thread

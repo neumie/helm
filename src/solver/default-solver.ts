@@ -7,6 +7,7 @@ import { createAgentAdapter } from './agent-adapter.js'
 import type { InvokeResult } from './invoker.js'
 import { invokeAgent } from './invoker.js'
 import { buildPrompt } from './prompt-builder.js'
+import { RunResultFile } from './run-result.js'
 import type { SolveParams, SolveResult, Solver } from './solver.js'
 
 export class DefaultSolver implements Solver {
@@ -85,14 +86,16 @@ export class DefaultSolver implements Solver {
 		const currentBranch = mainMode ? await getCurrentBranch(worktreePath) : null
 		const solverPrompt = buildPrompt(
 			taskContext,
-			{ planDirName, worktreePath },
+			{ planDirName, worktreePath, resultPath: params.resultPath, issue: params.issue ?? null },
 			{ ...solverConfig, knowledgeCandidates: params.knowledgeCandidatesEnabled === true },
 			mainMode ? { mode: 'main', currentBranch } : undefined,
 		)
 		params.onPromptSnapshot?.(solverPrompt)
 
-		// Drop any prior run's solver-result.json from a reused worktree so a crashed
-		// agent isn't reported as success on the stale result (phase 4 reads it back).
+		// Drop any prior attempt's result so a crashed agent isn't reported as
+		// success on a stale one (phase 4 reads it back). The worktree clear drops
+		// attempt-local knowledge candidates and a legacy docs/plans result.
+		new RunResultFile(params.resultPath).prepare()
 		new PlanWorkspace(worktreePath, planDirName).clearResult()
 
 		// Invoke configured agent (full access).

@@ -6,6 +6,7 @@ import { itemRecordSchema } from './schema.js'
 import type {
 	Assessment,
 	DeployState,
+	ItemGithubIssue,
 	ItemKind,
 	ItemPayload,
 	ItemRecord,
@@ -161,6 +162,7 @@ export class ItemStore {
 			prUrl: null,
 			runOutcome: null,
 			deployState: null,
+			githubIssue: null,
 		})
 
 		this.db
@@ -169,12 +171,12 @@ export class ItemStore {
 					id, profile_id, kind, status, work_mode, project_slug, title, display_name, assessment, source, captured_context, base_ref, spawner, group_id, payload,
 					worktree_path, branch_name, plan_dir_name, almanac_run_id,
 					created_at, queued_at, started_at, completed_at, planned_at, plan_status, run_context, run_context_revision, updated_at,
-					error_message, error_phase, result_summary, solve_input_snapshot, knowledge_snapshot_id, pr_url, run_outcome, deploy_state
+					error_message, error_phase, result_summary, solve_input_snapshot, knowledge_snapshot_id, pr_url, run_outcome, deploy_state, github_issue
 				) VALUES (
 					@id, @profileId, @kind, @status, @workMode, @projectSlug, @title, @displayName, @assessment, @source, @capturedContext, @baseRef, @spawner, @groupId, @payload,
 					@worktreePath, @branchName, @planDirName, @almanacRunId,
 					@createdAt, @queuedAt, @startedAt, @completedAt, @plannedAt, @planStatus, @runContext, @runContextRevision, @updatedAt,
-					@errorMessage, @errorPhase, @resultSummary, @solveInputSnapshot, @knowledgeSnapshotId, @prUrl, @runOutcome, @deployState
+					@errorMessage, @errorPhase, @resultSummary, @solveInputSnapshot, @knowledgeSnapshotId, @prUrl, @runOutcome, @deployState, @githubIssue
 				)`,
 			)
 			.run(this.toDbParams(item))
@@ -251,6 +253,35 @@ export class ItemStore {
 		const updated = this.get(id)
 		if (!updated) throw new Error(`Item not found: ${id}`)
 		return updated
+	}
+
+	// The tracking issue is a JSON column with its own writer, like deployState.
+	updateGithubIssue(id: string, githubIssue: ItemGithubIssue | null): ItemRecord {
+		const current = this.get(id)
+		if (!current) throw new Error(`Item not found: ${id}`)
+		const updatedAt = new Date().toISOString()
+		validateItem({ ...current, githubIssue, updatedAt })
+		const result = this.db
+			.prepare('UPDATE items SET github_issue = ?, updated_at = ? WHERE profile_id = ? AND id = ?')
+			.run(githubIssue ? JSON.stringify(githubIssue) : null, updatedAt, this.profileId, id)
+		if (result.changes === 0) throw new Error(`Item not found: ${id}`)
+		const updated = this.get(id)
+		if (!updated) throw new Error(`Item not found: ${id}`)
+		return updated
+	}
+
+	/** Finished Items whose tracking issue Helm still records as open (closing it failed or never ran). */
+	listOpenIssuesToSettle(limit = 50): ItemRecord[] {
+		const rows = this.db
+			.prepare(
+				`SELECT * FROM items
+				 WHERE profile_id = ? AND github_issue IS NOT NULL
+				   AND json_extract(github_issue, '$.state') = 'open'
+				   AND status IN ('done', 'cancelled')
+				 ORDER BY updated_at ASC LIMIT ?`,
+			)
+			.all(this.profileId, limit) as Record<string, unknown>[]
+		return rows.map(row => this.rowToItem(row))
 	}
 
 	// Cosmetic short label; dedicated writer keeps it off the lifecycle update surface.
@@ -644,6 +675,7 @@ export class ItemStore {
 			prUrl: item.prUrl,
 			runOutcome: item.runOutcome,
 			deployState: item.deployState ? JSON.stringify(item.deployState) : null,
+			githubIssue: item.githubIssue ? JSON.stringify(item.githubIssue) : null,
 		}
 	}
 
@@ -685,6 +717,7 @@ export class ItemStore {
 			prUrl: row.pr_url ?? null,
 			runOutcome: row.run_outcome ?? null,
 			deployState: readJson(row.deploy_state, 'deployState'),
+			githubIssue: readJson(row.github_issue, 'githubIssue'),
 		})
 	}
 }

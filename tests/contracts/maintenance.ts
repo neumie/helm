@@ -1,7 +1,13 @@
 import type * as Desktop from '../../app/src/shared-helm.js'
 import type * as Widget from '../../extension/src/api.js'
 // Compile-time producer/consumer compatibility. No runtime daemon/app imports.
-import type { DashboardItem, DashboardPlan, OkenaWorkspacePreview, PlanArtifact } from '../../src/items/contract.js'
+import type {
+	DashboardItem,
+	DashboardPlan,
+	GithubIssueLink,
+	OkenaWorkspacePreview,
+	PlanArtifact,
+} from '../../src/items/contract.js'
 import type { PlanningResult } from '../../src/plan/application.js'
 import type * as Signals from '../../src/signals/contract.js'
 
@@ -18,6 +24,11 @@ export type DetailDesktop = Assert<
 		Pick<DashboardItem, 'planArtifacts' | 'okenaWorkspace' | 'knowledgeDeliveries' | 'knowledgeRecovery'>,
 		Pick<Desktop.DashboardItem, 'planArtifacts' | 'okenaWorkspace' | 'knowledgeDeliveries' | 'knowledgeRecovery'>
 	>
+>
+
+export type GithubIssueDesktop = Assert<Compatible<GithubIssueLink, Desktop.GithubIssueLink>>
+export type GithubIssueWidget = Assert<
+	Compatible<Pick<GithubIssueLink, 'number' | 'url' | 'state'>, NonNullable<Widget.DashboardItem['githubIssue']>>
 >
 
 export type SignalThreadDesktop = Assert<Compatible<Signals.SignalThread, Desktop.SignalThread>>

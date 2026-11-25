@@ -84,6 +84,21 @@ export const deployStateSchema = z
 	})
 	.strict()
 
+// The GitHub issue that tracks this Item's runs (task = body, runs = comments).
+// Owned by ItemIssues; a separate axis from `status` like deployState.
+export const itemGithubIssueSchema = z
+	.object({
+		owner: z.string().min(1),
+		repo: z.string().min(1),
+		number: z.number().int().positive(),
+		url: z.string().min(1),
+		state: z.enum(['open', 'closed']),
+		closedReason: z.enum(['completed', 'not_planned']).nullable(),
+		linkedAt: z.string().min(1),
+		closedAt: z.string().nullable(),
+	})
+	.strict()
+
 export const loopOptionsSchema = z
 	.object({
 		mode: z.enum(['once', 'afk']).optional(),
@@ -208,6 +223,7 @@ export const itemRecordSchema = z
 		prUrl: z.string().nullable(),
 		runOutcome: runOutcomeSchema.nullable(),
 		deployState: deployStateSchema.nullable(),
+		githubIssue: itemGithubIssueSchema.nullable().optional(),
 	})
 	.superRefine((item, ctx) => {
 		const projectMissing = item.projectSlug === null
@@ -236,6 +252,7 @@ export const itemRecordSchema = z
 			item.planStatus ||
 			item.prUrl ||
 			item.deployState ||
+			item.githubIssue ||
 			item.startedAt ||
 			(item.errorMessage && item.status !== 'cancelled') ||
 			item.errorPhase ||
@@ -286,6 +303,7 @@ export type AssessmentInput = z.infer<typeof assessmentInputSchema>
 export type Assessment = z.infer<typeof assessmentSchema>
 export type DeploymentEntry = z.infer<typeof deploymentEntrySchema>
 export type DeployState = z.infer<typeof deployStateSchema>
+export type ItemGithubIssue = z.infer<typeof itemGithubIssueSchema>
 export type ItemSource = z.infer<typeof itemSourceSchema>
 export type LoopOptions = z.infer<typeof loopOptionsSchema>
 export type TicketQueueSummary = z.infer<typeof ticketQueueSummarySchema>

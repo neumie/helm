@@ -478,10 +478,9 @@ class FakeSolveSolver implements Solver {
 			mkdirSync(worktreePath, { recursive: true })
 			const taskContext = params.onWorktreeReady(worktreePath)
 			void taskContext
-			const workspace = new PlanWorkspace(worktreePath, params.planDirName)
-			workspace.ensureDir()
+			mkdirSync(dirname(params.resultPath), { recursive: true })
 			writeFileSync(
-				workspace.resultPath,
+				params.resultPath,
 				JSON.stringify({
 					summary: `Solved ${params.taskTitle}`,
 					filesChanged: ['src/example.ts'],
@@ -511,12 +510,17 @@ class SnapshotMutatingSolver implements Solver {
 		const worktreePath = params.existingWorktreePath ?? join(this.worktreeRoot, params.taskId)
 		mkdirSync(worktreePath, { recursive: true })
 		const workspace = new PlanWorkspace(worktreePath, params.planDirName)
-		const prompt = buildPrompt(params.onWorktreeReady(worktreePath), { planDirName: params.planDirName, worktreePath })
+		const prompt = buildPrompt(params.onWorktreeReady(worktreePath), {
+			planDirName: params.planDirName,
+			worktreePath,
+			resultPath: params.resultPath,
+		})
 		const snapshot = (params as { onPromptSnapshot?: (prompt: string) => void }).onPromptSnapshot
 		snapshot?.(prompt)
 		workspace.writeReadme('AFTER snapshot artifact')
+		mkdirSync(dirname(params.resultPath), { recursive: true })
 		writeFileSync(
-			workspace.resultPath,
+			params.resultPath,
 			JSON.stringify({ summary: `Solved ${params.taskTitle}`, filesChanged: ['src/example.ts'] }),
 			'utf-8',
 		)
@@ -3344,9 +3348,8 @@ test('processSolveItem enforces zero, double, wrong, and late Solver readiness c
 					mkdirSync(worktreePath, { recursive: true })
 					params.onWorktreeReady(worktreePath)
 					late = () => params.onWorktreeReady(worktreePath)
-					const workspace = new PlanWorkspace(worktreePath, params.planDirName)
-					workspace.ensureDir()
-					writeFileSync(workspace.resultPath, JSON.stringify({ summary: 'late', filesChanged: [] }))
+					mkdirSync(dirname(params.resultPath), { recursive: true })
+					writeFileSync(params.resultPath, JSON.stringify({ summary: 'late', filesChanged: [] }))
 					return { worktreePath, branchName: params.branchName, outcome: { exitCode: 0, events: [] } }
 				},
 			}

@@ -273,11 +273,11 @@ test('OkenaSolver launches the agent exactly once in the new worktree terminal o
 	const repoPath = initRepo('helm-okena-first-start-')
 	const okena = fakeOptimisticOkena(repoPath)
 	const planDirName = '2026-11-04-first-start'
+	const resultPath = join(`${repoPath}-results`, 'item-1', 'solver-result.json')
 	;(okena.client as unknown as { runCommand: OkenaClient['runCommand'] }).runCommand = async (terminalId, command) => {
 		okena.commands.push({ terminalId, command })
-		const workspace = new PlanWorkspace(`${repoPath}-wt/fix-first-start`, planDirName)
-		mkdirSync(dirname(workspace.resultPath), { recursive: true })
-		writeFileSync(workspace.resultPath, JSON.stringify({ summary: 'done' }))
+		mkdirSync(dirname(resultPath), { recursive: true })
+		writeFileSync(resultPath, JSON.stringify({ summary: 'done' }))
 	}
 	const config = configSchema.parse({
 		provider: { type: 'contember', apiBaseUrl: 'https://example.test', projectSlug: 'helm', apiToken: 'token' },
@@ -290,6 +290,7 @@ test('OkenaSolver launches the agent exactly once in the new worktree terminal o
 			projectConfig: config.projects[0],
 			branchName: 'fix/first-start',
 			planDirName,
+			resultPath,
 			canonicalContext: { title: 'First start' },
 			onWorktreeReady: () => ({ title: 'First start' }),
 			taskId: 'item-1',
@@ -298,6 +299,11 @@ test('OkenaSolver launches the agent exactly once in the new worktree terminal o
 			workspaceMode: 'worktree',
 		})
 		assert.equal(result.worktreePath, `${repoPath}-wt/fix-first-start`)
+		assert.equal(
+			existsSync(join(result.worktreePath, 'docs/plans', planDirName, 'solver-result.json')),
+			false,
+			'nothing is written into the repository',
+		)
 		assert.equal(okena.commands.length, 1)
 		assert.equal(okena.commands[0].terminalId, 'wt-terminal')
 		assert.match(okena.commands[0].command, /claude/)
@@ -308,6 +314,7 @@ test('OkenaSolver launches the agent exactly once in the new worktree terminal o
 		)
 	} finally {
 		cleanup(repoPath)
+		rmSync(`${repoPath}-results`, { recursive: true, force: true })
 	}
 })
 

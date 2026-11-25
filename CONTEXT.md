@@ -121,10 +121,18 @@ Loop Items use the loop runner rather than Solver.
 **Spawner and PlanWorkspace** — `Spawner` is the interactive planning-surface
 seam, independent of Solver and Item kind. `createSpawner(config)` selects the
 configured/default or installed adapter. `PlanWorkspace` exclusively owns the
-`docs/plans/<planDirName>/` paths and IO for planning artifacts, prompts, results,
-and README files. Planning is prepared through lifecycle commands and the active
+`docs/plans/<planDirName>/` paths and IO for planning artifacts, prompts and
+README files. Solve run results are not in the repository: the agent writes them
+to Helm's profile state (`runResultPath`). Planning is prepared through lifecycle commands and the active
 Spawner; planning artifacts can later be consumed by execution in the same
 workspace.
+
+**Tracking issue** — the GitHub issue that carries a solve Item's task (issue
+body) and its runs (start/result/PR/failure comments). `ItemIssues` links or
+files it before each run and stores it on the Item (`githubIssue`); the PR closes
+it with `Closes #N`, or Helm closes it when the Item ends without a merged PR.
+Best effort: without a private GitHub repository or gh, runs keep working and the
+result stays only in Helm state.
 
 **Execution context** — provider/manual/captured context is assembled through the
 Item context module. A saved Run Context is an operator-owned override for future

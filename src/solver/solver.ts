@@ -15,10 +15,19 @@ export interface SolveParams {
 	projectConfig: ProjectConfig
 	branchName: string
 	/**
-	 * Human-readable plan-dir name (`<YYYY-MM-DD>-<slug>`). The solver-result
-	 * file the agent writes lives at `docs/plans/<planDirName>/solver-result.json`.
+	 * Human-readable plan-dir name (`<YYYY-MM-DD>-<slug>`): where planning
+	 * artifacts the user wrote live (`docs/plans/<planDirName>/`). Runs no longer
+	 * write their result there.
 	 */
 	planDirName: string
+	/**
+	 * Absolute path in Helm's profile state (`runResultPath`) where the agent
+	 * writes its result JSON. The solver clears it before launching the agent;
+	 * the Okena solver waits for it; the worker reads it.
+	 */
+	resultPath: string
+	/** GitHub issue tracking the task, named in the prompt so the PR closes it. */
+	issue?: { number: number; url: string; reference: string } | null
 	/** Canonical, unlocalized context for non-prompt diagnostics only. */
 	canonicalContext: TaskContext
 	/**

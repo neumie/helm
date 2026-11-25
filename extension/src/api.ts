@@ -140,6 +140,8 @@ export interface DashboardItem {
 	errorPhase: string | null
 	runOutcome: RunOutcome | null
 	deployState: DeployState | null
+	/** GitHub issue tracking the Item's runs (optional: older daemons omit it). */
+	githubIssue?: { number: number; url: string; state: 'open' | 'closed' } | null
 	sourceTask?: SourceTask | null
 	solverAgent?: SolverAgent | null
 	solverModel?: string | null

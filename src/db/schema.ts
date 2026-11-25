@@ -1300,4 +1300,13 @@ CREATE INDEX idx_signal_filtered_identity ON signal_filtered(sender_identity);
 ALTER TABLE signal_threads ADD COLUMN choices TEXT NOT NULL DEFAULT '[]';
 `,
 	},
+	{
+		// The GitHub issue that tracks a solve Item's runs (task = issue body, start/result =
+		// comments, closed by the merged PR or by Helm). JSON like deploy_state, own writer.
+		// Replaces the run record agents used to commit to docs/plans/<dir>/solver-result.json.
+		version: 46,
+		sql: `
+ALTER TABLE items ADD COLUMN github_issue TEXT;
+`,
+	},
 ]
