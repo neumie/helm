@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { type Server, createServer } from 'node:http'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { configSchema } from '../src/config.js'
@@ -29,7 +30,7 @@ interface Harness {
 }
 
 async function harness(): Promise<Harness> {
-	const root = mkdtempSync(join(process.cwd(), '.hold-provider-test-'))
+	const root = mkdtempSync(join(tmpdir(), '.hold-provider-test-'))
 	chmodSync(root, 0o700)
 	const socketPath = join(root, 'hold.sock')
 	const capabilityFile = join(root, 'hold.capability')
