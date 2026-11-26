@@ -16,6 +16,7 @@ import {
 	parseRunResultComment,
 	redactSecrets,
 	runResultComment,
+	runSessionLines,
 	withClosingReference,
 } from '../src/github/item-issue-text.js'
 import { ItemCommands } from '../src/items/commands.js'
@@ -24,6 +25,7 @@ import { processSolveItem } from '../src/queue/worker.js'
 import { buildPrompt } from '../src/solver/prompt-builder.js'
 import { RunResultFile, runResultPath } from '../src/solver/run-result.js'
 import type { Solver } from '../src/solver/solver.js'
+import { phaseError } from '../src/util/errors.js'
 import { FakeIssueClient } from './helpers/fake-issue-client.js'
 
 const config = {
@@ -215,15 +217,17 @@ test('closing references are recognized and appended once', () => {
 	assert.equal(withClosingReference('', '#12'), 'Closes #12')
 })
 
-test('beginRun creates the issue, links it to the Item and posts the start comment', async t => {
+test('beginRun creates the issue and links it to the Item; the start comment follows with the session', async t => {
 	const { commands, client, issues, startSolve, db } = fixture(t)
 	const item = startSolve({ source: { provider: 'ClientCare', externalId: 'T-9', url: 'https://cc.test/t/9' } })
-	const linked = await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	const linked = await issues.beginRun({ commands, item, repoPath: '/repo', task })
 	assert.deepEqual(linked, { number: 1, url: 'https://github.com/acme/app/issues/1', reference: '#1' })
 	const issue = client.issue(1)
 	assert.equal(issue.title, 'Fix the thing')
 	assert.ok(issue.body.startsWith(itemIssueMarker(item.id)))
 	assert.ok(issue.body.includes('@​boss'))
+	assert.deepEqual(issue.comments, [], 'the start waits for the run directory')
+	await issues.announceRunStart(commands, item.id, run)
 	assert.deepEqual(issue.comments, [
 		'**Helm** started run 1 (agent claude, model claude-opus-4-7, worktree, branch `fix/thing`).',
 	])
@@ -243,12 +247,13 @@ test('beginRun creates the issue, links it to the Item and posts the start comme
 test('a later run reuses the issue, reopening it when it was closed', async t => {
 	const { commands, client, issues, startSolve, db } = fixture(t)
 	const item = startSolve()
-	await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	await issues.beginRun({ commands, item, repoPath: '/repo', task })
 	client.issue(1).state = 'closed'
 	commands.failItem(item.id, 'boom', 'solve')
 	commands.retryItem(item.id)
 	const second = commands.startItem(item.id)
-	const linked = await issues.beginRun({ commands, item: second, repoPath: '/repo', task, run })
+	const linked = await issues.beginRun({ commands, item: second, repoPath: '/repo', task })
+	await issues.announceRunStart(commands, item.id, run)
 	assert.equal(linked?.number, 1)
 	assert.equal(client.issues.length, 1, 'no second issue')
 	assert.equal(client.issue(1).state, 'open')
@@ -264,15 +269,15 @@ test('a later run reuses the issue, reopening it when it was closed', async t =>
 test('an Item without a recorded issue finds its own issue by marker, or the open issue of its source task', async t => {
 	const { commands, client, issues, startSolve } = fixture(t)
 	const first = startSolve({ source: { provider: 'ClientCare', externalId: 'T-5' } })
-	await issues.beginRun({ commands, item: first, repoPath: '/repo', task, run })
+	await issues.beginRun({ commands, item: first, repoPath: '/repo', task })
 	const followUp = startSolve({ source: { provider: 'ClientCare', externalId: 'T-5' } })
-	const linked = await issues.beginRun({ commands, item: followUp, repoPath: '/repo', task, run })
+	const linked = await issues.beginRun({ commands, item: followUp, repoPath: '/repo', task })
 	assert.equal(linked?.number, 1, 'the open issue of the same source task is reused')
 	assert.equal(client.issues.length, 1)
 
 	client.issue(1).state = 'closed'
 	const third = startSolve({ source: { provider: 'ClientCare', externalId: 'T-5' } })
-	const own = await issues.beginRun({ commands, item: third, repoPath: '/repo', task, run })
+	const own = await issues.beginRun({ commands, item: third, repoPath: '/repo', task })
 	assert.equal(own?.number, 2, 'a closed source issue is not reused by another Item')
 })
 
@@ -290,7 +295,7 @@ test('an issue someone else filed with a copied marker is never adopted', async 
 		closeReason: null,
 		comments: [],
 	})
-	const linked = await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	const linked = await issues.beginRun({ commands, item, repoPath: '/repo', task })
 	assert.equal(linked?.number, 2, 'Helm files its own issue')
 	assert.deepEqual(client.issue(1).comments, [], 'the planted issue is untouched')
 })
@@ -299,7 +304,7 @@ test('a project without a GitHub remote runs without an issue and records why', 
 	const { commands, client, issues, startSolve, db } = fixture(t)
 	client.remotes.clear()
 	const item = startSolve()
-	const linked = await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	const linked = await issues.beginRun({ commands, item, repoPath: '/repo', task })
 	assert.equal(linked, null)
 	assert.equal(client.issues.length, 0)
 	const unavailable = db.items.getEvents(item.id).find(event => event.eventType === 'issue_unavailable')
@@ -315,12 +320,12 @@ test('gh failures while linking degrade to no issue; a cancelled run still throw
 	const { commands, client, issues, startSolve } = fixture(t)
 	const item = startSolve()
 	client.failNext = { method: 'create', error: { code: 1, stderr: 'gh auth login' } }
-	assert.equal(await issues.beginRun({ commands, item, repoPath: '/repo', task, run }), null)
+	assert.equal(await issues.beginRun({ commands, item, repoPath: '/repo', task }), null)
 
 	const cancelled = new AbortController()
 	cancelled.abort()
 	await assert.rejects(
-		issues.beginRun({ commands, item, repoPath: '/repo', task, run, signal: cancelled.signal }),
+		issues.beginRun({ commands, item, repoPath: '/repo', task, signal: cancelled.signal }),
 		(error: Error) => error.name === 'AbortError',
 	)
 })
@@ -328,7 +333,7 @@ test('gh failures while linking degrade to no issue; a cancelled run still throw
 test('the result comment carries the summary and a hidden JSON block', async t => {
 	const { commands, client, issues, startSolve } = fixture(t)
 	const item = startSolve()
-	await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	await issues.beginRun({ commands, item, repoPath: '/repo', task })
 	await issues.reportResult(commands, item.id, { summary: 'Fixed it', filesChanged: ['a.ts', 'b.ts'] })
 	const comment = client.issue(1).comments.at(-1) ?? ''
 	assert.match(comment, /^\*\*Helm\*\* finished run 1\.\n\nFixed it/)
@@ -340,7 +345,7 @@ test('the result comment carries the summary and a hidden JSON block', async t =
 test('an agent-shipped PR gets a closing reference; a Helm-opened PR is announced', async t => {
 	const { commands, client, issues, startSolve } = fixture(t)
 	const item = startSolve()
-	await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	await issues.beginRun({ commands, item, repoPath: '/repo', task })
 	commands.completeSolveItem(item.id, {
 		worktreePath: '/wt',
 		branchName: 'fix/thing',
@@ -360,7 +365,7 @@ test('an agent-shipped PR gets a closing reference; a Helm-opened PR is announce
 test('a PR in another repository refers to the issue by owner/repo#N', async t => {
 	const { commands, client, issues, startSolve } = fixture(t)
 	const item = startSolve()
-	await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	await issues.beginRun({ commands, item, repoPath: '/repo', task })
 	commands.completeSolveItem(item.id, { worktreePath: '/wt', branchName: 'b', planDirName: 'p', resultSummary: 's' })
 	const prUrl = 'https://github.com/acme/other/pull/2'
 	commands.recordDispatchPr(item.id, { prUrl })
@@ -371,7 +376,7 @@ test('a PR in another repository refers to the issue by owner/repo#N', async t =
 test('settle closes done Items as completed and cancelled ones as not planned, once', async t => {
 	const { commands, client, issues, startSolve, db } = fixture(t)
 	const done = startSolve()
-	await issues.beginRun({ commands, item: done, repoPath: '/repo', task, run })
+	await issues.beginRun({ commands, item: done, repoPath: '/repo', task })
 	commands.completeSolveItem(done.id, { worktreePath: '/wt', branchName: 'b', planDirName: 'p', resultSummary: 's' })
 	await issues.settle(commands, done.id)
 	assert.equal(client.issue(1).state, 'open', 'review is not finished')
@@ -385,7 +390,7 @@ test('settle closes done Items as completed and cancelled ones as not planned, o
 	assert.equal(db.items.get(done.id)?.githubIssue?.state, 'closed')
 
 	const cancelled = startSolve()
-	await issues.beginRun({ commands, item: cancelled, repoPath: '/repo', task, run })
+	await issues.beginRun({ commands, item: cancelled, repoPath: '/repo', task })
 	commands.cancelProcessingItem(cancelled.id, 'Item cancelled by user', 'solve')
 	await issues.reportRunEnded(commands, cancelled.id, { cancelled: true })
 	assert.equal(client.issue(2).closeReason, 'not planned')
@@ -399,7 +404,7 @@ test('settle closes done Items as completed and cancelled ones as not planned, o
 test('settle records an issue GitHub already closed (merged PR) without closing it again', async t => {
 	const { commands, client, issues, startSolve, db } = fixture(t)
 	const item = startSolve()
-	await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	await issues.beginRun({ commands, item, repoPath: '/repo', task })
 	commands.completeSolveItem(item.id, { worktreePath: '/wt', branchName: 'b', planDirName: 'p', resultSummary: 's' })
 	commands.recordDispatchPr(item.id, { prUrl: 'https://github.com/acme/app/pull/3' })
 	commands.markItemMerged(item.id)
@@ -418,7 +423,7 @@ test('settle records an issue GitHub already closed (merged PR) without closing 
 test('a failed run comments on the issue and keeps it open; a failed close is retried later', async t => {
 	const { commands, client, issues, startSolve, db } = fixture(t)
 	const item = startSolve()
-	await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	await issues.beginRun({ commands, item, repoPath: '/repo', task })
 	commands.failItem(item.id, `No solver-result.json at ${process.env.HOME}/x/result.json`, 'solve')
 	await issues.reportRunEnded(commands, item.id, {
 		cancelled: false,
@@ -486,8 +491,10 @@ test('a solve run files the task as an issue, writes its result outside the repo
 	let prompt = ''
 	let worktree = ''
 	let resultPath = ''
+	let sessionId = ''
 	const solver: Solver = {
 		async solve(params) {
+			sessionId = params.sessionId ?? ''
 			worktree = join(dir, 'worktrees', params.taskId)
 			mkdirSync(worktree, { recursive: true })
 			params.onWorktreeReady(worktree)
@@ -526,7 +533,71 @@ test('a solve run files the task as an issue, writes its result outside the repo
 	assert.equal(issue.comments.length, 2)
 	assert.match(issue.comments[0] ?? '', /^\*\*Helm\*\* started run 1/)
 	assert.equal(parseRunResultComment(issue.comments[1] ?? '')?.summary, 'Wired the button')
+	// Helm named the Claude Code session itself; both comments say how to resume it.
+	assert.match(sessionId, /^[0-9a-f-]{36}$/)
+	const resume = runSessionLines({ agent: 'claude', id: sessionId, directory: worktree })[1] ?? 'missing'
+	assert.ok(issue.comments[0]?.includes(`**Session:** Claude Code \`${sessionId}\``))
+	assert.ok(issue.comments[0]?.includes(resume))
+	assert.ok(issue.comments[1]?.includes(resume))
+	assert.deepEqual(parseRunResultComment(issue.comments[1] ?? '')?.session, { agent: 'claude', id: sessionId })
 	assert.equal(client.pullRequests.get(prUrl), 'Fixes the login button.\n\nCloses #1')
+})
+
+test('a Codex run gets no Helm session ID; its own reported session ID reaches the result comment', async t => {
+	const { db, commands, client, issues, dir } = fixture(t)
+	const provider = {
+		name: 'fake',
+		pollNewTasks: async () => [],
+		getTaskContext: async () => null,
+		resolveTaskSummary: async () => null,
+		postComment: async () => null,
+	}
+	const codexConfig = { ...config, solver: { ...config.solver, agent: 'codex' } } as HelmConfig
+	const item = commands.createSolveItem({ title: 'Codex task', projectSlug: 'helm', prompt: 'p' })
+	const reported = '019a8c2e-6a1d-7c3e-9f7a-2b8d9e0f1a2b'
+	let worktree = ''
+	const solver: Solver = {
+		async solve(params) {
+			assert.equal(params.sessionId ?? null, null)
+			worktree = join(dir, 'wt-codex')
+			mkdirSync(worktree, { recursive: true })
+			params.onWorktreeReady(worktree)
+			new RunResultFile(params.resultPath).prepare()
+			writeFileSync(params.resultPath, JSON.stringify({ summary: 'Done by Codex', sessionId: reported }))
+			return { worktreePath: worktree, branchName: params.branchName, outcome: { exitCode: 0, events: [] } }
+		},
+	}
+	await processSolveItem(item.id, codexConfig, db, provider, solver, undefined, { issues })
+	assert.equal(db.items.get(item.id)?.status, 'review')
+	const [start, result] = client.issue(1).comments
+	assert.match(start ?? '', /^\*\*Helm\*\* started run 1 \(agent codex/)
+	assert.ok(!start?.includes('**Session:**'), 'no session line before the ID is known')
+	assert.ok(result?.includes(`**Session:** Codex \`${reported}\``))
+	assert.ok(result?.includes(runSessionLines({ agent: 'codex', id: reported, directory: worktree })[1] ?? 'missing'))
+})
+
+test('a run that fails before its workspace is ready still opens with a start comment, without a session', async t => {
+	const { db, commands, client, issues } = fixture(t)
+	const provider = {
+		name: 'fake',
+		pollNewTasks: async () => [],
+		getTaskContext: async () => null,
+		resolveTaskSummary: async () => null,
+		postComment: async () => null,
+	}
+	const item = commands.createSolveItem({ title: 'No worktree', projectSlug: 'helm', prompt: 'p' })
+	const solver: Solver = {
+		async solve() {
+			throw phaseError('worktree', 'git worktree add failed')
+		},
+	}
+	await processSolveItem(item.id, config, db, provider, solver, undefined, { issues })
+	assert.equal(db.items.get(item.id)?.status, 'failed')
+	const [start, failure, ...rest] = client.issue(1).comments
+	assert.match(start ?? '', /^\*\*Helm\*\* started run 1 \(agent claude/)
+	assert.ok(!start?.includes('**Session:**'), 'the agent never started, so there is no session')
+	assert.match(failure ?? '', /^\*\*Helm\*\* run 1 failed \(worktree\)/)
+	assert.deepEqual(rest, [])
 })
 
 test('a solve run in a project without a GitHub remote still completes from its Helm-side result', async t => {
@@ -562,7 +633,7 @@ test('a solve run in a project without a GitHub remote still completes from its 
 test('the fallback PR body closes the tracking issue', async t => {
 	const { db, commands, client, issues } = fixture(t)
 	const item = commands.startItem(commands.createSolveItem({ title: 'T', projectSlug: 'helm', prompt: 'p' }).id)
-	await issues.beginRun({ commands, item, repoPath: '/repo', task, run })
+	await issues.beginRun({ commands, item, repoPath: '/repo', task })
 	commands.completeSolveItem(item.id, { worktreePath: '/wt', branchName: 'b', planDirName: 'p', resultSummary: 's' })
 	const bodies: string[] = []
 	await dispatchSolveItem({

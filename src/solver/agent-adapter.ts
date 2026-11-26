@@ -4,6 +4,7 @@ import type { ClaudeEvent } from '../types.js'
 import type { SolverAgent } from './agent.js'
 import { solverAgentLabel } from './agent.js'
 import { parseClaudeOutput } from './output-parser.js'
+import { AGENT_SESSION_ID } from './result-schema.js'
 
 export interface AgentInvocation {
 	command: string
@@ -31,10 +32,11 @@ export interface AgentAdapter {
 	readonly reviewCapabilities: ReviewCapabilities
 	agent: SolverAgent
 	label: string
-	buildHeadlessInvocation(effort?: SolverEffort): AgentInvocation
+	/** `sessionId` names the new session (Claude Code, Pi); agents that cannot take one ignore it. */
+	buildHeadlessInvocation(effort?: SolverEffort, sessionId?: string): AgentInvocation
 	/** Structured interactive argv for daemon-owned terminals; the scheduled host appends its validated prompt exactly once. */
 	buildInteractiveInvocation(effort?: SolverEffort): AgentInvocation
-	buildInteractiveCommand(promptPath: string, worktreePath: string, effort?: SolverEffort): string
+	buildInteractiveCommand(promptPath: string, worktreePath: string, effort?: SolverEffort, sessionId?: string): string
 	parseTimeline(stdout: string): ClaudeEvent[]
 	buildReviewInvocation(options: ReviewInvocationOptions): AgentInvocation
 }
@@ -47,6 +49,36 @@ export function assertAgentBudget(solverConfig: HelmConfig['solver'], mode: 'hea
 		throw new Error(
 			'Max budget is supported only by default Claude print-mode runs. Clear it in Settings → Execution before using an interactive agent or loop.',
 		)
+}
+
+/** How a solve run's agent session is named and resumed later. */
+export interface AgentSessionSupport {
+	/** Helm can name the session up front (`--session-id <uuid>`), so it knows the ID before the run starts. */
+	assignable: boolean
+	/** Environment variable the agent's own shell tool sees its session ID in. */
+	envVar: string
+	/** Command that resumes the session, run from the run's directory. */
+	resumeArgs(sessionId: string): string[]
+}
+
+export function agentSessionSupport(agent: SolverAgent): AgentSessionSupport {
+	switch (agent) {
+		case 'claude':
+			// Sessions are stored per working directory: resume from the same one.
+			return { assignable: true, envVar: 'CLAUDE_CODE_SESSION_ID', resumeArgs: id => ['claude', '--resume', id] }
+		case 'pi':
+			// `--session-id` creates-or-opens an exact project session (Pi >= 0.99).
+			return { assignable: true, envVar: 'PI_SESSION_ID', resumeArgs: id => ['pi', '--session', id] }
+		case 'codex':
+			// Codex has no flag to name a new session; the agent reports its thread ID.
+			return { assignable: false, envVar: 'CODEX_THREAD_ID', resumeArgs: id => ['codex', 'resume', id] }
+	}
+}
+
+function sessionArgs(sessionId: string | undefined): string[] {
+	if (sessionId === undefined) return []
+	if (!AGENT_SESSION_ID.test(sessionId)) throw new Error('Invalid agent session ID')
+	return ['--session-id', sessionId]
 }
 
 export function createAgentAdapter(solverConfig: HelmConfig['solver']): AgentAdapter {
@@ -68,8 +100,9 @@ export function resolveSolverAgent(solverConfig: HelmConfig['solver']): SolverAg
 export function buildHeadlessAgentInvocation(
 	solverConfig: HelmConfig['solver'],
 	effort?: SolverEffort,
+	sessionId?: string,
 ): AgentInvocation {
-	return createAgentAdapter(solverConfig).buildHeadlessInvocation(effort)
+	return createAgentAdapter(solverConfig).buildHeadlessInvocation(effort, sessionId)
 }
 
 /** Prompt-free argv for a scheduled interactive agent. The scheduled host owns prompt composition. */
@@ -95,8 +128,9 @@ export function buildInteractiveAgentCommand(
 	promptPath: string,
 	worktreePath: string,
 	effort?: SolverEffort,
+	sessionId?: string,
 ): string {
-	return createAgentAdapter(solverConfig).buildInteractiveCommand(promptPath, worktreePath, effort)
+	return createAgentAdapter(solverConfig).buildInteractiveCommand(promptPath, worktreePath, effort, sessionId)
 }
 
 export function agentLabelFromConfig(solverConfig: HelmConfig['solver']): string {
@@ -118,8 +152,14 @@ class ClaudeAgentAdapter implements AgentAdapter {
 
 	constructor(private readonly solverConfig: HelmConfig['solver']) {}
 
-	buildHeadlessInvocation(effort?: SolverEffort): AgentInvocation {
-		const args: string[] = ['-p', '--output-format', 'json', '--dangerously-skip-permissions']
+	buildHeadlessInvocation(effort?: SolverEffort, sessionId?: string): AgentInvocation {
+		const args: string[] = [
+			'-p',
+			'--output-format',
+			'json',
+			'--dangerously-skip-permissions',
+			...sessionArgs(sessionId),
+		]
 		if (this.solverConfig.model) {
 			args.push('--model', this.solverConfig.model)
 		}
@@ -138,9 +178,9 @@ class ClaudeAgentAdapter implements AgentAdapter {
 		return { command: 'claude', args, label: 'claude-interactive' }
 	}
 
-	buildInteractiveCommand(promptPath: string, worktreePath: string, effort?: SolverEffort): string {
+	buildInteractiveCommand(promptPath: string, worktreePath: string, effort?: SolverEffort, sessionId?: string): string {
 		return buildInteractiveCommand(
-			['claude', '--dangerously-skip-permissions', ...(effort ? ['--effort', effort] : [])],
+			['claude', '--dangerously-skip-permissions', ...sessionArgs(sessionId), ...(effort ? ['--effort', effort] : [])],
 			this.solverConfig,
 			promptPath,
 			worktreePath,
@@ -187,7 +227,7 @@ class CodexAgentAdapter implements AgentAdapter {
 
 	constructor(private readonly solverConfig: HelmConfig['solver']) {}
 
-	buildHeadlessInvocation(effort?: SolverEffort): AgentInvocation {
+	buildHeadlessInvocation(effort?: SolverEffort, _sessionId?: string): AgentInvocation {
 		const args = ['exec', '--dangerously-bypass-approvals-and-sandbox', '--sandbox', 'danger-full-access', '-']
 		if (this.solverConfig.model) args.push('--model', this.solverConfig.model)
 		if (effort) args.push('--config', `model_reasoning_effort="${effort}"`)
@@ -201,7 +241,12 @@ class CodexAgentAdapter implements AgentAdapter {
 		return { command: 'codex', args, label: 'codex-interactive' }
 	}
 
-	buildInteractiveCommand(promptPath: string, worktreePath: string, effort?: SolverEffort): string {
+	buildInteractiveCommand(
+		promptPath: string,
+		worktreePath: string,
+		effort?: SolverEffort,
+		_sessionId?: string,
+	): string {
 		return buildInteractiveCommand(
 			[
 				'codex',
@@ -244,10 +289,10 @@ class PiAgentAdapter implements AgentAdapter {
 
 	constructor(private readonly solverConfig: HelmConfig['solver']) {}
 
-	buildHeadlessInvocation(effort?: SolverEffort): AgentInvocation {
+	buildHeadlessInvocation(effort?: SolverEffort, sessionId?: string): AgentInvocation {
 		// Pi's JSON mode is itself non-interactive (not merely an output flag): it
 		// consumes the piped stdin prompt, emits JSONL, and exits. Runtime-attested.
-		const args = ['--mode', 'json', '--approve']
+		const args = ['--mode', 'json', ...sessionArgs(sessionId), '--approve']
 		if (this.solverConfig.model) args.push('--model', this.solverConfig.model)
 		if (effort) args.push('--thinking', effort)
 		return { command: 'pi', args, label: 'pi-invoker' }
@@ -260,9 +305,9 @@ class PiAgentAdapter implements AgentAdapter {
 		return { command: 'pi', args, label: 'pi-interactive' }
 	}
 
-	buildInteractiveCommand(promptPath: string, worktreePath: string, effort?: SolverEffort): string {
+	buildInteractiveCommand(promptPath: string, worktreePath: string, effort?: SolverEffort, sessionId?: string): string {
 		return buildInteractiveCommand(
-			['pi', '--approve', ...(effort ? ['--thinking', effort] : [])],
+			['pi', ...sessionArgs(sessionId), '--approve', ...(effort ? ['--thinking', effort] : [])],
 			this.solverConfig,
 			promptPath,
 			worktreePath,

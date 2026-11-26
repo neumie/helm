@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -873,5 +873,55 @@ test('OkenaSolver fails promptly when its execution workspace disappears', async
 		)
 	} finally {
 		rmSync(worktreePath, { recursive: true, force: true })
+	}
+})
+
+test('OkenaSolver starts the agent under the session ID Helm assigned', async () => {
+	const worktreePath = mkdtempSync(join(tmpdir(), 'helm-okena-session-'))
+	const stateDir = mkdtempSync(join(tmpdir(), 'helm-okena-session-state-'))
+	const resultPath = join(stateDir, 'solver-result.json')
+	const sessionId = '0b6f1c2e-6a1d-4c3e-9f7a-2b8d9e0f1a2b'
+	const commands: string[] = []
+	const client = {
+		action: async () => ({}),
+		runCommand: async (_terminalId: string, command: string) => {
+			commands.push(command)
+			writeFileSync(resultPath, JSON.stringify({ summary: 'done' }))
+		},
+	} as unknown as OkenaClient
+	const worktrees = {
+		ensureWorktreeProject: async () => ({ wtProjectId: 'project-1', worktreePath, autoTerminalId: 'terminal-1' }),
+	} as unknown as OkenaWorktreeManager
+	const solve = (agent: 'claude' | 'codex') => {
+		const config = configSchema.parse({
+			provider: { type: 'contember', apiBaseUrl: 'https://example.test', projectSlug: 'helm', apiToken: 'token' },
+			projects: [{ slug: 'helm', repoPath: '/repo', baseBranch: 'main' }],
+			solver: { type: 'okena', agent },
+		})
+		return new OkenaSolver(client, worktrees).solve({
+			projectConfig: config.projects[0],
+			branchName: 'fix/session',
+			planDirName: '2026-11-26-session',
+			resultPath,
+			sessionId,
+			canonicalContext: { title: 'Session' },
+			onWorktreeReady: () => ({ title: 'Session' }),
+			taskId: 'item-1',
+			taskTitle: 'Session',
+			solverConfig: config.solver,
+			workspaceMode: 'worktree',
+		})
+	}
+	try {
+		await solve('claude')
+		assert.match(
+			commands[0] ?? '',
+			new RegExp(`'claude' '--dangerously-skip-permissions' '--session-id' '${sessionId}'`),
+		)
+		await solve('codex')
+		assert.ok(!commands[1]?.includes(sessionId), 'Codex cannot take an assigned session ID')
+	} finally {
+		rmSync(worktreePath, { recursive: true, force: true })
+		rmSync(stateDir, { recursive: true, force: true })
 	}
 })

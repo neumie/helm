@@ -9,6 +9,8 @@ import {
 	repoSlug,
 } from '../github/issues.js'
 import {
+	type RunSession,
+	type RunStartInput,
 	closeComment,
 	issueBody,
 	issueTitle,
@@ -47,7 +49,6 @@ export interface BeginRunInput {
 	repoPath: string
 	/** The task as Helm will solve it (no project knowledge: the issue is visible to the repo's readers). */
 	task: TaskContext
-	run: { agent: string; model?: string | null; workspace: string; branchName?: string | null }
 	signal?: AbortSignal
 }
 
@@ -67,8 +68,8 @@ function pullRequestRepo(prUrl: string): string | null {
 
 /**
  * Tracks a solve Item's runs on a GitHub issue in the project's repository:
- * the task is the issue body, each run's start, result, pull request and
- * failure are comments, and the issue closes with the merged PR (`Closes #N`)
+ * the task is the issue body, each run's start (with the agent session to
+ * resume), result, pull request and failure are comments, and the issue closes with the merged PR (`Closes #N`)
  * or when Helm finishes the Item without one.
  *
  * Best effort by design. A repository without a GitHub remote, a machine
@@ -96,9 +97,10 @@ export class ItemIssues {
 	}
 
 	/**
-	 * Find, reopen or create the issue for a starting run and post the start
-	 * comment. Returns null (and records why) when the run cannot be tracked on
-	 * GitHub. Throws only when the run itself was cancelled.
+	 * Find, reopen or create the issue for a starting run. Returns null (and
+	 * records why) when the run cannot be tracked on GitHub. Throws only when the
+	 * run itself was cancelled. The start comment follows once the run's
+	 * directory exists (`announceRunStart`), so it can say where to resume.
 	 */
 	beginRun(input: BeginRunInput): Promise<RunIssue | null> {
 		return this.serialize(input.item.id, () => this.begin(input))
@@ -112,8 +114,6 @@ export class ItemIssues {
 		try {
 			const linked = await this.link(input, signal)
 			commands.recordGithubIssue(item.id, linked.issue, linked.how)
-			const attempt = Math.max(1, commands.countRunAttempts(item.id))
-			await this.client.comment(linked.repo, linked.issue.number, runStartComment({ attempt, ...input.run }), signal)
 			return runIssue(linked.issue)
 		} catch (error) {
 			if (input.signal?.aborted || isCancellation(error, input.signal)) throw taskCancelled()
@@ -126,7 +126,7 @@ export class ItemIssues {
 			} catch {
 				// The Item is gone; nothing to record.
 			}
-			// A run linked before the failing comment still has its issue.
+			// A failure after linking (recording it) still leaves the run its issue.
 			const current = commands.getItem(item.id)?.githubIssue
 			return current?.state === 'open' ? runIssue(current) : null
 		}
@@ -186,8 +186,29 @@ export class ItemIssues {
 		return { repo, issue: withRepo(created), how: 'created' }
 	}
 
-	/** Post the run's result (summary, files, hidden JSON block) on its issue. */
-	reportResult(commands: ItemCommands, itemId: string, result: SolverResult): Promise<void> {
+	/**
+	 * Post the run's start: agent, model, workspace, branch and, when known, the
+	 * agent session with the command that resumes it from the run's directory.
+	 */
+	announceRunStart(commands: ItemCommands, itemId: string, run: Omit<RunStartInput, 'attempt'>): Promise<void> {
+		return this.serialize(itemId, async () => {
+			const item = commands.getItem(itemId)
+			const issue = item?.githubIssue
+			if (!item || !issue || issue.state !== 'open') return
+			const attempt = Math.max(1, commands.countRunAttempts(itemId))
+			await this.quietly(itemId, 'post the run start', () =>
+				this.client.comment(repoOf(issue), issue.number, runStartComment({ attempt, ...run })),
+			)
+		})
+	}
+
+	/** Post the run's result (summary, files, session, hidden JSON block) on its issue. */
+	reportResult(
+		commands: ItemCommands,
+		itemId: string,
+		result: SolverResult,
+		session?: RunSession | null,
+	): Promise<void> {
 		return this.serialize(itemId, async () => {
 			const item = commands.getItem(itemId)
 			const issue = item?.githubIssue
@@ -196,16 +217,19 @@ export class ItemIssues {
 				this.client.comment(
 					repoOf(issue),
 					issue.number,
-					runResultComment({
-						v: 1,
-						itemId,
-						attempt: Math.max(1, commands.countRunAttempts(itemId)),
-						summary: result.summary,
-						filesChanged: result.filesChanged,
-						...(result.prTitle ? { prTitle: result.prTitle } : {}),
-						...(result.prUrl ? { prUrl: result.prUrl } : {}),
-						finishedAt: new Date().toISOString(),
-					}),
+					runResultComment(
+						{
+							v: 1,
+							itemId,
+							attempt: Math.max(1, commands.countRunAttempts(itemId)),
+							summary: result.summary,
+							filesChanged: result.filesChanged,
+							...(result.prTitle ? { prTitle: result.prTitle } : {}),
+							...(result.prUrl ? { prUrl: result.prUrl } : {}),
+							finishedAt: new Date().toISOString(),
+						},
+						session,
+					),
 				),
 			)
 		})

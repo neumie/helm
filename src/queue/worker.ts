@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -21,7 +22,7 @@ import type { KnowledgeSnapshot } from '../knowledge/schema.js'
 import { PlanWorkspace } from '../plan/workspace.js'
 import { profileRuntimeRoot } from '../profiles/runtime.js'
 import { ProviderUnavailableError, type TaskContext, type TaskProvider } from '../providers/provider.js'
-import { assertAgentBudget } from '../solver/agent-adapter.js'
+import { agentSessionSupport, assertAgentBudget, resolveSolverAgent } from '../solver/agent-adapter.js'
 import { effectiveSolverModel } from '../solver/models.js'
 import { RunResultFile, runResultPath } from '../solver/run-result.js'
 import type { SolveResult, Solver } from '../solver/solver.js'
@@ -317,6 +318,8 @@ export async function processSolveItem(
 	const logRoot = logsDir(item.profileId)
 	mkdirSync(logRoot, { recursive: true })
 	const outputLogPath = resolve(logRoot, `${itemId}.log`)
+	// Posts the run's start comment on its issue once (null before the issue is linked).
+	let announceStart: ((directory: string | null) => Promise<void>) | null = null
 
 	try {
 		beginItemKnowledgeAttempt(commands, item, admittedKnowledgeBinding)
@@ -440,15 +443,34 @@ export async function processSolveItem(
 					item: commands.getItem(itemId) ?? named,
 					repoPath: projectConfig.repoPath,
 					task: taskContext,
-					run: {
-						agent: solverConfig.agent,
-						model: solverConfig.model ?? null,
-						workspace: workspaceMode,
-						branchName: mainMode ? null : branchName,
-					},
 					signal,
 				})
 			: null
+		// Helm names the agent's session itself where the CLI allows it (Claude
+		// Code, Pi), so the issue can say how to resume the run even before it
+		// ends. Codex reports its own ID in the result instead.
+		const runAgent = resolveSolverAgent(solverConfig)
+		const sessionId = agentSessionSupport(runAgent).assignable ? randomUUID() : null
+		// The start comment waits for the run directory so it can say where to
+		// resume. A run that fails before then still gets one, without a session
+		// (its agent never started). Serialized per Item, so it lands first.
+		if (runIssue && deps.issues) {
+			const issues = deps.issues
+			let announced = false
+			announceStart = directory => {
+				if (announced) return Promise.resolve()
+				announced = true
+				return issues
+					.announceRunStart(commands, itemId, {
+						agent: runAgent,
+						model: solverConfig.model ?? null,
+						workspace: workspaceMode,
+						branchName: mainMode ? null : branchName,
+						session: sessionId && directory ? { agent: runAgent, id: sessionId, directory } : null,
+					})
+					.catch(error => log.warn('worker', `Could not post the run start for ${itemId}`, error))
+			}
+		}
 		// The agent writes its result into Helm's profile state, never the repository.
 		const resultPath = runResultPath(item.profileId, itemId)
 
@@ -473,6 +495,7 @@ export async function processSolveItem(
 				itemId,
 				mainMode ? { worktreePath, planDirName } : { worktreePath, branchName, planDirName },
 			)
+			void announceStart?.(worktreePath)
 			return adapterContext
 		}
 		let solveResult: SolveResult
@@ -482,6 +505,7 @@ export async function processSolveItem(
 				branchName,
 				planDirName,
 				resultPath,
+				sessionId,
 				issue: runIssue,
 				canonicalContext: executionContext,
 				taskId: item.id,
@@ -559,7 +583,14 @@ export async function processSolveItem(
 			workspace.clearKnowledgeCandidates()
 		}
 
-		await deps.issues?.reportResult(commands, itemId, solverResult)
+		// Helm's own session ID wins; the agent-reported one covers Codex.
+		const resultSessionId = sessionId ?? solverResult.sessionId ?? null
+		await deps.issues?.reportResult(
+			commands,
+			itemId,
+			solverResult,
+			resultSessionId ? { agent: runAgent, id: resultSessionId, directory: worktreePath } : null,
+		)
 
 		log.info('worker', 'Solve Item complete - dispatching')
 		try {
@@ -584,6 +615,7 @@ export async function processSolveItem(
 		if (isCancelled) {
 			commands.cancelProcessingItem(itemId, 'Item cancelled by user', phase)
 			log.warn('worker', `Solve Item cancelled: ${item.title}`)
+			await announceStart?.(null)
 			await deps.issues?.reportRunEnded(commands, itemId, { cancelled: true }).catch(() => undefined)
 		} else {
 			const mainRun =
@@ -599,6 +631,7 @@ export async function processSolveItem(
 				{ repoPath: projectConfig.repoPath, mainMode: mainRun },
 				signal,
 			)
+			await announceStart?.(null)
 			await deps.issues
 				?.reportRunEnded(commands, itemId, { cancelled: false, phase, message: error.message })
 				.catch(() => undefined)

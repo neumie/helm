@@ -107,7 +107,13 @@ export class OkenaSolver implements Solver {
 		if (signal?.aborted) throw taskCancelled()
 		writeFileSync(promptFile, solverPrompt, 'utf-8')
 
-		const command = buildInteractiveAgentCommand(solverConfig, '.helm-prompt.txt', worktreePath, params.solverEffort)
+		const command = buildInteractiveAgentCommand(
+			solverConfig,
+			'.helm-prompt.txt',
+			worktreePath,
+			params.solverEffort,
+			params.sessionId ?? undefined,
+		)
 		const agentLabel = agentLabelFromConfig(solverConfig)
 		log.info('okena', `Running ${agentLabel} in terminal ${terminalId}`)
 		try {
