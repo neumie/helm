@@ -26,6 +26,12 @@ export interface SolveParams {
 	 * the Okena solver waits for it; the worker reads it.
 	 */
 	resultPath: string
+	/**
+	 * Session ID Helm assigned to this run's agent (Claude Code, Pi), passed as
+	 * `--session-id` so the run can be resumed later from its directory. Absent
+	 * for agents that cannot take one (Codex reports its own in the result).
+	 */
+	sessionId?: string | null
 	/** GitHub issue tracking the task, named in the prompt so the PR closes it. */
 	issue?: { number: number; url: string; reference: string } | null
 	/** Canonical, unlocalized context for non-prompt diagnostics only. */

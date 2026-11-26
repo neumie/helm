@@ -14,9 +14,10 @@ export async function invokeAgent(
 	effort?: SolverEffort,
 	signal?: AbortSignal,
 	outputLogPath?: string,
+	sessionId?: string,
 ): Promise<InvokeResult> {
 	const agentAdapter = createAgentAdapter(solver)
-	const invocation = agentAdapter.buildHeadlessInvocation(effort)
+	const invocation = agentAdapter.buildHeadlessInvocation(effort, sessionId)
 	const displayName = agentAdapter.label
 
 	log.info('invoker', `Spawning ${displayName} in ${worktreePath}`, {

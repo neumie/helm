@@ -1,4 +1,7 @@
 import type { TaskContext } from '../providers/provider.js'
+import { agentSessionSupport } from '../solver/agent-adapter.js'
+import { solverAgentLabel, solverAgentSchema } from '../solver/agent.js'
+import { AGENT_SESSION_ID } from '../solver/result-schema.js'
 
 /**
  * Markdown Helm writes onto a run's GitHub issue: the issue body (the task) and
@@ -152,20 +155,65 @@ export function issueBody(input: IssueBodyInput): string {
 	return bounded(lines.join('\n'), BODY_LIMIT)
 }
 
+/** The agent session of a run, so a later agent or person can resume it. */
+export interface RunSession {
+	/** Solver agent (`claude`, `pi`, `codex`). */
+	agent: string
+	id: string
+	/** Directory the run worked in; resuming must start there. */
+	directory?: string | null
+}
+
+/** A path as a shell word: home shortened to `~`, quoted only when it needs it. */
+function shellPath(path: string, home: string | undefined): string | null {
+	// Shown inside a code span and pasted into a shell: one line, no backticks.
+	if (!path.startsWith('/') || [...path].some(char => char === '`' || char.charCodeAt(0) < 0x20 || char === '\x7f'))
+		return null
+	const trimmed = path.length > 1 ? path.replace(/\/+$/, '') : path
+	if (home && home.length > 1) {
+		const base = home.replace(/\/+$/, '')
+		if (trimmed === base) return '~'
+		if (trimmed.startsWith(`${base}/`)) return `~/${shellWord(trimmed.slice(base.length + 1))}`
+	}
+	return shellWord(trimmed)
+}
+
+function shellWord(word: string): string {
+	return /^[A-Za-z0-9._/@%+=:,-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`
+}
+
+/**
+ * Lines naming a run's agent session and how to resume it, or none when the
+ * session is unknown (or not one Helm can vouch for the shape of).
+ */
+export function runSessionLines(session: RunSession | null | undefined, home = process.env.HOME): string[] {
+	if (!session) return []
+	const agent = solverAgentSchema.safeParse(session.agent)
+	if (!agent.success || !AGENT_SESSION_ID.test(session.id)) return []
+	const resume = agentSessionSupport(agent.data).resumeArgs(session.id).join(' ')
+	const directory = session.directory ? shellPath(session.directory, home) : null
+	const command = directory ? `cd ${directory} && ${resume}` : resume
+	return [`**Session:** ${solverAgentLabel(agent.data)} \`${session.id}\`  `, `**Resume:** \`${command}\``]
+}
+
 export interface RunStartInput {
 	attempt: number
 	agent: string
 	model?: string | null
 	workspace: string
 	branchName?: string | null
+	session?: RunSession | null
 }
 
-export function runStartComment(input: RunStartInput): string {
+export function runStartComment(input: RunStartInput, home = process.env.HOME): string {
 	const details = [`agent ${input.agent}`]
 	if (input.model) details.push(`model ${input.model}`)
 	details.push(input.workspace === 'main' ? 'main checkout' : 'worktree')
 	if (input.branchName) details.push(`branch \`${input.branchName}\``)
-	return `**Helm** started run ${input.attempt} (${details.join(', ')}).`
+	const lines = [`**Helm** started run ${input.attempt} (${details.join(', ')}).`]
+	const session = runSessionLines(input.session, home)
+	if (session.length > 0) lines.push('', ...session)
+	return lines.join('\n')
 }
 
 /** Machine-readable run result carried in a hidden block of the result comment. */
@@ -177,6 +225,8 @@ export interface IssueRunResult {
 	filesChanged: string[]
 	prTitle?: string
 	prUrl?: string
+	/** The run's agent session (absent when unknown). */
+	session?: { agent: string; id: string }
 	finishedAt: string
 }
 
@@ -188,7 +238,7 @@ function hiddenJson(value: unknown): string {
 	return JSON.stringify(value).replace(/--/g, '-\\u002d').replace(/>/g, '\\u003e')
 }
 
-export function runResultComment(result: IssueRunResult): string {
+export function runResultComment(result: IssueRunResult, session?: RunSession | null, home = process.env.HOME): string {
 	const lines = [
 		`**Helm** finished run ${result.attempt}.`,
 		'',
@@ -202,10 +252,14 @@ export function runResultComment(result: IssueRunResult): string {
 			lines.push(`- … and ${result.filesChanged.length - files.length} more`)
 	}
 	if (result.prUrl) lines.push('', `**Pull request:** ${result.prUrl}`)
+	const sessionLines = runSessionLines(session, home)
+	if (sessionLines.length > 0) lines.push('', ...sessionLines)
+	const { session: _ignored, ...rest } = result
 	const block = {
-		...result,
+		...rest,
 		summary: oneLine(result.summary, SUMMARY_LIMIT),
 		filesChanged: files,
+		...(session && sessionLines.length > 0 ? { session: { agent: session.agent, id: session.id } } : {}),
 	}
 	lines.push('', `${RESULT_OPEN}${hiddenJson(block)}${RESULT_CLOSE}`)
 	return lines.join('\n')

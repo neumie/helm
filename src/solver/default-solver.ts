@@ -110,6 +110,7 @@ export class DefaultSolver implements Solver {
 				params.solverEffort,
 				signal,
 				outputLogPath,
+				params.sessionId ?? undefined,
 			)
 		} catch (err) {
 			if (isCancellation(err)) throw err
