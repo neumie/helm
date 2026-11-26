@@ -94,6 +94,7 @@ export function applyRunContextDocument(task: TaskContext, document: RunContextD
 			...task,
 			description: [text, ...imageFacts].filter(Boolean).join('\n\n') || undefined,
 			descriptionBlocks: undefined,
+			descriptionMarkdown: undefined,
 			comments: undefined,
 		}
 	}
@@ -102,6 +103,7 @@ export function applyRunContextDocument(task: TaskContext, document: RunContextD
 		...task,
 		description: markdown || undefined,
 		descriptionBlocks: undefined,
+		descriptionMarkdown: undefined,
 		comments: undefined,
 	}
 }

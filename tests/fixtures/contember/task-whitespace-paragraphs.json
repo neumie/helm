@@ -1,0 +1,460 @@
+{
+	"description": {
+		"data": {
+			"children": [
+				{
+					"key": "blk1zq",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": "Sentence 1 of the task, in bold",
+							"isBold": true
+						}
+					]
+				},
+				{
+					"key": "blk2zq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": "Sentence 2 of the task"
+						}
+					]
+				},
+				{
+					"key": "blk3zq",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": " "
+						}
+					]
+				},
+				{
+					"key": "blk4zq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": "Sentence 3 of the task "
+						}
+					]
+				},
+				{
+					"key": "blk5zq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": " "
+						}
+					]
+				},
+				{
+					"key": "blk6zq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": "Sentence 4 of the task"
+						}
+					]
+				},
+				{
+					"key": "blk7zq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": " Sentence 5 of the task "
+						}
+					]
+				},
+				{
+					"key": "blk8zq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": "Sentence 6 of the task "
+						}
+					]
+				},
+				{
+					"key": "blk9zq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": "Sentence 7 of the task"
+						}
+					]
+				},
+				{
+					"key": "blkazq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": " Sentence 8 of the task"
+						}
+					]
+				},
+				{
+					"key": "blkbzq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": "Sentence 9 of the task"
+						}
+					]
+				},
+				{
+					"key": "blkczq0",
+					"type": "unorderedList",
+					"children": [
+						{
+							"type": "listItem",
+							"children": [
+								{
+									"text": "Sentence 10 of the task"
+								}
+							]
+						}
+					]
+				},
+				{
+					"key": "blkdzq",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": ""
+						}
+					]
+				},
+				{
+					"key": "blkezq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": "Sentence 11 of the task"
+						}
+					]
+				},
+				{
+					"key": "blkfzq0",
+					"type": "unorderedList",
+					"children": [
+						{
+							"type": "listItem",
+							"children": [
+								{
+									"text": "Sentence 12 of the task "
+								},
+								{
+									"href": "https://app.client.example/form/?id=form-a",
+									"type": "anchor",
+									"children": [
+										{
+											"text": "https://app.client.example/form/?id=form-a",
+											"isUnderlined": true
+										}
+									]
+								},
+								{
+									"text": ""
+								}
+							]
+						}
+					]
+				},
+				{
+					"key": "blkgzq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": ""
+						}
+					]
+				},
+				{
+					"key": "blkhzq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": "Sentence 13 of the task"
+						}
+					]
+				},
+				{
+					"key": "blkizq0",
+					"type": "unorderedList",
+					"children": [
+						{
+							"type": "listItem",
+							"children": [
+								{
+									"text": "Sentence 14 of the task "
+								},
+								{
+									"href": "https://app.client.example/form/?id=form-b",
+									"type": "anchor",
+									"children": [
+										{
+											"text": "https://app.client.example/form/?id=form-b",
+											"isUnderlined": true
+										}
+									]
+								},
+								{
+									"text": ""
+								}
+							]
+						}
+					]
+				},
+				{
+					"key": "blkjzq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": " "
+						}
+					]
+				},
+				{
+					"key": "blkkzq",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": "Sentence 15 of the task "
+						}
+					]
+				},
+				{
+					"key": "blklzq",
+					"type": "unorderedList",
+					"children": [
+						{
+							"type": "listItem",
+							"children": [
+								{
+									"text": "Sentence 16 of the task "
+								},
+								{
+									"href": "https://app.client.example/form/?id=form-c",
+									"type": "anchor",
+									"children": [
+										{
+											"text": "https://app.client.example/form/?id=form-c",
+											"isUnderlined": true
+										}
+									]
+								},
+								{
+									"text": ""
+								}
+							]
+						}
+					]
+				},
+				{
+					"key": "blkmzq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": ""
+						}
+					]
+				},
+				{
+					"key": "blknzq",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": "Sentence 17 of the task "
+						}
+					]
+				},
+				{
+					"key": "blkozq0",
+					"type": "unorderedList",
+					"children": [
+						{
+							"type": "listItem",
+							"children": [
+								{
+									"text": "Sentence 18 of the task "
+								},
+								{
+									"href": "https://app.client.example/form/?id=form-d",
+									"type": "anchor",
+									"children": [
+										{
+											"text": "https://app.client.example/form/?id=form-d",
+											"isUnderlined": true
+										}
+									]
+								},
+								{
+									"text": ""
+								}
+							]
+						}
+					]
+				},
+				{
+					"key": "blkpzq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": "   "
+						}
+					]
+				},
+				{
+					"key": "blkqzq",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": " Sentence 19 of the task "
+						}
+					]
+				},
+				{
+					"key": "blkrzq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": " "
+						}
+					]
+				},
+				{
+					"key": "blkszq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": "Sentence 20 of the task"
+						}
+					]
+				},
+				{
+					"key": "blktzq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": " Sentence 21 of the task "
+						}
+					]
+				},
+				{
+					"key": "blkuzq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": " "
+						}
+					]
+				},
+				{
+					"key": "blkvzq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": "Sentence 22 of the task"
+						}
+					]
+				},
+				{
+					"key": "blkwzq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": " Sentence 23 of the task "
+						}
+					]
+				},
+				{
+					"key": "blkxzq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": " "
+						}
+					]
+				},
+				{
+					"key": "blkyzq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": "Sentence 24 of the task"
+						}
+					]
+				},
+				{
+					"key": "blkzzq0",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": " Sentence 25 of the task"
+						}
+					]
+				},
+				{
+					"key": "blk10zq",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": " Sentence 26 of the task"
+						}
+					]
+				},
+				{
+					"key": "blk11z",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": " "
+						}
+					]
+				},
+				{
+					"key": "blk12zq",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": " "
+						}
+					]
+				},
+				{
+					"key": "blk13z",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": " "
+						}
+					]
+				},
+				{
+					"key": "blk14zq",
+					"type": "paragraph",
+					"children": [
+						{
+							"text": "Sentence 27 of the task "
+						},
+						{
+							"href": "mailto:analyst@agency.example",
+							"type": "anchor",
+							"children": [
+								{
+									"text": "analyst@agency.example"
+								}
+							]
+						},
+						{
+							"text": " Sentence 28 of the task\n"
+						}
+					]
+				}
+			],
+			"formatVersion": 2
+		},
+		"references": []
+	}
+}

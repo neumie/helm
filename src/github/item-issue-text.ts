@@ -51,6 +51,21 @@ function untrusted(text: string): string {
 	return defuseMarkers(defuseMentions(text))
 }
 
+/**
+ * Untrusted markdown built by a provider (`TaskContext.descriptionMarkdown`).
+ * Link destinations stay intact (GitHub never mentions inside a URL, and a
+ * zero-width space would break `https://instagram.com/@name`); everywhere else an
+ * `@` is defused even right after a backtick, because the markdown may close a
+ * code span just before it (`` `x`@team `` mentions @team on GitHub).
+ */
+function untrustedMarkdown(markdown: string): string {
+	const defused = markdown
+		.split(/(\]\((?:https?:\/\/|mailto:)[^()\s]*\))/i)
+		.map((part, index) => (index % 2 === 1 ? part : part.replace(/(^|[^\w])@(?=[A-Za-z0-9])/g, '$1@\u200b')))
+		.join('')
+	return defuseMarkers(defused)
+}
+
 function oneLine(text: string, limit: number): string {
 	const flat = text.replace(/\s+/g, ' ').trim()
 	return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat
@@ -91,6 +106,8 @@ export function issueTitle(item: { title: string; displayName?: string | null })
 }
 
 function taskDescription(task: TaskContext): string {
+	const markdown = task.descriptionMarkdown?.trim()
+	if (markdown) return untrustedMarkdown(markdown)
 	const blocks = task.descriptionBlocks ?? []
 	if (blocks.length > 0) {
 		const parts = blocks.map(block =>

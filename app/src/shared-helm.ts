@@ -72,6 +72,8 @@ export interface SourceTask {
 	title: string
 	description?: string
 	descriptionBlocks?: DescriptionBlock[]
+	/** The description as markdown (GitHub issue body); the sidebar renders `descriptionBlocks`. */
+	descriptionMarkdown?: string
 	metadata?: Record<string, string>
 	comments?: Array<{ author: string; createdAt: string; body: string }>
 	attachments?: Array<{ name: string; url: string; contentType?: string }>

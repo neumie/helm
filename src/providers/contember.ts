@@ -1,7 +1,7 @@
 import { log } from '../util/logger.js'
+import { extractDescriptionBlocks, extractPlainText, slateToMarkdown } from './contember-slate.js'
 import {
 	type CreatedSourceTask,
-	type DescriptionBlock,
 	type DiscoveredTask,
 	ProviderUnavailableError,
 	type TaskContext,
@@ -310,11 +310,15 @@ export class ContemberProvider implements TaskProvider {
 		const descriptionBlocks = t.description?.data
 			? extractDescriptionBlocks(t.description.data, t.description.references)
 			: []
+		const descriptionMarkdown = t.description?.data
+			? markdownOrNothing(t.description.data, t.description.references)
+			: ''
 
 		return {
 			title: t.title ?? '',
 			description: t.description?.data ? extractPlainText(t.description.data) : undefined,
 			descriptionBlocks: descriptionBlocks.length > 0 ? descriptionBlocks : undefined,
+			descriptionMarkdown: descriptionMarkdown || undefined,
 			metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
 			comments: comments.length > 0 ? comments : undefined,
 			attachments: attachments.length > 0 ? attachments : undefined,
@@ -481,86 +485,14 @@ interface RawTaskFull {
 
 // -- SlateJS utilities --
 
-/**
- * Walk the top-level SlateJS blocks in document order, emitting text blocks and
- * inline image blocks (resolved via `referenceId` → references[].file.url), so
- * the dashboard can render images between the surrounding paragraphs instead of
- * collecting them all at the end. Non-image references stay out (they surface as
- * attachments); unrecognized shapes degrade to nothing.
- */
-function extractDescriptionBlocks(
-	data: unknown,
-	references: NonNullable<RawTaskFull['description']>['references'],
-): DescriptionBlock[] {
-	const refMap = new Map<string, { url: string; name?: string; contentType?: string }>()
-	for (const ref of references ?? []) {
-		if (ref?.id && ref.file?.url) {
-			refMap.set(ref.id, {
-				url: ref.file.url,
-				name: ref.file.fileName ?? undefined,
-				contentType: ref.file.fileType ?? undefined,
-			})
-		}
+/** The markdown is for display only: a document it cannot render never fails the task read. */
+function markdownOrNothing(data: unknown, references: Parameters<typeof slateToMarkdown>[1]): string {
+	try {
+		return slateToMarkdown(data, references)
+	} catch (err) {
+		log.warn('contember', 'Could not render the task description as markdown', err)
+		return ''
 	}
-
-	const children = (data as { children?: unknown })?.children
-	if (!Array.isArray(children)) return []
-
-	const blocks: DescriptionBlock[] = []
-	for (const child of children) {
-		const node = child as { type?: string; level?: number; referenceId?: string }
-		if (node?.type === 'image' && typeof node.referenceId === 'string' && refMap.has(node.referenceId)) {
-			const file = refMap.get(node.referenceId)
-			if (file) blocks.push({ type: 'image', ...file })
-			continue
-		}
-		const text = extractPlainText(child)
-		if (text) {
-			const heading = node?.type === 'heading' && typeof node.level === 'number' ? node.level : undefined
-			blocks.push(heading ? { type: 'text', text, heading } : { type: 'text', text })
-		}
-	}
-	return blocks
-}
-
-/**
- * Extract plain text from SlateJS JSON data.
- */
-function extractPlainText(value: unknown, depth = 0): string {
-	if (depth > 10 || value === null || value === undefined) return ''
-	if (typeof value === 'string') return value.trim()
-	if (Array.isArray(value)) {
-		return value
-			.map(item => extractPlainText(item, depth + 1))
-			.filter(Boolean)
-			.join(' ')
-			.replace(/\s+/g, ' ')
-			.trim()
-	}
-	if (typeof value !== 'object') return ''
-
-	const obj = value as Record<string, unknown>
-	const chunks: string[] = []
-
-	for (const key of ['text', 'title', 'caption', 'alt', 'markdown']) {
-		const entry = obj[key]
-		if (typeof entry === 'string' && entry.trim()) chunks.push(entry.trim())
-	}
-
-	for (const key of ['children', 'content', 'nodes', 'items', 'document', 'value', 'data']) {
-		const nested = extractPlainText(obj[key], depth + 1)
-		if (nested) chunks.push(nested)
-	}
-
-	if (chunks.length === 0) {
-		for (const [key, entry] of Object.entries(obj)) {
-			if (['url', 'href', 'src', 'id', 'type', '__typename'].includes(key)) continue
-			const nested = extractPlainText(entry, depth + 1)
-			if (nested) chunks.push(nested)
-		}
-	}
-
-	return chunks.join(' ').replace(/\s+/g, ' ').trim()
 }
 
 /**

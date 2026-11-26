@@ -40,6 +40,10 @@ export const taskContextSchema = z.object({
 	/** Ordered rich blocks (text + inline images). `description` stays the flat
 	 *  text used for the solve prompt; this is for faithful display only. */
 	descriptionBlocks: z.array(descriptionBlockSchema).optional(),
+	/** The same rich description as markdown (lists, links, emphasis, inline
+	 *  images), for readers that render markdown (the run's GitHub issue). Derived
+	 *  from the source alongside `descriptionBlocks`; untrusted task content. */
+	descriptionMarkdown: z.string().optional(),
 	metadata: z.record(z.string()).optional(),
 	comments: z.array(z.object({ author: z.string(), createdAt: z.string(), body: z.string() })).optional(),
 	attachments: z.array(z.object({ name: z.string(), url: z.string(), contentType: z.string().optional() })).optional(),
