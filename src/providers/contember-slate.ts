@@ -162,9 +162,16 @@ function isSafeLinkUrl(url: string): boolean {
 	return /^(https?:\/\/|mailto:)\S/i.test(url) && !hasControlCharacter(url)
 }
 
-/** A link destination that cannot end the `(...)` early or hide a markdown escape. */
+/**
+ * A link destination that cannot end the `(...)` early or hide a markdown escape.
+ * An `@` that could start a mention (not after a word character, as in
+ * `instagram.com/@name`) is percent-encoded too, so readers that defuse mentions
+ * over the whole markdown never have to exempt destinations.
+ */
 function linkDestination(url: string): string {
-	return url.replace(/[()<>\\\s]/g, ch => `%${ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`)
+	return url
+		.replace(/[()<>\\\s]/g, ch => `%${ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`)
+		.replace(/(?<!\w)@/g, '%40')
 }
 
 /** Text that cannot close a `[...]` link label. */

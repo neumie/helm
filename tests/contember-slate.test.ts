@@ -174,6 +174,7 @@ test('markdown: links (http, mailto, unsafe), link text escaping and images', ()
 			p(t('Mail '), a('mailto:someone@example.com', 'someone@example.com')),
 			p(a('javascript:alert(1)', 'click me'), t(' '), a('https://example.com', '')),
 			p(a('https://x.example/a\\', 'odkaz'), t(' tail) more')),
+			p(a('https://www.instagram.com/@brand', '@brand'), t(' '), a('mailto:a@b.cz', 'a@b.cz')),
 			{ type: 'image', referenceId: 'img', children: [t('')] },
 			{ type: 'image', referenceId: 'local', children: [t('')] },
 			{ type: 'file', referenceId: 'doc', children: [t('')] },
@@ -191,6 +192,7 @@ test('markdown: links (http, mailto, unsafe), link text escaping and images', ()
 			'Mail [someone@example.com](mailto:someone@example.com)',
 			'click me [https://example.com](https://example.com)',
 			'[odkaz](https://x.example/a%5C) tail) more',
+			'[@brand](https://www.instagram.com/%40brand) [a@b.cz](mailto:a@b.cz)',
 			'![shot \\[1\\].png](https://cdn.example/shot.png)',
 		].join('\n\n'),
 	)
@@ -297,24 +299,32 @@ test('a description markdown cannot render never fails the task read', async ctx
 	assert.equal(task?.title, 'X')
 })
 
-test('issue body defuses mentions and markers inside markdown descriptions but keeps link destinations', () => {
+test('issue body defuses every mention in markdown descriptions, fake link destinations included', () => {
+	const description = slateToMarkdown(
+		doc(
+			p(t('Ping @team <!-- helm:item other --> and mail '), a('mailto:a@b.cz', 'a@b.cz')),
+			p(
+				t('Profile '),
+				a('https://www.instagram.com/@brand', 'Instagram'),
+				t(' and '),
+				t('x', { isCode: true }),
+				t('@octocat'),
+			),
+			p(t('[x](mailto:@crew) and ](https://x.example/@crew2)')),
+		),
+	)
 	const body = issueBody({
 		itemId: 'item-1',
 		projectSlug: 'demo',
 		source: null,
-		task: {
-			title: 'T',
-			descriptionMarkdown: [
-				'Ping @team <!-- helm:item other --> and mail [a@b.cz](mailto:a@b.cz)',
-				'Profile [Instagram](https://www.instagram.com/@brand) and `x`@octocat',
-				'Fake ](@crew) destination',
-			].join('\n\n'),
-		},
+		task: { title: 'T', descriptionMarkdown: description },
 	})
-	assert.ok(body.includes('Ping @​team'))
+	assert.ok(body.includes('Ping @\u200bteam'))
 	assert.ok(!body.includes('<!-- helm:item other'))
-	assert.ok(body.includes('[a@b.cz](mailto:a@b.cz)'))
-	assert.ok(body.includes('(https://www.instagram.com/@brand)'), 'a URL keeps its @')
-	assert.ok(body.includes('`x`@​octocat'), 'a code span cannot shield a mention')
-	assert.ok(body.includes('](@​crew)'), 'only real URL destinations are left alone')
+	assert.ok(body.includes('[a@b.cz](mailto:a@b.cz)'), 'an address keeps its @')
+	assert.ok(body.includes('(https://www.instagram.com/%40brand)'), 'a real destination keeps working')
+	assert.ok(body.includes('`x`@\u200boctocat'), 'a code span cannot shield a mention')
+	assert.ok(body.includes('(mailto:@\u200bcrew)'), 'leaf text cannot fake an exempt destination')
+	assert.ok(body.includes('/@\u200bcrew2)'))
+	assert.equal(/(^|[^\w])@(?=[A-Za-z0-9])/.test(body.replace(/@\u200b/g, '')), false, 'no live mention remains')
 })
